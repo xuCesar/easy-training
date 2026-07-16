@@ -8,6 +8,7 @@ import { onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
@@ -23,6 +24,27 @@ app.use(
 		credentials: true,
 	}),
 );
+
+app.use(
+	"/rpc/*",
+	bodyLimit({
+		maxSize: 256 * 1024,
+		onError: (c) =>
+			c.json({ error: { message: "请求内容超过 256 KiB 限制。" } }, 413),
+	}),
+);
+
+app.use("/rpc/*", async (c, next) => {
+	if (c.req.method === "GET" || c.req.method === "OPTIONS") {
+		return next();
+	}
+
+	if (c.req.header("Origin") !== env.CORS_ORIGIN) {
+		return c.json({ error: { message: "请求来源不受信任。" } }, 403);
+	}
+
+	return next();
+});
 
 app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 

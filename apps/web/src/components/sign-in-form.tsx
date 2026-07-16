@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import z from "zod";
 
 import { authClient } from "@/lib/auth-client";
+import { queryClient } from "@/utils/orpc";
 
 import Loader from "./loader";
 
@@ -33,6 +34,7 @@ export default function SignInForm({
 				},
 				{
 					onSuccess: () => {
+						queryClient.clear();
 						navigate({
 							to: "/dashboard",
 						});

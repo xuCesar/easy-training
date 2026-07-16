@@ -95,6 +95,10 @@ pnpm db:studio    # 打开 Drizzle Studio
 
 ## 当前数据边界
 
-认证数据和教培领域 schema 已接入 PostgreSQL。为了在业务数据库尚未初始化时保留原型数据，`training.snapshot` 当前由 `packages/api/src/data/training.ts` 返回 Mock 快照，并且只能在登录后访问。
+认证数据和教培领域 schema 已接入 PostgreSQL。认证用户首次进入业务系统时，会自动创建一个机构并成为 `owner`；后续业务接口只使用服务端解析出的机构上下文，不接受客户端传入的机构 ID。
 
-下一步持久化时，应在 API 包内实现 PostgreSQL repository，保持 Web 端 oRPC 调用和共享契约不变，再逐步完成线索转报名、合同收款、排课签到、课消和续费闭环。
+招生线索已使用真实 PostgreSQL 数据，支持列表、搜索、阶段筛选、新增、编辑和阶段流转。线索读取与写入仅允许 `owner`、`admin`、`campus_manager`、`consultant`，并按当前机构隔离；`teacher`、`finance` 无权访问线索隐私数据。
+
+运营工作台中的学员、课程、班级、课次、账单和待办仍由 `packages/api/src/data/training.ts` 提供原型快照。后续将按 GitHub Roadmap 逐步迁移为机构维度的真实查询，并完成线索转报名、合同收款、排课签到、课消和续费闭环。
+
+本地联调时请统一使用 `http://localhost:3001` 访问 Web。服务端会严格校验带 Cookie 的 RPC 请求来源与 `CORS_ORIGIN`，使用 `127.0.0.1` 和 `localhost` 混用会被浏览器视为不同来源。
