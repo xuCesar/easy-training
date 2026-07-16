@@ -1,0 +1,24 @@
+{
+	"name": "@easy-training/auth",
+	"type": "module",
+	"exports": {
+		".": {
+			"default": "./src/index.ts"
+		},
+		"./*": {
+			"default": "./src/*.ts"
+		}
+	},
+	"scripts": {},
+	"dependencies": {
+		"@easy-training/db": "workspace:*",
+		"@easy-training/env": "workspace:*",
+		"better-auth": "catalog:",
+		"dotenv": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@easy-training/config": "workspace:*",
+		"typescript": "catalog:"
+	}
+}

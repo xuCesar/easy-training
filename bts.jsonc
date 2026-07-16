@@ -1,0 +1,37 @@
+// Better-T-Stack
+//
+// Website: https://www.better-t-stack.dev/
+// Stack Builder: https://www.better-t-stack.dev/new
+// Analytics: https://www.better-t-stack.dev/analytics
+// Showcase: https://www.better-t-stack.dev/showcase
+// Sponsor: https://github.com/sponsors/AmanVarshney01
+//
+// Add new addons with: pnpm dlx create-better-t-stack add
+// This file is safe to delete
+
+{
+  "$schema": "https://r2.better-t-stack.dev/schema.json",
+  "version": "3.36.3",
+  "createdAt": "2026-07-16T17:09:04.500Z",
+  "reproducibleCommand": "pnpm create better-t-stack@latest easy-training --frontend tanstack-router --backend hono --runtime node --database postgres --orm drizzle --api orpc --auth better-auth --payments none --addons turborepo --examples none --db-setup docker --manual-db --web-deploy none --server-deploy none --no-git --package-manager pnpm --no-install",
+  "dbSetupOptions": {
+    "mode": "manual",
+  },
+  "database": "postgres",
+  "orm": "drizzle",
+  "backend": "hono",
+  "runtime": "node",
+  "frontend": ["tanstack-router"],
+  "addons": [
+		"turborepo",
+		"biome"
+	],
+  "examples": [],
+  "auth": "better-auth",
+  "payments": "none",
+  "packageManager": "pnpm",
+  "dbSetup": "docker",
+  "api": "orpc",
+  "webDeploy": "none",
+  "serverDeploy": "none",
+}

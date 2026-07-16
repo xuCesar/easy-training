@@ -1,0 +1,488 @@
+import { relations } from "drizzle-orm";
+import {
+	date,
+	index,
+	integer,
+	pgEnum,
+	pgTable,
+	text,
+	timestamp,
+	uniqueIndex,
+	uuid,
+} from "drizzle-orm/pg-core";
+
+import { user } from "./auth";
+
+export const memberRole = pgEnum("member_role", [
+	"owner",
+	"admin",
+	"campus_manager",
+	"consultant",
+	"teacher",
+	"finance",
+]);
+export const leadStage = pgEnum("lead_stage", [
+	"new",
+	"contacted",
+	"trial_booked",
+	"enrolled",
+	"lost",
+]);
+export const studentStatus = pgEnum("student_status", [
+	"active",
+	"trial",
+	"paused",
+	"graduated",
+	"at_risk",
+]);
+export const courseCategory = pgEnum("course_category", [
+	"language",
+	"stem",
+	"art",
+	"exam",
+	"sports",
+]);
+export const classStatus = pgEnum("class_status", [
+	"recruiting",
+	"running",
+	"paused",
+	"completed",
+]);
+export const lessonStatus = pgEnum("lesson_status", [
+	"scheduled",
+	"completed",
+	"cancelled",
+]);
+export const attendanceStatus = pgEnum("attendance_status", [
+	"present",
+	"absent",
+	"late",
+	"leave",
+]);
+export const invoiceStatus = pgEnum("invoice_status", [
+	"paid",
+	"pending",
+	"overdue",
+	"refunded",
+]);
+export const taskPriority = pgEnum("task_priority", ["high", "medium", "low"]);
+export const taskModule = pgEnum("task_module", [
+	"enrollment",
+	"academic",
+	"finance",
+	"student_service",
+]);
+
+export const organization = pgTable("organization", {
+	id: uuid("id").defaultRandom().primaryKey(),
+	name: text("name").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true })
+		.defaultNow()
+		.notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true })
+		.defaultNow()
+		.$onUpdate(() => new Date())
+		.notNull(),
+});
+
+export const organizationMember = pgTable(
+	"organization_member",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		role: memberRole("role").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("organization_member_org_user_uidx").on(
+			table.organizationId,
+			table.userId,
+		),
+		index("organization_member_user_idx").on(table.userId),
+	],
+);
+
+export const campus = pgTable(
+	"campus",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		code: text("code").notNull(),
+		name: text("name").notNull(),
+		city: text("city").notNull(),
+		address: text("address").notNull(),
+		roomCount: integer("room_count").default(0).notNull(),
+		capacity: integer("capacity").default(0).notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("campus_org_code_uidx").on(table.organizationId, table.code),
+		index("campus_org_idx").on(table.organizationId),
+	],
+);
+
+export const teacher = pgTable(
+	"teacher",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+		name: text("name").notNull(),
+		phone: text("phone"),
+		subjects: text("subjects").array().notNull(),
+		weeklyCapacityHours: integer("weekly_capacity_hours").default(0).notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [index("teacher_org_idx").on(table.organizationId)],
+);
+
+export const teacherCampus = pgTable(
+	"teacher_campus",
+	{
+		teacherId: uuid("teacher_id")
+			.notNull()
+			.references(() => teacher.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id, { onDelete: "cascade" }),
+	},
+	(table) => [
+		uniqueIndex("teacher_campus_uidx").on(table.teacherId, table.campusId),
+	],
+);
+
+export const course = pgTable(
+	"course",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		code: text("code").notNull(),
+		name: text("name").notNull(),
+		category: courseCategory("category").notNull(),
+		level: text("level").notNull(),
+		durationMinutes: integer("duration_minutes").notNull(),
+		listPriceInCents: integer("list_price_in_cents").notNull(),
+		lessonsPerPackage: integer("lessons_per_package").notNull(),
+		tags: text("tags").array().notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("course_org_code_uidx").on(table.organizationId, table.code),
+		index("course_org_idx").on(table.organizationId),
+	],
+);
+
+export const student = pgTable(
+	"student",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		name: text("name").notNull(),
+		guardianName: text("guardian_name").notNull(),
+		guardianPhone: text("guardian_phone").notNull(),
+		birthDate: date("birth_date"),
+		status: studentStatus("status").default("trial").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		index("student_org_idx").on(table.organizationId),
+		index("student_campus_idx").on(table.campusId),
+		index("student_guardian_phone_idx").on(table.guardianPhone),
+	],
+);
+
+export const lead = pgTable(
+	"lead",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id").references(() => campus.id, {
+			onDelete: "set null",
+		}),
+		interestedCourseId: uuid("interested_course_id").references(
+			() => course.id,
+			{
+				onDelete: "set null",
+			},
+		),
+		ownerUserId: text("owner_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		name: text("name").notNull(),
+		phone: text("phone").notNull(),
+		source: text("source").notNull(),
+		stage: leadStage("stage").default("new").notNull(),
+		nextFollowAt: timestamp("next_follow_at", { withTimezone: true }),
+		note: text("note"),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		index("lead_org_stage_idx").on(table.organizationId, table.stage),
+		index("lead_owner_follow_idx").on(table.ownerUserId, table.nextFollowAt),
+	],
+);
+
+export const classGroup = pgTable(
+	"class_group",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		courseId: uuid("course_id")
+			.notNull()
+			.references(() => course.id),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		teacherId: uuid("teacher_id")
+			.notNull()
+			.references(() => teacher.id),
+		name: text("name").notNull(),
+		status: classStatus("status").default("recruiting").notNull(),
+		capacity: integer("capacity").notNull(),
+		scheduleText: text("schedule_text").notNull(),
+		startDate: date("start_date").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		index("class_group_org_idx").on(table.organizationId),
+		index("class_group_campus_status_idx").on(table.campusId, table.status),
+	],
+);
+
+export const enrollment = pgTable(
+	"enrollment",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id),
+		courseId: uuid("course_id")
+			.notNull()
+			.references(() => course.id),
+		classGroupId: uuid("class_group_id").references(() => classGroup.id, {
+			onDelete: "set null",
+		}),
+		purchasedLessons: integer("purchased_lessons").notNull(),
+		remainingLessons: integer("remaining_lessons").notNull(),
+		paidAmountInCents: integer("paid_amount_in_cents").default(0).notNull(),
+		enrolledAt: timestamp("enrolled_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		index("enrollment_student_idx").on(table.studentId),
+		index("enrollment_class_idx").on(table.classGroupId),
+	],
+);
+
+export const lesson = pgTable(
+	"lesson",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		classGroupId: uuid("class_group_id")
+			.notNull()
+			.references(() => classGroup.id, { onDelete: "cascade" }),
+		teacherId: uuid("teacher_id")
+			.notNull()
+			.references(() => teacher.id),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		room: text("room").notNull(),
+		startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+		endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+		status: lessonStatus("status").default("scheduled").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		index("lesson_campus_starts_idx").on(table.campusId, table.startsAt),
+		index("lesson_teacher_starts_idx").on(table.teacherId, table.startsAt),
+	],
+);
+
+export const attendance = pgTable(
+	"attendance",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		lessonId: uuid("lesson_id")
+			.notNull()
+			.references(() => lesson.id, { onDelete: "cascade" }),
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id),
+		status: attendanceStatus("status").notNull(),
+		checkedInAt: timestamp("checked_in_at", { withTimezone: true }),
+		note: text("note"),
+	},
+	(table) => [
+		uniqueIndex("attendance_lesson_student_uidx").on(
+			table.lessonId,
+			table.studentId,
+		),
+		index("attendance_student_idx").on(table.studentId),
+	],
+);
+
+export const invoice = pgTable(
+	"invoice",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id),
+		enrollmentId: uuid("enrollment_id").references(() => enrollment.id, {
+			onDelete: "set null",
+		}),
+		amountInCents: integer("amount_in_cents").notNull(),
+		paidAmountInCents: integer("paid_amount_in_cents").default(0).notNull(),
+		status: invoiceStatus("status").default("pending").notNull(),
+		dueDate: date("due_date").notNull(),
+		issuedAt: timestamp("issued_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		paidAt: timestamp("paid_at", { withTimezone: true }),
+	},
+	(table) => [
+		index("invoice_org_status_due_idx").on(
+			table.organizationId,
+			table.status,
+			table.dueDate,
+		),
+		index("invoice_student_idx").on(table.studentId),
+	],
+);
+
+export const operationTask = pgTable(
+	"operation_task",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		ownerUserId: text("owner_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		title: text("title").notNull(),
+		module: taskModule("module").notNull(),
+		priority: taskPriority("priority").default("medium").notNull(),
+		dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+		relatedEntityType: text("related_entity_type"),
+		relatedEntityId: text("related_entity_id"),
+		completedAt: timestamp("completed_at", { withTimezone: true }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		index("operation_task_owner_due_idx").on(table.ownerUserId, table.dueAt),
+	],
+);
+
+export const organizationRelations = relations(organization, ({ many }) => ({
+	members: many(organizationMember),
+	campuses: many(campus),
+	courses: many(course),
+	students: many(student),
+}));
+
+export const campusRelations = relations(campus, ({ one, many }) => ({
+	organization: one(organization, {
+		fields: [campus.organizationId],
+		references: [organization.id],
+	}),
+	students: many(student),
+	classes: many(classGroup),
+}));
+
+export const studentRelations = relations(student, ({ one, many }) => ({
+	campus: one(campus, { fields: [student.campusId], references: [campus.id] }),
+	enrollments: many(enrollment),
+	attendances: many(attendance),
+	invoices: many(invoice),
+}));
+
+export const classGroupRelations = relations(classGroup, ({ one, many }) => ({
+	campus: one(campus, {
+		fields: [classGroup.campusId],
+		references: [campus.id],
+	}),
+	course: one(course, {
+		fields: [classGroup.courseId],
+		references: [course.id],
+	}),
+	teacher: one(teacher, {
+		fields: [classGroup.teacherId],
+		references: [teacher.id],
+	}),
+	lessons: many(lesson),
+	enrollments: many(enrollment),
+}));

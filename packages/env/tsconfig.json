@@ -1,0 +1,3 @@
+{
+	"extends": "@easy-training/config/tsconfig.base.json"
+}

@@ -1,0 +1,39 @@
+{
+	"name": "easy-training",
+	"private": true,
+	"workspaces": [
+		"apps/*",
+		"packages/*"
+	],
+	"type": "module",
+	"scripts": {
+		"dev": "turbo run dev",
+		"build": "turbo run build",
+		"check-types": "turbo run check-types",
+		"dev:web": "turbo run dev -F web",
+		"dev:server": "turbo run dev -F server",
+		"db:push": "turbo run db:push -F @easy-training/db",
+		"db:studio": "turbo run db:studio -F @easy-training/db",
+		"db:generate": "turbo run db:generate -F @easy-training/db",
+		"db:migrate": "turbo run db:migrate -F @easy-training/db",
+		"db:start": "turbo run db:start -F @easy-training/db",
+		"db:watch": "turbo run db:watch -F @easy-training/db",
+		"db:stop": "turbo run db:stop -F @easy-training/db",
+		"db:down": "turbo run db:down -F @easy-training/db",
+		"check": "biome check .",
+		"check:fix": "biome check --write ."
+	},
+	"dependencies": {
+		"@easy-training/env": "workspace:*",
+		"dotenv": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@easy-training/config": "workspace:*",
+		"@types/node": "catalog:",
+		"turbo": "^2.10.2",
+		"typescript": "catalog:",
+		"@biomejs/biome": "^2.5.2"
+	},
+	"packageManager": "pnpm@11.5.3"
+}
