@@ -42,6 +42,8 @@ import { toast } from "sonner";
 
 import { orpc, queryClient } from "@/utils/orpc";
 
+import { useOrganization } from "./organization-context";
+
 type StudentSelection =
 	| { mode: "existing"; studentId: string }
 	| { mode: "new" }
@@ -65,11 +67,14 @@ export function LeadConversionDialog({
 	lead: LeadRecord;
 	onClose: () => void;
 }) {
-	const optionsQuery = useQuery(
-		orpc.training.leads.conversionOptions.queryOptions({
-			input: { leadId: lead.id },
-		}),
-	);
+	const { organization } = useOrganization();
+	const options = orpc.training.leads.conversionOptions.queryOptions({
+		input: { leadId: lead.id },
+	});
+	const optionsQuery = useQuery({
+		...options,
+		queryKey: [...options.queryKey, { organizationId: organization.id }],
+	});
 	const conversionMutation = useMutation(
 		orpc.training.leads.convert.mutationOptions({
 			onSuccess: () => {

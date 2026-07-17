@@ -25,6 +25,7 @@ import {
 	organization,
 	organizationMember,
 	payment,
+	session,
 	student,
 	user,
 } from "../src/schema";
@@ -78,6 +79,10 @@ function getUserIds(ids: FixtureIds) {
 	];
 }
 
+function getSessionId(userId: string) {
+	return `${userId}-session`;
+}
+
 async function cleanupFixture(ids: FixtureIds) {
 	const organizationIds = [ids.organizationA, ids.organizationB];
 	await db
@@ -108,11 +113,22 @@ async function cleanupFixture(ids: FixtureIds) {
 }
 
 async function seedFixture(ids: FixtureIds) {
+	const userIds = getUserIds(ids);
 	await db.insert(user).values(
-		getUserIds(ids).map((id, index) => ({
+		userIds.map((id, index) => ({
 			id,
 			name: `财务测试用户 ${index}`,
 			email: `${id}@example.invalid`,
+		})),
+	);
+	const now = new Date();
+	await db.insert(session).values(
+		userIds.map((userId) => ({
+			id: getSessionId(userId),
+			token: `${getSessionId(userId)}-token`,
+			userId,
+			expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+			updatedAt: now,
 		})),
 	);
 	await db.insert(organization).values([
@@ -329,11 +345,19 @@ async function expectOrpcError(promise: Promise<unknown>, code: string) {
 	});
 }
 
-function createSessionClient(userId: string, name: string) {
+function createSessionClient(
+	userId: string,
+	name: string,
+	expectedOrganizationId: string,
+) {
 	return createRouterClient(appRouter, {
 		context: {
 			auth: null,
-			session: { user: { id: userId, name } },
+			session: {
+				session: { id: getSessionId(userId) },
+				user: { id: userId, name },
+			},
+			expectedOrganizationId,
 		} as unknown as Context,
 	});
 }
@@ -634,7 +658,7 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 			[ids.campusManager, "campus_manager"],
 			[ids.finance, "finance"],
 		] as const) {
-			const client = createSessionClient(userId, name);
+			const client = createSessionClient(userId, name, ids.organizationA);
 			const result = await client.training.finance.invoices.list({
 				status: "open",
 			});
@@ -645,12 +669,24 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 			[ids.consultant, "consultant"],
 			[ids.teacher, "teacher"],
 		] as const) {
-			const client = createSessionClient(userId, name);
+			const client = createSessionClient(userId, name, ids.organizationA);
 			await expectOrpcError(
 				client.training.finance.invoices.list({ status: "open" }),
 				"FORBIDDEN",
 			);
 		}
+
+		const staleOrganizationClient = createSessionClient(
+			ids.finance,
+			"finance",
+			ids.organizationB,
+		);
+		await expectOrpcError(
+			staleOrganizationClient.training.finance.invoices.list({
+				status: "open",
+			}),
+			"CONFLICT",
+		);
 	} finally {
 		await cleanupFixture(ids);
 	}

@@ -1,4 +1,5 @@
 import { createContext } from "@easy-training/api/context";
+import { EXPECTED_ORGANIZATION_HEADER } from "@easy-training/api/contracts/training";
 import { appRouter } from "@easy-training/api/routers/index";
 import { auth } from "@easy-training/auth";
 import { env } from "@easy-training/env/server";
@@ -20,7 +21,11 @@ app.use(
 	cors({
 		origin: env.CORS_ORIGIN,
 		allowMethods: ["GET", "POST", "OPTIONS"],
-		allowHeaders: ["Content-Type", "Authorization"],
+		allowHeaders: [
+			"Content-Type",
+			"Authorization",
+			EXPECTED_ORGANIZATION_HEADER,
+		],
 		credentials: true,
 	}),
 );

@@ -7,7 +7,8 @@ import {
 	Outlet,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
-import { useEffect } from "react";
+import { LoaderCircleIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { ThemeProvider } from "@/components/theme-provider";
 import { subscribeToAuthChanges } from "@/utils/auth-session-sync";
@@ -34,14 +35,33 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 });
 
 function RootComponent() {
-	useEffect(
-		() =>
-			subscribeToAuthChanges(() => {
+	const [isContextChangePending, setIsContextChangePending] = useState(false);
+
+	useEffect(() => {
+		let fallbackReload: number | undefined;
+		const unsubscribe = subscribeToAuthChanges((change) => {
+			void queryClient.cancelQueries();
+
+			if (change.type === "organization-switch-started") {
 				queryClient.clear();
-				window.location.reload();
-			}),
-		[],
-	);
+				setIsContextChangePending(true);
+				window.clearTimeout(fallbackReload);
+				fallbackReload = window.setTimeout(() => {
+					window.location.reload();
+				}, 10_000);
+				return;
+			}
+
+			window.clearTimeout(fallbackReload);
+			queryClient.clear();
+			window.location.reload();
+		});
+
+		return () => {
+			window.clearTimeout(fallbackReload);
+			unsubscribe();
+		};
+	}, []);
 
 	return (
 		<>
@@ -51,7 +71,7 @@ function RootComponent() {
 				defaultTheme="light"
 				storageKey="easy-training-theme"
 			>
-				<Outlet />
+				{isContextChangePending ? <ContextChangePending /> : <Outlet />}
 				<Toaster richColors />
 			</ThemeProvider>
 			{import.meta.env.DEV ? (
@@ -61,5 +81,20 @@ function RootComponent() {
 				</>
 			) : null}
 		</>
+	);
+}
+
+function ContextChangePending() {
+	return (
+		<main
+			className="grid min-h-screen place-items-center text-muted-foreground text-sm"
+			aria-live="polite"
+			aria-busy="true"
+		>
+			<div className="flex items-center gap-2">
+				<LoaderCircleIcon className="size-4 animate-spin" aria-hidden="true" />
+				<span>正在同步机构信息</span>
+			</div>
+		</main>
 	);
 }

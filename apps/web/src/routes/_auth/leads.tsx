@@ -59,6 +59,7 @@ import { type FormEvent, useDeferredValue, useState } from "react";
 import { toast } from "sonner";
 
 import { LeadConversionDialog } from "@/features/training/lead-conversion-dialog";
+import { useOrganization } from "@/features/training/organization-context";
 import { orpc, queryClient } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth/leads")({ component: LeadsRoute });
@@ -99,6 +100,7 @@ const formStages: Array<{
 
 function LeadsRoute() {
 	const sessionUserId = Route.useRouteContext().session.data?.user.id;
+	const { organization } = useOrganization();
 	const [search, setSearch] = useState("");
 	const [stage, setStage] = useState<LeadFilterStage>("all");
 	const [editor, setEditor] = useState<LeadRecord | null | "new">(null);
@@ -109,7 +111,10 @@ function LeadsRoute() {
 	});
 	const listQuery = useQuery({
 		...listOptions,
-		queryKey: [...listOptions.queryKey, { sessionUserId }],
+		queryKey: [
+			...listOptions.queryKey,
+			{ organizationId: organization.id, sessionUserId },
+		],
 	});
 
 	return (

@@ -2,6 +2,37 @@ import { z } from "zod";
 
 export type EntityId = string;
 
+export const EXPECTED_ORGANIZATION_HEADER = "X-Expected-Organization-Id";
+
+export const organizationRoleSchema = z.enum([
+	"owner",
+	"admin",
+	"campus_manager",
+	"consultant",
+	"teacher",
+	"finance",
+]);
+
+export const organizationSummarySchema = z.object({
+	id: z.uuid(),
+	name: z.string(),
+	role: organizationRoleSchema,
+});
+
+export const currentOrganizationSchema = organizationSummarySchema.extend({
+	organizations: z.array(organizationSummarySchema).min(1),
+});
+
+export const selectOrganizationInputSchema = z.object({
+	organizationId: z.uuid(),
+});
+
+export type OrganizationSummary = z.infer<typeof organizationSummarySchema>;
+export type CurrentOrganization = z.infer<typeof currentOrganizationSchema>;
+export type SelectOrganizationInput = z.infer<
+	typeof selectOrganizationInputSchema
+>;
+
 export type LeadStage =
 	| "new"
 	| "contacted"

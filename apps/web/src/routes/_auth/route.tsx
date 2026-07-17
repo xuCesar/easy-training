@@ -3,6 +3,7 @@ import { Button, buttonVariants } from "@easy-training/ui/components/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
+	DropdownMenuGroup,
 	DropdownMenuItem,
 	DropdownMenuLabel,
 	DropdownMenuSeparator,
@@ -24,7 +25,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@easy-training/ui/components/tooltip";
-import { useQuery } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQuery } from "@tanstack/react-query";
 import {
 	createFileRoute,
 	Link,
@@ -36,19 +37,27 @@ import {
 	BellIcon,
 	BookOpenIcon,
 	CalendarDaysIcon,
+	CheckIcon,
+	ChevronsUpDownIcon,
 	LayoutDashboardIcon,
+	LoaderCircleIcon,
 	MenuIcon,
 	ReceiptTextIcon,
 	SearchIcon,
 	UsersRoundIcon,
 	XIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { OrganizationProvider } from "@/features/training/organization-context";
 import { authClient } from "@/lib/auth-client";
-import { notifyAuthChange } from "@/utils/auth-session-sync";
-import { orpc, queryClient } from "@/utils/orpc";
+import {
+	notifyAuthChange,
+	notifyOrganizationChange,
+	notifyOrganizationSwitchStarted,
+} from "@/utils/auth-session-sync";
+import { orpc, queryClient, setExpectedOrganizationId } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth")({
 	component: AuthLayout,
@@ -85,8 +94,14 @@ const navigation = [
 	},
 ] as const;
 
+const ORGANIZATION_SWITCH_MUTATION_KEY = "organization-switch";
+
 function AuthLayout() {
 	const [mobileNavOpen, setMobileNavOpen] = useState(false);
+	const [isSwitchingOrganization, setIsSwitchingOrganization] = useState(false);
+	const [readyOrganizationId, setReadyOrganizationId] = useState<string | null>(
+		null,
+	);
 	const session = Route.useRouteContext().session.data;
 	const organizationOptions = orpc.training.organization.current.queryOptions();
 	const organizationQuery = useQuery({
@@ -97,10 +112,74 @@ function AuthLayout() {
 		],
 	});
 	const organization = organizationQuery.data;
+	useLayoutEffect(() => {
+		if (!organization || isSwitchingOrganization) {
+			setExpectedOrganizationId(null);
+			setReadyOrganizationId(null);
+			return;
+		}
+
+		setExpectedOrganizationId(organization.id);
+		setReadyOrganizationId(organization.id);
+	}, [isSwitchingOrganization, organization]);
+	const organizationSwitchMutation = useMutation({
+		...orpc.training.organization.select.mutationOptions(),
+		mutationKey: [ORGANIZATION_SWITCH_MUTATION_KEY],
+	});
+	const activeBusinessMutationCount = useIsMutating({
+		predicate: (mutation) =>
+			mutation.options.mutationKey?.[0] !== ORGANIZATION_SWITCH_MUTATION_KEY,
+	});
 	const pathname = useRouterState({
 		select: (state) => state.location.pathname,
 	});
 	const initials = session?.user.name.slice(0, 1) ?? "U";
+	const organizationSwitchDisabled =
+		isSwitchingOrganization || activeBusinessMutationCount > 0;
+
+	async function selectOrganization(organizationId: string) {
+		if (
+			organizationSwitchDisabled ||
+			!organization ||
+			organization.id === organizationId
+		) {
+			return;
+		}
+
+		setMobileNavOpen(false);
+		setIsSwitchingOrganization(true);
+		setExpectedOrganizationId(null);
+		notifyOrganizationSwitchStarted();
+
+		try {
+			const nextOrganization = await organizationSwitchMutation.mutateAsync({
+				organizationId,
+			});
+			await queryClient.cancelQueries();
+			queryClient.clear();
+			notifyOrganizationChange(nextOrganization.id);
+			window.location.reload();
+		} catch (error) {
+			const verifiedOrganization = await organizationQuery.refetch();
+			if (verifiedOrganization.isSuccess) {
+				if (verifiedOrganization.data.id !== organization.id) {
+					await queryClient.cancelQueries();
+					queryClient.clear();
+					notifyOrganizationChange(verifiedOrganization.data.id);
+					window.location.reload();
+					return;
+				}
+
+				setIsSwitchingOrganization(false);
+				notifyOrganizationChange(verifiedOrganization.data.id);
+				toast.error(`切换机构失败：${getErrorMessage(error)}`);
+				return;
+			}
+
+			toast.error("无法确认当前机构，正在重新加载。");
+			window.location.reload();
+		}
+	}
 
 	return (
 		<TooltipProvider>
@@ -149,17 +228,70 @@ function AuthLayout() {
 								/>
 							</SheetContent>
 						</Sheet>
-						<div className="min-w-0">
+						<div className="min-w-0 max-w-[11rem] sm:max-w-xs">
 							{organizationQuery.isPending ? (
 								<Skeleton className="h-4 w-28" />
+							) : organization && organization.organizations.length > 1 ? (
+								<DropdownMenu>
+									<DropdownMenuTrigger
+										disabled={organizationSwitchDisabled}
+										render={
+											<Button
+												variant="ghost"
+												className="h-auto min-w-0 max-w-full gap-1 px-1 py-0.5 text-left"
+												aria-label={`切换机构，当前为${organization.name}`}
+											/>
+										}
+									>
+										<span className="min-w-0">
+											<span className="block truncate font-medium text-sm">
+												{organization.name}
+											</span>
+											<span className="block text-muted-foreground text-xs">
+												{formatRole(organization.role)}
+											</span>
+										</span>
+										<ChevronsUpDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+									</DropdownMenuTrigger>
+									<DropdownMenuContent
+										align="start"
+										className="w-64 max-w-[calc(100vw-2rem)]"
+									>
+										<DropdownMenuGroup>
+											<DropdownMenuLabel>切换机构</DropdownMenuLabel>
+										</DropdownMenuGroup>
+										<DropdownMenuSeparator />
+										<DropdownMenuGroup>
+											{organization.organizations.map((item) => (
+												<DropdownMenuItem
+													key={item.id}
+													disabled={item.id === organization.id}
+													onClick={() => void selectOrganization(item.id)}
+												>
+													<span className="min-w-0 flex-1">
+														<span className="block truncate">{item.name}</span>
+														<span className="block text-muted-foreground text-xs">
+															{formatRole(item.role)}
+														</span>
+													</span>
+													{item.id === organization.id ? (
+														<CheckIcon className="size-4 shrink-0" />
+													) : null}
+												</DropdownMenuItem>
+											))}
+										</DropdownMenuGroup>
+									</DropdownMenuContent>
+								</DropdownMenu>
 							) : (
-								<p className="truncate font-medium text-sm">
-									{organization?.name ?? "机构信息不可用"}
-								</p>
+								<>
+									<p className="truncate font-medium text-sm">
+										{organization?.name ?? "机构信息不可用"}
+									</p>
+									<p className="text-muted-foreground text-xs">
+										{formatRole(organization?.role)}
+									</p>
+								</>
 							)}
-							<p className="text-muted-foreground text-xs">
-								{formatRole(organization?.role)}
-							</p>
 						</div>
 						<div className="ml-auto hidden w-full max-w-sm md:block">
 							<div className="relative">
@@ -200,36 +332,86 @@ function AuthLayout() {
 								</span>
 							</DropdownMenuTrigger>
 							<DropdownMenuContent align="end" className="w-48">
-								<DropdownMenuLabel>{session?.user.email}</DropdownMenuLabel>
+								<DropdownMenuGroup>
+									<DropdownMenuLabel>{session?.user.email}</DropdownMenuLabel>
+								</DropdownMenuGroup>
 								<DropdownMenuSeparator />
-								<DropdownMenuItem
-									onClick={async () => {
-										const result = await authClient.signOut();
-										if (result.error) {
-											toast.error(
-												result.error.message ||
-													result.error.statusText ||
-													"退出失败，请稍后重试。",
-											);
-											return;
-										}
-										queryClient.clear();
-										notifyAuthChange();
-										window.location.assign("/login");
-									}}
-								>
-									退出登录
-								</DropdownMenuItem>
+								<DropdownMenuGroup>
+									<DropdownMenuItem
+										onClick={async () => {
+											const result = await authClient.signOut();
+											if (result.error) {
+												toast.error(
+													result.error.message ||
+														result.error.statusText ||
+														"退出失败，请稍后重试。",
+												);
+												return;
+											}
+											queryClient.clear();
+											notifyAuthChange();
+											window.location.assign("/login");
+										}}
+									>
+										退出登录
+									</DropdownMenuItem>
+								</DropdownMenuGroup>
 							</DropdownMenuContent>
 						</DropdownMenu>
 					</header>
 					<main className="mx-auto w-full max-w-7xl p-4 lg:p-6">
-						<Outlet />
+						{isSwitchingOrganization ? (
+							<OrganizationSwitchingState />
+						) : organizationQuery.isError ? (
+							<section className="grid min-h-72 place-items-center border">
+								<div className="flex flex-col items-center gap-3 text-center">
+									<h1 className="font-semibold text-lg">机构信息加载失败</h1>
+									<p className="text-muted-foreground text-sm">
+										{organizationQuery.error.message}
+									</p>
+									<Button onClick={() => organizationQuery.refetch()}>
+										重试
+									</Button>
+								</div>
+							</section>
+						) : organization && readyOrganizationId === organization.id ? (
+							<OrganizationProvider
+								value={{
+									organization,
+									isSwitching: isSwitchingOrganization,
+								}}
+							>
+								<Outlet />
+							</OrganizationProvider>
+						) : (
+							<OrganizationSwitchingState label="正在加载机构信息" />
+						)}
 					</main>
 				</div>
 			</div>
 		</TooltipProvider>
 	);
+}
+
+function OrganizationSwitchingState({
+	label = "正在切换机构",
+}: {
+	label?: string;
+}) {
+	return (
+		<div
+			className="flex min-h-32 items-center justify-center gap-2 text-muted-foreground text-sm"
+			role="status"
+			aria-live="polite"
+		>
+			<LoaderCircleIcon className="size-4 animate-spin" aria-hidden="true" />
+			<span>{label}</span>
+		</div>
+	);
+}
+
+function getErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : "请稍后重试。";
 }
 
 const roleLabels: Record<string, string> = {

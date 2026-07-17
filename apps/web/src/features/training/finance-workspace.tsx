@@ -90,8 +90,10 @@ const paymentMethods: Array<{ value: PaymentMethod; label: string }> = [
 ];
 
 export function FinanceWorkspace({
+	organizationId,
 	sessionUserId,
 }: {
+	organizationId: string;
 	sessionUserId?: string;
 }) {
 	const [search, setSearch] = useState("");
@@ -105,7 +107,7 @@ export function FinanceWorkspace({
 	});
 	const listQuery = useQuery({
 		...listOptions,
-		queryKey: [...listOptions.queryKey, { sessionUserId }],
+		queryKey: [...listOptions.queryKey, { organizationId, sessionUserId }],
 	});
 
 	return (
@@ -169,6 +171,7 @@ export function FinanceWorkspace({
 				<InvoiceDetailSheet
 					key={selectedInvoiceId}
 					invoiceId={selectedInvoiceId}
+					organizationId={organizationId}
 					onClose={() => setSelectedInvoiceId(null)}
 				/>
 			) : null}
@@ -315,18 +318,22 @@ function InvoiceResults({
 
 function InvoiceDetailSheet({
 	invoiceId,
+	organizationId,
 	onClose,
 }: {
 	invoiceId: string;
+	organizationId: string;
 	onClose: () => void;
 }) {
 	const [paymentFormGeneration, setPaymentFormGeneration] = useState(0);
 	const [paymentPending, setPaymentPending] = useState(false);
-	const detailQuery = useQuery(
-		orpc.training.finance.invoices.detail.queryOptions({
-			input: { id: invoiceId },
-		}),
-	);
+	const detailOptions = orpc.training.finance.invoices.detail.queryOptions({
+		input: { id: invoiceId },
+	});
+	const detailQuery = useQuery({
+		...detailOptions,
+		queryKey: [...detailOptions.queryKey, { organizationId }],
+	});
 
 	return (
 		<Sheet

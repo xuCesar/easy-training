@@ -1,3 +1,4 @@
+import { EXPECTED_ORGANIZATION_HEADER } from "@easy-training/api/contracts/training";
 import type { AppRouterClient } from "@easy-training/api/routers/index";
 import { env } from "@easy-training/env/web";
 import { createORPCClient } from "@orpc/client";
@@ -24,6 +25,12 @@ export function createQueryClient() {
 }
 
 export const queryClient = createQueryClient();
+
+let expectedOrganizationId: string | null = null;
+
+export function setExpectedOrganizationId(organizationId: string | null): void {
+	expectedOrganizationId = organizationId;
+}
 
 function getServerUrl(url: string) {
 	const normalized = url.endsWith("/") ? url.slice(0, -1) : url;
@@ -56,6 +63,10 @@ function getServerUrl(url: string) {
 }
 export const link = new RPCLink({
 	url: `${getServerUrl(env.VITE_SERVER_URL)}/rpc`,
+	headers: () =>
+		expectedOrganizationId
+			? { [EXPECTED_ORGANIZATION_HEADER]: expectedOrganizationId }
+			: {},
 	fetch(url, options) {
 		return fetch(url, {
 			...options,

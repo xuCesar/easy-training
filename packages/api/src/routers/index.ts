@@ -6,6 +6,7 @@ import {
 	createLeadInputSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
+	currentOrganizationSchema,
 	dashboardSnapshotSchema,
 	invoiceDetailInputSchema,
 	invoiceDetailSchema,
@@ -14,9 +15,11 @@ import {
 	leadConversionOptionsInputSchema,
 	leadConversionOptionsSchema,
 	leadListInputSchema,
+	selectOrganizationInputSchema,
 	updateLeadInputSchema,
 } from "../contracts/training";
 import {
+	currentOrganizationProcedure,
 	financeProcedure,
 	leadProcedure,
 	organizationProcedure,
@@ -33,7 +36,25 @@ import {
 	listInvoices,
 } from "../repositories/finance";
 import { createLead, listLeads, updateLead } from "../repositories/leads";
+import {
+	type CurrentOrganization as CurrentOrganizationContext,
+	selectCurrentOrganization,
+} from "../repositories/organization";
 import { getTrainingDashboardSnapshot } from "../repositories/training-dashboard";
+
+function toCurrentOrganizationResponse(
+	context: Pick<
+		CurrentOrganizationContext,
+		"organization" | "role" | "organizations"
+	>,
+) {
+	return {
+		id: context.organization.id,
+		name: context.organization.name,
+		role: context.role,
+		organizations: context.organizations,
+	};
+}
 
 export const appRouter = {
 	healthCheck: publicProcedure.handler(() => {
@@ -47,11 +68,21 @@ export const appRouter = {
 	}),
 	training: {
 		organization: {
-			current: organizationProcedure.handler(({ context }) => ({
-				id: context.organization.id,
-				name: context.organization.name,
-				role: context.role,
-			})),
+			current: currentOrganizationProcedure
+				.output(currentOrganizationSchema)
+				.handler(({ context }) => toCurrentOrganizationResponse(context)),
+			select: protectedProcedure
+				.input(selectOrganizationInputSchema)
+				.output(currentOrganizationSchema)
+				.handler(async ({ context, input }) => {
+					const currentOrganization = await selectCurrentOrganization({
+						userId: context.session.user.id,
+						sessionId: context.session.session.id,
+						organizationId: input.organizationId,
+					});
+
+					return toCurrentOrganizationResponse(currentOrganization);
+				}),
 		},
 		leads: {
 			conversionOptions: leadProcedure

@@ -3,6 +3,7 @@ import { Skeleton } from "@easy-training/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
+import { useOrganization } from "@/features/training/organization-context";
 import { TrainingDashboard } from "@/features/training/training-dashboard";
 import { orpc } from "@/utils/orpc";
 
@@ -12,10 +13,14 @@ export const Route = createFileRoute("/_auth/dashboard")({
 
 function DashboardRoute() {
 	const sessionUserId = Route.useRouteContext().session.data?.user.id;
+	const { organization } = useOrganization();
 	const snapshotOptions = orpc.training.snapshot.queryOptions();
 	const snapshotQuery = useQuery({
 		...snapshotOptions,
-		queryKey: [...snapshotOptions.queryKey, { sessionUserId }],
+		queryKey: [
+			...snapshotOptions.queryKey,
+			{ organizationId: organization.id, sessionUserId },
+		],
 	});
 
 	if (snapshotQuery.isPending) {

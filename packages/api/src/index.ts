@@ -16,7 +16,7 @@ export const o = os.$context<Context>();
 export const publicProcedure = o;
 
 const requireAuth = o.middleware(async ({ context, next }) => {
-	if (!context.session?.user) {
+	if (!context.session?.user || !context.session.session) {
 		throw new ORPCError("UNAUTHORIZED");
 	}
 	return next({
@@ -31,19 +31,23 @@ export const protectedProcedure = publicProcedure.use(requireAuth);
 function createOrganizationMiddleware(
 	allowedRoles?: ReadonlySet<OrganizationRole>,
 	forbiddenMessage = "当前角色无权访问该功能。",
+	requireExpectedOrganization = true,
 ) {
 	return requireAuth.concat(async ({ context, next }) => {
 		const sessionUser = context.session.user;
-		let currentOrganization: CurrentOrganization;
-
-		try {
-			currentOrganization = await getOrCreateCurrentOrganization({
+		const currentOrganization: CurrentOrganization =
+			await getOrCreateCurrentOrganization({
 				userId: sessionUser.id,
 				userName: sessionUser.name,
+				sessionId: context.session.session.id,
 			});
-		} catch {
-			throw new ORPCError("INTERNAL_SERVER_ERROR", {
-				message: "暂时无法加载机构信息，请稍后重试。",
+
+		if (
+			requireExpectedOrganization &&
+			context.expectedOrganizationId !== currentOrganization.organization.id
+		) {
+			throw new ORPCError("CONFLICT", {
+				message: "机构上下文已变化，请刷新页面后重试。",
 			});
 		}
 
@@ -61,6 +65,11 @@ function createOrganizationMiddleware(
 	});
 }
 
+const requireCurrentOrganization = createOrganizationMiddleware(
+	undefined,
+	undefined,
+	false,
+);
 const requireOrganization = createOrganizationMiddleware();
 const requireLeadManager = createOrganizationMiddleware(
 	leadManagementRoles,
@@ -72,5 +81,8 @@ const requireFinanceManager = createOrganizationMiddleware(
 );
 
 export const organizationProcedure = publicProcedure.use(requireOrganization);
+export const currentOrganizationProcedure = publicProcedure.use(
+	requireCurrentOrganization,
+);
 export const leadProcedure = publicProcedure.use(requireLeadManager);
 export const financeProcedure = publicProcedure.use(requireFinanceManager);
