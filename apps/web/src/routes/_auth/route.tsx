@@ -43,8 +43,10 @@ import {
 	XIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { authClient } from "@/lib/auth-client";
+import { notifyAuthChange } from "@/utils/auth-session-sync";
 import { orpc, queryClient } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth")({
@@ -77,11 +79,16 @@ const navigation = [
 
 function AuthLayout() {
 	const [mobileNavOpen, setMobileNavOpen] = useState(false);
-	const organizationQuery = useQuery(
-		orpc.training.organization.current.queryOptions(),
-	);
-	const organization = organizationQuery.data;
 	const session = Route.useRouteContext().session.data;
+	const organizationOptions = orpc.training.organization.current.queryOptions();
+	const organizationQuery = useQuery({
+		...organizationOptions,
+		queryKey: [
+			...organizationOptions.queryKey,
+			{ sessionUserId: session?.user.id },
+		],
+	});
+	const organization = organizationQuery.data;
 	const pathname = useRouterState({
 		select: (state) => state.location.pathname,
 	});
@@ -188,8 +195,17 @@ function AuthLayout() {
 								<DropdownMenuSeparator />
 								<DropdownMenuItem
 									onClick={async () => {
+										const result = await authClient.signOut();
+										if (result.error) {
+											toast.error(
+												result.error.message ||
+													result.error.statusText ||
+													"退出失败，请稍后重试。",
+											);
+											return;
+										}
 										queryClient.clear();
-										await authClient.signOut();
+										notifyAuthChange();
 										window.location.assign("/login");
 									}}
 								>

@@ -7,9 +7,11 @@ import {
 	Outlet,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
+import { useEffect } from "react";
 
 import { ThemeProvider } from "@/components/theme-provider";
-import type { orpc } from "@/utils/orpc";
+import { subscribeToAuthChanges } from "@/utils/auth-session-sync";
+import { type orpc, queryClient } from "@/utils/orpc";
 
 import "../index.css";
 
@@ -32,6 +34,15 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 });
 
 function RootComponent() {
+	useEffect(
+		() =>
+			subscribeToAuthChanges(() => {
+				queryClient.clear();
+				window.location.reload();
+			}),
+		[],
+	);
+
 	return (
 		<>
 			<HeadContent />

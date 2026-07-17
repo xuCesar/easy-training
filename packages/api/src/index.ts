@@ -1,5 +1,9 @@
 import { ORPCError, os } from "@orpc/server";
 
+import {
+	leadManagementRoles,
+	type OrganizationRole,
+} from "./authorization/training";
 import type { Context } from "./context";
 import {
 	type CurrentOrganization,
@@ -22,15 +26,6 @@ const requireAuth = o.middleware(async ({ context, next }) => {
 });
 
 export const protectedProcedure = publicProcedure.use(requireAuth);
-
-type OrganizationRole = CurrentOrganization["role"];
-
-const leadManagementRoles = new Set<OrganizationRole>([
-	"owner",
-	"admin",
-	"campus_manager",
-	"consultant",
-]);
 
 function createOrganizationMiddleware(
 	allowedRoles?: ReadonlySet<OrganizationRole>,

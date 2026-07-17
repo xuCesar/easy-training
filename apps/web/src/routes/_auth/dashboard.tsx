@@ -11,7 +11,12 @@ export const Route = createFileRoute("/_auth/dashboard")({
 });
 
 function DashboardRoute() {
-	const snapshotQuery = useQuery(orpc.training.snapshot.queryOptions());
+	const sessionUserId = Route.useRouteContext().session.data?.user.id;
+	const snapshotOptions = orpc.training.snapshot.queryOptions();
+	const snapshotQuery = useQuery({
+		...snapshotOptions,
+		queryKey: [...snapshotOptions.queryKey, { sessionUserId }],
+	});
 
 	if (snapshotQuery.isPending) {
 		return <DashboardSkeleton />;

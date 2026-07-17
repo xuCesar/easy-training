@@ -2,10 +2,10 @@ import type { RouterClient } from "@orpc/server";
 
 import {
 	createLeadInputSchema,
+	dashboardSnapshotSchema,
 	leadListInputSchema,
 	updateLeadInputSchema,
 } from "../contracts/training";
-import { getTrainingSnapshot } from "../data/training";
 import {
 	leadProcedure,
 	organizationProcedure,
@@ -13,6 +13,7 @@ import {
 	publicProcedure,
 } from "../index";
 import { createLead, listLeads, updateLead } from "../repositories/leads";
+import { getTrainingDashboardSnapshot } from "../repositories/training-dashboard";
 
 export const appRouter = {
 	healthCheck: publicProcedure.handler(() => {
@@ -67,7 +68,15 @@ export const appRouter = {
 					),
 				),
 		},
-		snapshot: organizationProcedure.handler(async () => getTrainingSnapshot()),
+		snapshot: organizationProcedure
+			.output(dashboardSnapshotSchema)
+			.handler(({ context }) =>
+				getTrainingDashboardSnapshot({
+					organizationId: context.organization.id,
+					userId: context.session.user.id,
+					role: context.role,
+				}),
+			),
 	},
 };
 export type AppRouter = typeof appRouter;

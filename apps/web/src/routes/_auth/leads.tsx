@@ -96,15 +96,18 @@ const formStages: Array<{
 ];
 
 function LeadsRoute() {
+	const sessionUserId = Route.useRouteContext().session.data?.user.id;
 	const [search, setSearch] = useState("");
 	const [stage, setStage] = useState<LeadFilterStage>("all");
 	const [editor, setEditor] = useState<LeadRecord | null | "new">(null);
 	const deferredSearch = useDeferredValue(search.trim());
-	const listQuery = useQuery(
-		orpc.training.leads.list.queryOptions({
-			input: { query: deferredSearch || undefined, stage },
-		}),
-	);
+	const listOptions = orpc.training.leads.list.queryOptions({
+		input: { query: deferredSearch || undefined, stage },
+	});
+	const listQuery = useQuery({
+		...listOptions,
+		queryKey: [...listOptions.queryKey, { sessionUserId }],
+	});
 
 	return (
 		<div className="flex flex-col gap-5">

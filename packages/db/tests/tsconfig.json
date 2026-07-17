@@ -1,0 +1,11 @@
+{
+	"extends": "@easy-training/config/tsconfig.base.json",
+	"compilerOptions": {
+		"composite": false,
+		"declaration": false,
+		"declarationMap": false,
+		"noEmit": true,
+		"sourceMap": false
+	},
+	"include": ["./training-dashboard.integration.ts"]
+}

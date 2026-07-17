@@ -86,6 +86,7 @@ pnpm dev:web      # 仅启动 Web
 pnpm dev:server   # 仅启动 API
 pnpm build        # 构建全部应用和包
 pnpm check-types  # 全仓类型检查
+pnpm test:integration # 运行 PostgreSQL 机构隔离与工作台集成测试
 pnpm check        # Biome 只读检查
 pnpm check:fix    # 自动修复可安全处理的格式与 lint 问题
 pnpm db:generate  # 生成 Drizzle migration
@@ -99,6 +100,8 @@ pnpm db:studio    # 打开 Drizzle Studio
 
 招生线索已使用真实 PostgreSQL 数据，支持列表、搜索、阶段筛选、新增、编辑和阶段流转。线索读取与写入仅允许 `owner`、`admin`、`campus_manager`、`consultant`，并按当前机构隔离；`teacher`、`finance` 无权访问线索隐私数据。
 
-运营工作台中的学员、课程、班级、课次、账单和待办仍由 `packages/api/src/data/training.ts` 提供原型快照。后续将按 GitHub Roadmap 逐步迁移为机构维度的真实查询，并完成线索转报名、合同收款、排课签到、课消和续费闭环。
+运营工作台已迁移为机构维度的 PostgreSQL 聚合查询，只返回待跟进线索、学员与报名计数、活跃班级、当日待办、未来 7 日课次和待收款摘要。金额接口统一使用“分”，时间统计暂按 `Asia/Shanghai` 自然日计算；线索和财务数据会按成员角色裁剪，不向无权限角色返回明细。
+
+学员报名、账单生成、收款流水、排课签到和课消仍在后续 Roadmap 中，工作台不会使用 Mock 数据填充尚未产生的业务记录。
 
 本地联调时请统一使用 `http://localhost:3001` 访问 Web。服务端会严格校验带 Cookie 的 RPC 请求来源与 `CORS_ORIGIN`，使用 `127.0.0.1` 和 `localhost` 混用会被浏览器视为不同来源。
