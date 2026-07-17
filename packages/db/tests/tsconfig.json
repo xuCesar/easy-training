@@ -7,5 +7,5 @@
 		"noEmit": true,
 		"sourceMap": false
 	},
-	"include": ["./training-dashboard.integration.ts"]
+	"include": ["./*.integration.ts"]
 }

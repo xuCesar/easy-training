@@ -229,7 +229,10 @@ export const student = pgTable(
 	(table) => [
 		index("student_org_idx").on(table.organizationId),
 		index("student_campus_idx").on(table.campusId),
-		index("student_guardian_phone_idx").on(table.guardianPhone),
+		index("student_org_guardian_phone_idx").on(
+			table.organizationId,
+			table.guardianPhone,
+		),
 	],
 );
 
@@ -303,6 +306,11 @@ export const classGroup = pgTable(
 	},
 	(table) => [
 		index("class_group_org_idx").on(table.organizationId),
+		index("class_group_org_course_status_idx").on(
+			table.organizationId,
+			table.courseId,
+			table.status,
+		),
 		index("class_group_campus_status_idx").on(table.campusId, table.status),
 	],
 );
@@ -314,6 +322,9 @@ export const enrollment = pgTable(
 		organizationId: uuid("organization_id")
 			.notNull()
 			.references(() => organization.id, { onDelete: "cascade" }),
+		leadId: uuid("lead_id").references(() => lead.id, {
+			onDelete: "set null",
+		}),
 		studentId: uuid("student_id")
 			.notNull()
 			.references(() => student.id),
@@ -325,12 +336,18 @@ export const enrollment = pgTable(
 		}),
 		purchasedLessons: integer("purchased_lessons").notNull(),
 		remainingLessons: integer("remaining_lessons").notNull(),
+		amountInCents: integer("amount_in_cents").default(0).notNull(),
 		paidAmountInCents: integer("paid_amount_in_cents").default(0).notNull(),
 		enrolledAt: timestamp("enrolled_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
 	},
 	(table) => [
+		uniqueIndex("enrollment_org_lead_uidx").on(
+			table.organizationId,
+			table.leadId,
+		),
+		index("enrollment_org_idx").on(table.organizationId),
 		index("enrollment_student_idx").on(table.studentId),
 		index("enrollment_class_idx").on(table.classGroupId),
 	],

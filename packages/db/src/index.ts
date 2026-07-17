@@ -9,5 +9,6 @@ export function createDb() {
 
 export const db = createDb();
 
+export * from "./repositories/enrollment-conversion";
 export * from "./repositories/leads";
 export * from "./repositories/organization";

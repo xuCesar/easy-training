@@ -48,6 +48,7 @@ import { Textarea } from "@easy-training/ui/components/textarea";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
+	ArrowRightIcon,
 	LoaderCircleIcon,
 	PencilIcon,
 	PlusIcon,
@@ -57,6 +58,7 @@ import {
 import { type FormEvent, useDeferredValue, useState } from "react";
 import { toast } from "sonner";
 
+import { LeadConversionDialog } from "@/features/training/lead-conversion-dialog";
 import { orpc, queryClient } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth/leads")({ component: LeadsRoute });
@@ -100,6 +102,7 @@ function LeadsRoute() {
 	const [search, setSearch] = useState("");
 	const [stage, setStage] = useState<LeadFilterStage>("all");
 	const [editor, setEditor] = useState<LeadRecord | null | "new">(null);
+	const [conversionLead, setConversionLead] = useState<LeadRecord | null>(null);
 	const deferredSearch = useDeferredValue(search.trim());
 	const listOptions = orpc.training.leads.list.queryOptions({
 		input: { query: deferredSearch || undefined, stage },
@@ -159,6 +162,7 @@ function LeadsRoute() {
 				isFiltered={Boolean(search || stage !== "all")}
 				query={listQuery}
 				onEdit={setEditor}
+				onConvert={setConversionLead}
 			/>
 			<LeadEditor
 				key={editor === "new" ? "new" : (editor?.id ?? "closed")}
@@ -167,6 +171,13 @@ function LeadsRoute() {
 					if (!open) setEditor(null);
 				}}
 			/>
+			{conversionLead ? (
+				<LeadConversionDialog
+					key={conversionLead.id}
+					lead={conversionLead}
+					onClose={() => setConversionLead(null)}
+				/>
+			) : null}
 		</div>
 	);
 }
@@ -175,10 +186,12 @@ function LeadResults({
 	isFiltered,
 	query,
 	onEdit,
+	onConvert,
 }: {
 	isFiltered: boolean;
 	query: ReturnType<typeof useQuery<{ items: LeadRecord[]; total: number }>>;
 	onEdit: (lead: LeadRecord) => void;
+	onConvert: (lead: LeadRecord) => void;
 }) {
 	if (query.isPending) return <LeadsSkeleton />;
 	if (query.isError)
@@ -228,21 +241,31 @@ function LeadResults({
 					</TableHeader>
 					<TableBody>
 						{query.data.items.map((lead) => (
-							<LeadTableRow key={lead.id} lead={lead} onEdit={onEdit} />
+							<LeadTableRow
+								key={lead.id}
+								lead={lead}
+								onEdit={onEdit}
+								onConvert={onConvert}
+							/>
 						))}
 					</TableBody>
 				</Table>
 			</div>
 			<div className="divide-y md:hidden">
 				{query.data.items.map((lead) => (
-					<LeadCompactRow key={lead.id} lead={lead} onEdit={onEdit} />
+					<LeadCompactRow
+						key={lead.id}
+						lead={lead}
+						onEdit={onEdit}
+						onConvert={onConvert}
+					/>
 				))}
 			</div>
 		</section>
 	);
 }
 
-function LeadTableRow({ lead, onEdit }: LeadRowProps) {
+function LeadTableRow({ lead, onEdit, onConvert }: LeadRowProps) {
 	return (
 		<TableRow>
 			<TableCell>
@@ -257,15 +280,21 @@ function LeadTableRow({ lead, onEdit }: LeadRowProps) {
 				{formatFollowAt(lead.nextFollowAt)}
 			</TableCell>
 			<TableCell className="text-right">
-				<Button variant="ghost" size="sm" onClick={() => onEdit(lead)}>
-					<PencilIcon data-icon="inline-start" />
-					编辑
-				</Button>
+				<div className="flex justify-end gap-1">
+					<Button variant="ghost" size="sm" onClick={() => onEdit(lead)}>
+						<PencilIcon data-icon="inline-start" />
+						编辑
+					</Button>
+					<Button variant="ghost" size="sm" onClick={() => onConvert(lead)}>
+						<ArrowRightIcon data-icon="inline-start" />
+						转报名
+					</Button>
+				</div>
 			</TableCell>
 		</TableRow>
 	);
 }
-function LeadCompactRow({ lead, onEdit }: LeadRowProps) {
+function LeadCompactRow({ lead, onEdit, onConvert }: LeadRowProps) {
 	return (
 		<article className="flex flex-col gap-3 p-3">
 			<div className="flex items-start justify-between gap-3">
@@ -275,14 +304,20 @@ function LeadCompactRow({ lead, onEdit }: LeadRowProps) {
 						{lead.phone} · {lead.source}
 					</p>
 				</div>
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					aria-label={`编辑 ${lead.name}`}
-					onClick={() => onEdit(lead)}
-				>
-					<PencilIcon data-icon="inline" />
-				</Button>
+				<div className="flex shrink-0 gap-1">
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						aria-label={`编辑 ${lead.name}`}
+						onClick={() => onEdit(lead)}
+					>
+						<PencilIcon data-icon="inline" />
+					</Button>
+					<Button variant="ghost" size="sm" onClick={() => onConvert(lead)}>
+						<ArrowRightIcon data-icon="inline-start" />
+						转报名
+					</Button>
+				</div>
 			</div>
 			<div className="flex items-center justify-between gap-3">
 				<StageControl lead={lead} />
@@ -296,6 +331,7 @@ function LeadCompactRow({ lead, onEdit }: LeadRowProps) {
 type LeadRowProps = {
 	lead: LeadRecord;
 	onEdit: (lead: LeadRecord) => void;
+	onConvert: (lead: LeadRecord) => void;
 };
 function StageControl({ lead }: Pick<LeadRowProps, "lead">) {
 	const updateMutation = useMutation(

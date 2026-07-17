@@ -7,7 +7,7 @@ import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
 import { onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -25,16 +25,12 @@ app.use(
 	}),
 );
 
-app.use(
-	"/rpc/*",
-	bodyLimit({
-		maxSize: 256 * 1024,
-		onError: (c) =>
-			c.json({ error: { message: "请求内容超过 256 KiB 限制。" } }, 413),
-	}),
-);
-
-app.use("/rpc/*", async (c, next) => {
+const rpcBodyLimit = bodyLimit({
+	maxSize: 256 * 1024,
+	onError: (c) =>
+		c.json({ error: { message: "请求内容超过 256 KiB 限制。" } }, 413),
+});
+const requireTrustedOrigin: MiddlewareHandler = async (c, next) => {
 	if (c.req.method === "GET" || c.req.method === "OPTIONS") {
 		return next();
 	}
@@ -44,7 +40,12 @@ app.use("/rpc/*", async (c, next) => {
 	}
 
 	return next();
-});
+};
+
+app.use("/rpc/*", rpcBodyLimit);
+app.use("/api-reference/*", rpcBodyLimit);
+app.use("/rpc/*", requireTrustedOrigin);
+app.use("/api-reference/*", requireTrustedOrigin);
 
 app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 

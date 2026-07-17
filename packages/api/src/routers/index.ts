@@ -1,8 +1,12 @@
 import type { RouterClient } from "@orpc/server";
 
 import {
+	convertLeadInputSchema,
+	convertLeadResultSchema,
 	createLeadInputSchema,
 	dashboardSnapshotSchema,
+	leadConversionOptionsInputSchema,
+	leadConversionOptionsSchema,
 	leadListInputSchema,
 	updateLeadInputSchema,
 } from "../contracts/training";
@@ -12,6 +16,10 @@ import {
 	protectedProcedure,
 	publicProcedure,
 } from "../index";
+import {
+	convertLead,
+	getLeadConversionOptions,
+} from "../repositories/enrollment-conversion";
 import { createLead, listLeads, updateLead } from "../repositories/leads";
 import { getTrainingDashboardSnapshot } from "../repositories/training-dashboard";
 
@@ -34,6 +42,30 @@ export const appRouter = {
 			})),
 		},
 		leads: {
+			conversionOptions: leadProcedure
+				.input(leadConversionOptionsInputSchema)
+				.output(leadConversionOptionsSchema)
+				.handler(({ context, input }) =>
+					getLeadConversionOptions(
+						{
+							organizationId: context.organization.id,
+							role: context.role,
+						},
+						input,
+					),
+				),
+			convert: leadProcedure
+				.input(convertLeadInputSchema)
+				.output(convertLeadResultSchema)
+				.handler(({ context, input }) =>
+					convertLead(
+						{
+							organizationId: context.organization.id,
+							role: context.role,
+						},
+						input,
+					),
+				),
 			list: leadProcedure
 				.input(leadListInputSchema)
 				.handler(({ context, input }) =>
