@@ -4,6 +4,7 @@ import test from "node:test";
 import { and, eq, inArray } from "drizzle-orm";
 import {
 	type ConvertLeadInput,
+	convertLeadInputSchema,
 	leadConversionOptionsSchema,
 } from "../../api/src/contracts/training";
 import {
@@ -16,6 +17,7 @@ import {
 	classGroup,
 	course,
 	enrollment,
+	invoice,
 	lead,
 	organization,
 	student,
@@ -62,6 +64,7 @@ function createFixtureIds() {
 		leadConcurrent1: randomUUID(),
 		leadConcurrent2: randomUUID(),
 		leadConsultantOverride: randomUUID(),
+		leadComplimentary: randomUUID(),
 		leadB: randomUUID(),
 	};
 }
@@ -71,6 +74,9 @@ type FixtureIds = ReturnType<typeof createFixtureIds>;
 async function cleanupFixture(ids: FixtureIds) {
 	const organizationIds = [ids.organizationA, ids.organizationB];
 
+	await db
+		.delete(invoice)
+		.where(inArray(invoice.organizationId, organizationIds));
 	await db
 		.delete(enrollment)
 		.where(inArray(enrollment.organizationId, organizationIds));
@@ -412,6 +418,12 @@ async function seedFixture(ids: FixtureIds) {
 			phone: "13800138000",
 			stage: "new",
 		},
+		{
+			id: ids.leadComplimentary,
+			name: "零价报名线索",
+			phone: "13800138000",
+			stage: "new",
+		},
 	] as const;
 
 	await db.insert(lead).values([
@@ -446,6 +458,7 @@ function baseConversionInput(
 		classGroupId: null,
 		purchasedLessons: 24,
 		amountInCents: 12_800,
+		invoiceDueDate: "2026-08-31",
 	};
 }
 
@@ -568,6 +581,45 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 				amountInCents: 18_600,
 			},
 		);
+		const [existingInvoice] = await db
+			.select()
+			.from(invoice)
+			.where(eq(invoice.id, existingResult.invoiceId));
+		assert.deepEqual(
+			existingInvoice && {
+				organizationId: existingInvoice.organizationId,
+				studentId: existingInvoice.studentId,
+				enrollmentId: existingInvoice.enrollmentId,
+				amountInCents: existingInvoice.amountInCents,
+				paidAmountInCents: existingInvoice.paidAmountInCents,
+				status: existingInvoice.status,
+				dueDate: existingInvoice.dueDate,
+			},
+			{
+				organizationId: ids.organizationA,
+				studentId: ids.studentMatchingA1,
+				enrollmentId: existingResult.enrollmentId,
+				amountInCents: 18_600,
+				paidAmountInCents: 0,
+				status: "pending",
+				dueDate: "2026-08-31",
+			},
+		);
+		const complimentaryResult = await convertLead(
+			scopeA,
+			convertLeadInputSchema.parse({
+				...baseConversionInput(ids, ids.leadComplimentary),
+				amountInCents: 0,
+			}),
+		);
+		const [complimentaryInvoice] = await db
+			.select()
+			.from(invoice)
+			.where(eq(invoice.id, complimentaryResult.invoiceId));
+		assert.equal(complimentaryInvoice?.amountInCents, 0);
+		assert.equal(complimentaryInvoice?.paidAmountInCents, 0);
+		assert.equal(complimentaryInvoice?.status, "paid");
+		assert.ok(complimentaryInvoice?.paidAt instanceof Date);
 
 		const newResult = await convertLead(scopeA, {
 			...baseConversionInput(ids, ids.leadNew),
@@ -684,9 +736,15 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 			.select({ id: enrollment.id })
 			.from(enrollment)
 			.where(eq(enrollment.leadId, ids.leadRollback));
+		const rolledBackInvoices = await db
+			.select({ id: invoice.id })
+			.from(invoice)
+			.innerJoin(enrollment, eq(enrollment.id, invoice.enrollmentId))
+			.where(eq(enrollment.leadId, ids.leadRollback));
 		assert.equal(rolledBackLead?.stage, "new");
 		assert.equal(rolledBackStudents.length, 0);
 		assert.equal(rolledBackEnrollments.length, 0);
+		assert.equal(rolledBackInvoices.length, 0);
 
 		const concurrentInputs = [ids.leadConcurrent1, ids.leadConcurrent2].map(
 			(leadId, index) => ({

@@ -464,7 +464,7 @@ async function seedFixture(ids: FixtureIds) {
 			enrollmentId: ids.enrollmentA1,
 			amountInCents: 10_000,
 			paidAmountInCents: 2_500,
-			status: "pending",
+			status: "partial",
 			dueDate: "2026-07-17",
 		},
 		{

@@ -61,7 +61,7 @@ export type DashboardReceivableSummaryRow = {
 	studentName: string;
 	courseName: string | null;
 	outstandingAmountInCents: number;
-	status: "pending" | "overdue";
+	status: "pending" | "partial" | "overdue";
 	isPastDue: boolean;
 	dueDate: string;
 };
@@ -120,7 +120,7 @@ function toDashboardLeadStage(
 function toDashboardReceivableStatus(
 	status: (typeof invoice.$inferSelect)["status"],
 ): DashboardReceivableSummaryRow["status"] {
-	if (status === "pending" || status === "overdue") {
+	if (status === "pending" || status === "partial" || status === "overdue") {
 		return status;
 	}
 
@@ -376,7 +376,7 @@ export async function getDashboardReceivableSummary(
 		.where(
 			and(
 				eq(invoice.organizationId, input.organizationId),
-				inArray(invoice.status, ["pending", "overdue"]),
+				inArray(invoice.status, ["pending", "partial", "overdue"]),
 				sql`${outstandingAmount} > 0`,
 			),
 		)

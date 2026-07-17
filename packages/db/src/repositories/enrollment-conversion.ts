@@ -6,6 +6,7 @@ import {
 	classGroup,
 	course,
 	enrollment,
+	invoice,
 	lead,
 	student,
 } from "../schema";
@@ -89,6 +90,7 @@ export type ConvertLeadRecordInput = {
 	classGroupId: string | null;
 	purchasedLessons: number;
 	amountInCents: number;
+	invoiceDueDate: string;
 	canOverridePackageTerms: boolean;
 };
 
@@ -96,6 +98,7 @@ export type ConvertLeadRecordResult = {
 	leadId: string;
 	studentId: string;
 	enrollmentId: string;
+	invoiceId: string;
 	classGroupId: string | null;
 };
 
@@ -465,6 +468,24 @@ export async function convertLeadRecord(
 				throw new Error("Enrollment creation did not return a record.");
 			}
 
+			const isComplimentaryEnrollment = input.amountInCents === 0;
+			const [createdInvoice] = await tx
+				.insert(invoice)
+				.values({
+					organizationId: input.organizationId,
+					studentId,
+					enrollmentId: createdEnrollment.id,
+					amountInCents: input.amountInCents,
+					dueDate: input.invoiceDueDate,
+					status: isComplimentaryEnrollment ? "paid" : "pending",
+					paidAt: isComplimentaryEnrollment ? new Date() : null,
+				})
+				.returning({ id: invoice.id });
+
+			if (!createdInvoice) {
+				throw new Error("Invoice creation did not return a record.");
+			}
+
 			const [updatedLead] = await tx
 				.update(lead)
 				.set({ stage: "enrolled", updatedAt: new Date() })
@@ -485,6 +506,7 @@ export async function convertLeadRecord(
 				leadId: updatedLead.id,
 				studentId,
 				enrollmentId: createdEnrollment.id,
+				invoiceId: createdInvoice.id,
 				classGroupId: input.classGroupId,
 			};
 		});

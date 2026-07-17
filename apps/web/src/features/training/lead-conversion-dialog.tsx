@@ -54,6 +54,7 @@ type ConversionErrorKey =
 	| "courseId"
 	| "purchasedLessons"
 	| "amountInCents"
+	| "invoiceDueDate"
 	| "classGroupId";
 type ConversionErrors = Partial<Record<ConversionErrorKey, string>>;
 
@@ -153,6 +154,7 @@ function LeadConversionForm({
 	const [amountInYuan, setAmountInYuan] = useState(
 		defaultCourse ? formatCentsAsYuan(defaultCourse.listPriceInCents) : "",
 	);
+	const [invoiceDueDate, setInvoiceDueDate] = useState(getShanghaiToday);
 	const [errors, setErrors] = useState<ConversionErrors>({});
 	const selectedStudent =
 		studentSelection?.mode === "existing"
@@ -234,6 +236,7 @@ function LeadConversionForm({
 			classGroupId,
 			purchasedLessons: parsedLessons,
 			amountInCents,
+			invoiceDueDate,
 		};
 		const result = convertLeadInputSchema.safeParse(input);
 		if (!result.success) {
@@ -366,6 +369,18 @@ function LeadConversionForm({
 					inputMode="decimal"
 					readOnly={!options.permissions.canOverridePackageTerms}
 					placeholder="0.00"
+					required
+				/>
+				<ConversionTextField
+					id="conversion-invoice-due-date"
+					label="付款到期日"
+					value={invoiceDueDate}
+					onChange={(value) => {
+						setInvoiceDueDate(value);
+						clearError("invoiceDueDate");
+					}}
+					error={errors.invoiceDueDate}
+					type="date"
 					required
 				/>
 				<ClassField
@@ -630,7 +645,7 @@ function ConversionTextField({
 	value: string;
 	onChange: (value: string) => void;
 	error?: string;
-	type?: "text" | "tel" | "number";
+	type?: "text" | "tel" | "number" | "date";
 	readOnly?: boolean;
 	required?: boolean;
 	maxLength?: number;
@@ -713,8 +728,16 @@ function getConversionErrorKey(path: PropertyKey[]): ConversionErrorKey | null {
 	if (field === "courseId") return "courseId";
 	if (field === "purchasedLessons") return "purchasedLessons";
 	if (field === "amountInCents") return "amountInCents";
+	if (field === "invoiceDueDate") return "invoiceDueDate";
 	if (field === "classGroupId") return "classGroupId";
 	return null;
+}
+
+function getShanghaiToday(): string {
+	const shanghaiOffsetInMilliseconds = 8 * 60 * 60 * 1000;
+	return new Date(Date.now() + shanghaiOffsetInMilliseconds)
+		.toISOString()
+		.slice(0, 10);
 }
 
 function invalidateConversionQueries() {

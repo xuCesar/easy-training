@@ -1,5 +1,6 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
+	check,
 	date,
 	index,
 	integer,
@@ -62,8 +63,17 @@ export const attendanceStatus = pgEnum("attendance_status", [
 export const invoiceStatus = pgEnum("invoice_status", [
 	"paid",
 	"pending",
+	"partial",
 	"overdue",
 	"refunded",
+]);
+export const paymentMethod = pgEnum("payment_method", [
+	"cash",
+	"wechat",
+	"alipay",
+	"bank_transfer",
+	"pos",
+	"other",
 ]);
 export const taskPriority = pgEnum("task_priority", ["high", "medium", "low"]);
 export const taskModule = pgEnum("task_module", [
@@ -438,6 +448,44 @@ export const invoice = pgTable(
 	],
 );
 
+export const payment = pgTable(
+	"payment",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		amountInCents: integer("amount_in_cents").notNull(),
+		receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+		method: paymentMethod("method").notNull(),
+		referenceNo: text("reference_no"),
+		note: text("note"),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		operatorName: text("operator_name").notNull(),
+		requestId: uuid("request_id").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		check("payment_amount_positive_check", sql`${table.amountInCents} > 0`),
+		uniqueIndex("payment_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("payment_org_invoice_received_idx").on(
+			table.organizationId,
+			table.invoiceId,
+			table.receivedAt,
+		),
+	],
+);
+
 export const operationTask = pgTable(
 	"operation_task",
 	{
@@ -485,6 +533,17 @@ export const studentRelations = relations(student, ({ one, many }) => ({
 	enrollments: many(enrollment),
 	attendances: many(attendance),
 	invoices: many(invoice),
+}));
+
+export const invoiceRelations = relations(invoice, ({ many }) => ({
+	payments: many(payment),
+}));
+
+export const paymentRelations = relations(payment, ({ one }) => ({
+	invoice: one(invoice, {
+		fields: [payment.invoiceId],
+		references: [invoice.id],
+	}),
 }));
 
 export const classGroupRelations = relations(classGroup, ({ one, many }) => ({

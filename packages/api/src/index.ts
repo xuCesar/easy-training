@@ -1,6 +1,7 @@
 import { ORPCError, os } from "@orpc/server";
 
 import {
+	financeManagementRoles,
 	leadManagementRoles,
 	type OrganizationRole,
 } from "./authorization/training";
@@ -29,6 +30,7 @@ export const protectedProcedure = publicProcedure.use(requireAuth);
 
 function createOrganizationMiddleware(
 	allowedRoles?: ReadonlySet<OrganizationRole>,
+	forbiddenMessage = "当前角色无权访问该功能。",
 ) {
 	return requireAuth.concat(async ({ context, next }) => {
 		const sessionUser = context.session.user;
@@ -47,7 +49,7 @@ function createOrganizationMiddleware(
 
 		if (allowedRoles && !allowedRoles.has(currentOrganization.role)) {
 			throw new ORPCError("FORBIDDEN", {
-				message: "当前角色无权访问招生线索。",
+				message: forbiddenMessage,
 			});
 		}
 
@@ -60,7 +62,15 @@ function createOrganizationMiddleware(
 }
 
 const requireOrganization = createOrganizationMiddleware();
-const requireLeadManager = createOrganizationMiddleware(leadManagementRoles);
+const requireLeadManager = createOrganizationMiddleware(
+	leadManagementRoles,
+	"当前角色无权访问招生线索。",
+);
+const requireFinanceManager = createOrganizationMiddleware(
+	financeManagementRoles,
+	"当前角色无权访问财务管理。",
+);
 
 export const organizationProcedure = publicProcedure.use(requireOrganization);
 export const leadProcedure = publicProcedure.use(requireLeadManager);
+export const financeProcedure = publicProcedure.use(requireFinanceManager);

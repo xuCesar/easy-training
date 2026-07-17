@@ -38,6 +38,7 @@ import {
 	CalendarDaysIcon,
 	LayoutDashboardIcon,
 	MenuIcon,
+	ReceiptTextIcon,
 	SearchIcon,
 	UsersRoundIcon,
 	XIcon,
@@ -68,6 +69,13 @@ const navigation = [
 		available: true,
 	},
 	{ to: "/leads", label: "招生线索", icon: UsersRoundIcon, available: true },
+	{
+		to: "/finance",
+		label: "应收账单",
+		icon: ReceiptTextIcon,
+		available: true,
+		roles: ["owner", "admin", "campus_manager", "finance"],
+	},
 	{ to: "/dashboard", label: "学员中心", icon: BookOpenIcon, available: false },
 	{
 		to: "/dashboard",
@@ -98,7 +106,7 @@ function AuthLayout() {
 		<TooltipProvider>
 			<div className="min-h-dvh bg-background lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]">
 				<aside className="hidden border-r bg-card lg:flex lg:flex-col">
-					<Sidebar pathname={pathname} />
+					<Sidebar pathname={pathname} role={organization?.role} />
 				</aside>
 				<div className="min-w-0">
 					<header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur lg:px-6">
@@ -135,6 +143,7 @@ function AuthLayout() {
 								<Separator />
 								<Sidebar
 									pathname={pathname}
+									role={organization?.role}
 									mobile
 									onNavigate={() => setMobileNavOpen(false)}
 								/>
@@ -238,10 +247,12 @@ function formatRole(role: string | undefined) {
 
 function Sidebar({
 	pathname,
+	role,
 	mobile = false,
 	onNavigate,
 }: {
 	pathname: string;
+	role?: string;
 	mobile?: boolean;
 	onNavigate?: () => void;
 }) {
@@ -253,6 +264,12 @@ function Sidebar({
 			</div>
 			<nav className="grid gap-1 px-2" aria-label="主导航">
 				{navigation.map((item) => {
+					if (
+						"roles" in item &&
+						!item.roles.some((allowedRole) => allowedRole === role)
+					) {
+						return null;
+					}
 					const Icon = item.icon;
 					if (!item.available)
 						return (

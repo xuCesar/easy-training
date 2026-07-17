@@ -1,0 +1,1 @@
+ALTER TABLE "payment" ADD COLUMN "operator_name" text NOT NULL;

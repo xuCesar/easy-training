@@ -154,12 +154,14 @@ export const convertLeadInputSchema = z.object({
 	classGroupId: z.uuid().nullable().default(null),
 	purchasedLessons: z.number().int().min(1).max(1000),
 	amountInCents: z.number().int().min(0).max(100_000_000),
+	invoiceDueDate: z.iso.date(),
 });
 
 export const convertLeadResultSchema = z.object({
 	leadId: z.uuid(),
 	studentId: z.uuid(),
 	enrollmentId: z.uuid(),
+	invoiceId: z.uuid(),
 	classGroupId: z.uuid().nullable(),
 });
 
@@ -169,6 +171,85 @@ export type LeadConversionOptionsInput = z.infer<
 export type LeadConversionOptions = z.infer<typeof leadConversionOptionsSchema>;
 export type ConvertLeadInput = z.infer<typeof convertLeadInputSchema>;
 export type ConvertLeadResult = z.infer<typeof convertLeadResultSchema>;
+
+const invoiceSettlementStatusSchema = z.enum(["pending", "partial", "paid"]);
+const paymentMethodSchema = z.enum([
+	"cash",
+	"wechat",
+	"alipay",
+	"bankTransfer",
+	"pos",
+	"other",
+]);
+
+export const invoiceListInputSchema = z.object({
+	query: z.string().trim().min(1).max(100).optional(),
+	status: z.enum(["all", "open", "pending", "partial", "paid"]).default("open"),
+});
+
+const invoiceSummarySchema = z.object({
+	id: z.uuid(),
+	studentId: z.uuid(),
+	studentName: z.string(),
+	courseName: z.string().nullable(),
+	amountInCents: z.number().int().nonnegative(),
+	paidAmountInCents: z.number().int().nonnegative(),
+	outstandingAmountInCents: z.number().int().nonnegative(),
+	status: invoiceSettlementStatusSchema,
+	isOverdue: z.boolean(),
+	dueDate: z.iso.date(),
+	issuedAt: z.iso.datetime({ offset: true }),
+});
+
+const paymentRecordSchema = z.object({
+	id: z.uuid(),
+	amountInCents: z.number().int().positive(),
+	receivedAt: z.iso.datetime({ offset: true }),
+	method: paymentMethodSchema,
+	referenceNo: z.string().nullable(),
+	note: z.string().nullable(),
+	operatorName: z.string(),
+	createdAt: z.iso.datetime({ offset: true }),
+});
+
+export const invoiceListResultSchema = z.object({
+	items: z.array(invoiceSummarySchema),
+	total: z.number().int().nonnegative(),
+});
+
+export const invoiceDetailInputSchema = z.object({ id: z.uuid() });
+
+export const invoiceDetailSchema = z.object({
+	invoice: invoiceSummarySchema,
+	payments: z.array(paymentRecordSchema),
+	historicalPaidAmountInCents: z.number().int().nonnegative(),
+});
+
+export const createPaymentInputSchema = z
+	.object({
+		invoiceId: z.uuid(),
+		amountInCents: z.number().int().min(1).max(100_000_000),
+		receivedAt: z.iso.datetime({ offset: true }),
+		method: paymentMethodSchema,
+		referenceNo: z.string().trim().max(100).nullable().default(null),
+		note: z.string().trim().max(500).nullable().default(null),
+		requestId: z.uuid(),
+	})
+	.refine((data) => data.method !== "other" || Boolean(data.note), {
+		message: "选择其他收款方式时请填写备注",
+		path: ["note"],
+	});
+
+export const createPaymentResultSchema = z.object({
+	payment: paymentRecordSchema,
+});
+
+export type InvoiceListInput = z.infer<typeof invoiceListInputSchema>;
+export type InvoiceListResult = z.infer<typeof invoiceListResultSchema>;
+export type InvoiceDetailInput = z.infer<typeof invoiceDetailInputSchema>;
+export type InvoiceDetail = z.infer<typeof invoiceDetailSchema>;
+export type CreatePaymentInput = z.infer<typeof createPaymentInputSchema>;
+export type CreatePaymentResult = z.infer<typeof createPaymentResultSchema>;
 
 const dashboardFollowUpSchema = z.object({
 	id: z.uuid(),

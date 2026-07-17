@@ -4,13 +4,20 @@ import {
 	convertLeadInputSchema,
 	convertLeadResultSchema,
 	createLeadInputSchema,
+	createPaymentInputSchema,
+	createPaymentResultSchema,
 	dashboardSnapshotSchema,
+	invoiceDetailInputSchema,
+	invoiceDetailSchema,
+	invoiceListInputSchema,
+	invoiceListResultSchema,
 	leadConversionOptionsInputSchema,
 	leadConversionOptionsSchema,
 	leadListInputSchema,
 	updateLeadInputSchema,
 } from "../contracts/training";
 import {
+	financeProcedure,
 	leadProcedure,
 	organizationProcedure,
 	protectedProcedure,
@@ -20,6 +27,11 @@ import {
 	convertLead,
 	getLeadConversionOptions,
 } from "../repositories/enrollment-conversion";
+import {
+	createPayment,
+	getInvoiceDetail,
+	listInvoices,
+} from "../repositories/finance";
 import { createLead, listLeads, updateLead } from "../repositories/leads";
 import { getTrainingDashboardSnapshot } from "../repositories/training-dashboard";
 
@@ -99,6 +111,48 @@ export const appRouter = {
 						input,
 					),
 				),
+		},
+		finance: {
+			invoices: {
+				list: financeProcedure
+					.input(invoiceListInputSchema)
+					.output(invoiceListResultSchema)
+					.handler(({ context, input }) =>
+						listInvoices(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+							},
+							input,
+						),
+					),
+				detail: financeProcedure
+					.input(invoiceDetailInputSchema)
+					.output(invoiceDetailSchema)
+					.handler(({ context, input }) =>
+						getInvoiceDetail(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+							},
+							input,
+						),
+					),
+			},
+			payments: {
+				create: financeProcedure
+					.input(createPaymentInputSchema)
+					.output(createPaymentResultSchema)
+					.handler(({ context, input }) =>
+						createPayment(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+							},
+							input,
+						),
+					),
+			},
 		},
 		snapshot: organizationProcedure
 			.output(dashboardSnapshotSchema)

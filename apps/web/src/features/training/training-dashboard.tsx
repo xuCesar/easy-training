@@ -246,6 +246,15 @@ export function TrainingDashboard({ snapshot }: TrainingDashboardProps) {
 						<SectionHeader
 							title="待收款"
 							description="优先关注逾期与临近到期账单"
+							action={
+								<Link
+									to="/finance"
+									className={buttonVariants({ variant: "ghost", size: "sm" })}
+								>
+									查看全部
+									<ArrowRightIcon data-icon="inline-end" />
+								</Link>
+							}
 						/>
 						{snapshot.receivables.length > 0 ? (
 							<div className="divide-y">

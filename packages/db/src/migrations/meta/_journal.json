@@ -15,6 +15,20 @@
       "when": 1784261471392,
       "tag": "0001_sparkling_bushwacker",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784263778301,
+      "tag": "0002_optimal_warpath",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784266248215,
+      "tag": "0003_overconfident_ezekiel",
+      "breakpoints": true
     }
   ]
 }
