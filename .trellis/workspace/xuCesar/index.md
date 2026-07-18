@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
+- **Total Sessions**: 3
 - **Last Active**: 2026-07-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~77 | Active |
+| `journal-1.md` | ~111 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-07-18 | 完成 P1 入班考勤与课时消耗 | `e89e97e` | `develop` |
 | 2 | 2026-07-18 | P1 课程、班级与排课基础能力 | `faee559` | `develop` |
 | 1 | 2026-07-18 | 完成学员档案阶段验收与权限加固 | `7a00c8e`, `03cea28`, `e1f20f8` | `develop` |
 <!-- @@@/auto:session-history -->

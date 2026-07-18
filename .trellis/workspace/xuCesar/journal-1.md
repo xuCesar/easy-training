@@ -75,3 +75,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: 完成 P1 入班考勤与课时消耗
+
+**Date**: 2026-07-18
+**Task**: 完成 P1 入班考勤与课时消耗
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+交付报名入班、课次点名结课和不可变消课账本；补齐跨层契约、教务工作台与 PostgreSQL 并发/回滚集成测试，并关闭 GitHub #14。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e89e97e` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
