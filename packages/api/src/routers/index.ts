@@ -1,26 +1,35 @@
 import type { RouterClient } from "@orpc/server";
 
 import {
+	addLeadFollowUpInputSchema,
 	convertLeadInputSchema,
 	convertLeadResultSchema,
 	createLeadInputSchema,
+	createLeadResultSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
 	currentOrganizationSchema,
 	dashboardSnapshotSchema,
+	exportLeadsInputSchema,
+	exportLeadsResultSchema,
 	invoiceDetailInputSchema,
 	invoiceDetailSchema,
 	invoiceListInputSchema,
 	invoiceListResultSchema,
 	leadConversionOptionsInputSchema,
 	leadConversionOptionsSchema,
+	leadFilterOptionsSchema,
+	leadHistoryInputSchema,
+	leadHistoryResultSchema,
 	leadListInputSchema,
+	leadListResultSchema,
 	selectOrganizationInputSchema,
 	updateLeadInputSchema,
 } from "../contracts/training";
 import {
 	currentOrganizationProcedure,
 	financeProcedure,
+	leadExportProcedure,
 	leadProcedure,
 	organizationProcedure,
 	protectedProcedure,
@@ -35,7 +44,15 @@ import {
 	getInvoiceDetail,
 	listInvoices,
 } from "../repositories/finance";
-import { createLead, listLeads, updateLead } from "../repositories/leads";
+import {
+	addLeadFollowUp,
+	createLead,
+	exportLeads,
+	getLeadFilterOptions,
+	getLeadHistory,
+	listLeads,
+	updateLead,
+} from "../repositories/leads";
 import {
 	type CurrentOrganization as CurrentOrganizationContext,
 	selectCurrentOrganization,
@@ -85,6 +102,14 @@ export const appRouter = {
 				}),
 		},
 		leads: {
+			filterOptions: leadProcedure
+				.output(leadFilterOptionsSchema)
+				.handler(({ context }) =>
+					getLeadFilterOptions({
+						organizationId: context.organization.id,
+						userId: context.session.user.id,
+					}),
+				),
 			conversionOptions: leadProcedure
 				.input(leadConversionOptionsInputSchema)
 				.output(leadConversionOptionsSchema)
@@ -105,12 +130,14 @@ export const appRouter = {
 						{
 							organizationId: context.organization.id,
 							role: context.role,
+							userId: context.session.user.id,
 						},
 						input,
 					),
 				),
 			list: leadProcedure
 				.input(leadListInputSchema)
+				.output(leadListResultSchema)
 				.handler(({ context, input }) =>
 					listLeads(
 						{
@@ -122,6 +149,7 @@ export const appRouter = {
 				),
 			create: leadProcedure
 				.input(createLeadInputSchema)
+				.output(createLeadResultSchema)
 				.handler(({ context, input }) =>
 					createLead(
 						{
@@ -135,6 +163,41 @@ export const appRouter = {
 				.input(updateLeadInputSchema)
 				.handler(({ context, input }) =>
 					updateLead(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+						},
+						input,
+					),
+				),
+			followUp: leadProcedure
+				.input(addLeadFollowUpInputSchema)
+				.handler(({ context, input }) =>
+					addLeadFollowUp(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+						},
+						input,
+					),
+				),
+			history: leadProcedure
+				.input(leadHistoryInputSchema)
+				.output(leadHistoryResultSchema)
+				.handler(({ context, input }) =>
+					getLeadHistory(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+						},
+						input.leadId,
+					),
+				),
+			export: leadExportProcedure
+				.input(exportLeadsInputSchema)
+				.output(exportLeadsResultSchema)
+				.handler(({ context, input }) =>
+					exportLeads(
 						{
 							organizationId: context.organization.id,
 							userId: context.session.user.id,

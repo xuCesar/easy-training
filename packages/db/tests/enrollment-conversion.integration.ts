@@ -22,6 +22,7 @@ import {
 	organization,
 	student,
 	teacher,
+	user,
 } from "../src/schema";
 
 function createFixtureIds() {
@@ -66,6 +67,7 @@ function createFixtureIds() {
 		leadConsultantOverride: randomUUID(),
 		leadComplimentary: randomUUID(),
 		leadB: randomUUID(),
+		operatorUserId: `${prefix}-operator`,
 	};
 }
 
@@ -99,6 +101,7 @@ async function cleanupFixture(ids: FixtureIds) {
 	await db
 		.delete(organization)
 		.where(inArray(organization.id, organizationIds));
+	await db.delete(user).where(eq(user.id, ids.operatorUserId));
 }
 
 async function seedFixture(ids: FixtureIds) {
@@ -106,6 +109,11 @@ async function seedFixture(ids: FixtureIds) {
 		{ id: ids.organizationA, name: `${ids.prefix} A` },
 		{ id: ids.organizationB, name: `${ids.prefix} B` },
 	]);
+	await db.insert(user).values({
+		id: ids.operatorUserId,
+		name: "报名操作人",
+		email: `${ids.operatorUserId}@example.invalid`,
+	});
 	await db.insert(campus).values([
 		{
 			id: ids.campusA1,
@@ -480,7 +488,11 @@ async function expectOrpcError(
 
 test("线索转化保持机构隔离、事务原子性并防止并发超额", async () => {
 	const ids = createFixtureIds();
-	const scopeA = { organizationId: ids.organizationA, role: "owner" as const };
+	const scopeA = {
+		organizationId: ids.organizationA,
+		role: "owner" as const,
+		userId: ids.operatorUserId,
+	};
 
 	try {
 		await seedFixture(ids);
@@ -535,7 +547,11 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 		);
 		await expectOrpcError(
 			convertLead(
-				{ organizationId: ids.organizationA, role: "consultant" },
+				{
+					organizationId: ids.organizationA,
+					role: "consultant",
+					userId: ids.operatorUserId,
+				},
 				{
 					...baseConversionInput(ids, ids.leadConsultantOverride),
 					purchasedLessons: 1000,

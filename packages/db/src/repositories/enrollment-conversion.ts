@@ -8,7 +8,9 @@ import {
 	enrollment,
 	invoice,
 	lead,
+	leadActivity,
 	student,
+	user,
 } from "../schema";
 
 const convertibleLeadStages = ["new", "contacted", "trial_booked"] as const;
@@ -77,6 +79,7 @@ export type LeadConversionOptionsRecord = {
 
 export type ConvertLeadRecordInput = {
 	organizationId: string;
+	operatorUserId: string;
 	leadId: string;
 	student:
 		| { mode: "existing"; studentId: string }
@@ -278,6 +281,15 @@ export async function convertLeadRecord(
 
 			if (!leadRecord) {
 				throw new EnrollmentConversionError("LEAD_NOT_FOUND");
+			}
+
+			const [operator] = await tx
+				.select({ name: user.name })
+				.from(user)
+				.where(eq(user.id, input.operatorUserId))
+				.limit(1);
+			if (!operator) {
+				throw new Error("Lead conversion operator was not found.");
 			}
 
 			const [existingEnrollment] = await tx
@@ -501,6 +513,16 @@ export async function convertLeadRecord(
 			if (!updatedLead) {
 				throw new EnrollmentConversionError("LEAD_NOT_CONVERTIBLE");
 			}
+
+			await tx.insert(leadActivity).values({
+				organizationId: input.organizationId,
+				leadId: updatedLead.id,
+				type: "converted",
+				content: "完成报名转化",
+				stage: "enrolled",
+				operatorUserId: input.operatorUserId,
+				operatorName: operator.name,
+			});
 
 			return {
 				leadId: updatedLead.id,

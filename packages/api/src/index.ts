@@ -4,6 +4,7 @@ import {
 	financeManagementRoles,
 	leadManagementRoles,
 	type OrganizationRole,
+	organizationOperationsRoles,
 } from "./authorization/training";
 import type { Context } from "./context";
 import {
@@ -85,4 +86,10 @@ export const currentOrganizationProcedure = publicProcedure.use(
 	requireCurrentOrganization,
 );
 export const leadProcedure = publicProcedure.use(requireLeadManager);
+export const leadExportProcedure = publicProcedure.use(
+	createOrganizationMiddleware(
+		organizationOperationsRoles,
+		"当前角色无权导出招生线索。",
+	),
+);
 export const financeProcedure = publicProcedure.use(requireFinanceManager);

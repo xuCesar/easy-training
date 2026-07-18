@@ -114,12 +114,13 @@ export async function getLeadConversionOptions(
 }
 
 export async function convertLead(
-	scope: LeadConversionScope,
+	scope: LeadConversionScope & { userId: string },
 	input: ConvertLeadInput,
 ): Promise<ConvertLeadResult> {
 	try {
 		return await convertLeadRecord({
 			organizationId: scope.organizationId,
+			operatorUserId: scope.userId,
 			canOverridePackageTerms: canOverridePackageTerms(scope.role),
 			...input,
 		});

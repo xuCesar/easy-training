@@ -29,6 +29,12 @@ export const leadStage = pgEnum("lead_stage", [
 	"enrolled",
 	"lost",
 ]);
+export const leadActivityType = pgEnum("lead_activity_type", [
+	"created",
+	"updated",
+	"followed_up",
+	"converted",
+]);
 export const studentStatus = pgEnum("student_status", [
 	"active",
 	"trial",
@@ -271,6 +277,7 @@ export const lead = pgTable(
 		stage: leadStage("stage").default("new").notNull(),
 		nextFollowAt: timestamp("next_follow_at", { withTimezone: true }),
 		note: text("note"),
+		requestId: uuid("request_id"),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
@@ -282,6 +289,58 @@ export const lead = pgTable(
 	(table) => [
 		index("lead_org_stage_idx").on(table.organizationId, table.stage),
 		index("lead_owner_follow_idx").on(table.ownerUserId, table.nextFollowAt),
+		index("lead_org_created_idx").on(
+			table.organizationId,
+			table.createdAt,
+			table.id,
+		),
+		index("lead_org_campus_created_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.createdAt,
+		),
+		index("lead_org_owner_created_idx").on(
+			table.organizationId,
+			table.ownerUserId,
+			table.createdAt,
+		),
+		uniqueIndex("lead_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+	],
+);
+
+export const leadActivity = pgTable(
+	"lead_activity",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		leadId: uuid("lead_id")
+			.notNull()
+			.references(() => lead.id, { onDelete: "cascade" }),
+		type: leadActivityType("type").notNull(),
+		content: text("content").notNull(),
+		stage: leadStage("stage").notNull(),
+		nextFollowAt: timestamp("next_follow_at", { withTimezone: true }),
+		lostReason: text("lost_reason"),
+		operatorUserId: text("operator_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		operatorName: text("operator_name").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		index("lead_activity_org_lead_created_idx").on(
+			table.organizationId,
+			table.leadId,
+			table.createdAt,
+			table.id,
+		),
 	],
 );
 
@@ -517,6 +576,18 @@ export const organizationRelations = relations(organization, ({ many }) => ({
 	campuses: many(campus),
 	courses: many(course),
 	students: many(student),
+	leadActivities: many(leadActivity),
+}));
+
+export const leadRelations = relations(lead, ({ many }) => ({
+	activities: many(leadActivity),
+}));
+
+export const leadActivityRelations = relations(leadActivity, ({ one }) => ({
+	lead: one(lead, {
+		fields: [leadActivity.leadId],
+		references: [lead.id],
+	}),
 }));
 
 export const campusRelations = relations(campus, ({ one, many }) => ({

@@ -42,6 +42,12 @@ export type LeadStage =
 
 export type LeadRecordStage = Exclude<LeadStage, "enrolled">;
 
+export type LeadActivityType =
+	| "created"
+	| "updated"
+	| "followedUp"
+	| "converted";
+
 export interface LeadRecord {
 	id: EntityId;
 	name: string;
@@ -59,7 +65,26 @@ export interface LeadRecord {
 	updatedAt: string;
 }
 
+export interface LeadActivityRecord {
+	id: EntityId;
+	type: LeadActivityType;
+	content: string;
+	stage: LeadRecordStage | "enrolled";
+	nextFollowAt: string | null;
+	lostReason: string | null;
+	operator: string;
+	operatorUserId: EntityId | null;
+	createdAt: string;
+}
+
 const leadStageSchema = z.enum(["new", "contacted", "trialBooked", "lost"]);
+const initialLeadStageSchema = z.enum(["new", "contacted", "trialBooked"]);
+const leadActivityTypeSchema = z.enum([
+	"created",
+	"updated",
+	"followedUp",
+	"converted",
+]);
 
 const nullableUuidSchema = z.uuid().nullable();
 
@@ -67,11 +92,12 @@ const createLeadDataSchema = z.object({
 	name: z.string().trim().min(1).max(50),
 	phone: z.string().trim().min(5).max(30),
 	source: z.string().trim().min(1).max(50),
-	stage: leadStageSchema.default("new"),
+	stage: initialLeadStageSchema.default("new"),
 	campusId: nullableUuidSchema.default(null),
 	interestedCourseId: nullableUuidSchema.default(null),
 	nextFollowAt: z.iso.datetime({ offset: true }).nullable().default(null),
 	note: z.string().trim().max(1000).nullable().default(null),
+	requestId: z.uuid(),
 });
 
 const updateLeadDataSchema = z
@@ -79,21 +105,133 @@ const updateLeadDataSchema = z
 		name: z.string().trim().min(1).max(50).optional(),
 		phone: z.string().trim().min(5).max(30).optional(),
 		source: z.string().trim().min(1).max(50).optional(),
-		stage: leadStageSchema.optional(),
 		campusId: nullableUuidSchema.optional(),
 		interestedCourseId: nullableUuidSchema.optional(),
-		nextFollowAt: z.iso.datetime({ offset: true }).nullable().optional(),
 		note: z.string().trim().max(1000).nullable().optional(),
 	})
 	.refine((data) => Object.keys(data).length > 0, {
 		message: "至少提供一个待更新字段",
 	});
 
-export const leadListInputSchema = z.object({
+const leadListFiltersSchema = z.object({
 	query: z.string().trim().min(1).max(100).optional(),
 	stage: z
 		.enum(["all", "new", "contacted", "trialBooked", "lost"])
 		.default("all"),
+	campusId: z.uuid().optional(),
+	ownerUserId: z.uuid().or(z.string().min(1).max(128)).optional(),
+	createdAtFrom: z.iso.datetime({ offset: true }).optional(),
+	createdAtTo: z.iso.datetime({ offset: true }).optional(),
+});
+
+function validateCreatedAtRange(
+	input: z.infer<typeof leadListFiltersSchema>,
+	context: z.RefinementCtx,
+) {
+	if (
+		input.createdAtFrom &&
+		input.createdAtTo &&
+		new Date(input.createdAtFrom) > new Date(input.createdAtTo)
+	) {
+		context.addIssue({
+			code: "custom",
+			message: "创建时间范围无效。",
+			path: ["createdAtTo"],
+		});
+	}
+}
+
+export const leadListInputSchema = leadListFiltersSchema
+	.extend({
+		cursor: z.string().min(1).max(256).optional(),
+		pageSize: z.number().int().min(1).max(50).default(20),
+	})
+	.superRefine(validateCreatedAtRange);
+
+const leadRecordSchema = z.object({
+	id: z.uuid(),
+	name: z.string(),
+	phone: z.string(),
+	source: z.string(),
+	stage: leadStageSchema,
+	interestedCourse: z.string(),
+	owner: z.string(),
+	nextFollowAt: z.string().nullable(),
+	note: z.string(),
+	campusId: z.uuid().nullable(),
+	interestedCourseId: z.uuid().nullable(),
+	ownerUserId: z.string().nullable(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
+
+export const leadListResultSchema = z.object({
+	items: z.array(leadRecordSchema),
+	total: z.number().int().nonnegative(),
+	nextCursor: z.string().nullable(),
+});
+
+export const createLeadResultSchema = z.object({
+	lead: leadRecordSchema,
+	replayed: z.boolean(),
+});
+
+export const leadActivitySchema = z.object({
+	id: z.uuid(),
+	type: leadActivityTypeSchema,
+	content: z.string(),
+	stage: z.enum(["new", "contacted", "trialBooked", "lost", "enrolled"]),
+	nextFollowAt: z.string().nullable(),
+	lostReason: z.string().nullable(),
+	operator: z.string(),
+	operatorUserId: z.string().nullable(),
+	createdAt: z.string(),
+});
+
+export const leadHistoryInputSchema = z.object({ leadId: z.uuid() });
+export const leadHistoryResultSchema = z.object({
+	items: z.array(leadActivitySchema),
+});
+
+export const addLeadFollowUpInputSchema = z
+	.object({
+		leadId: z.uuid(),
+		content: z.string().trim().min(1).max(1000),
+		stage: leadStageSchema,
+		nextFollowAt: z.iso.datetime({ offset: true }).nullable().default(null),
+		lostReason: z.string().trim().min(1).max(500).nullable().default(null),
+	})
+	.superRefine((input, context) => {
+		if (input.stage === "lost" && !input.lostReason) {
+			context.addIssue({
+				code: "custom",
+				message: "标记失单时必须填写失单原因。",
+				path: ["lostReason"],
+			});
+		}
+		if (input.stage !== "lost" && input.lostReason) {
+			context.addIssue({
+				code: "custom",
+				message: "仅失单线索可以填写失单原因。",
+				path: ["lostReason"],
+			});
+		}
+	});
+
+export const leadFilterOptionsSchema = z.object({
+	campuses: z.array(z.object({ id: z.uuid(), name: z.string() })),
+	owners: z.array(z.object({ id: z.string(), name: z.string() })),
+});
+
+export const exportLeadsInputSchema = leadListFiltersSchema
+	.extend({
+		limit: z.number().int().min(1).max(5000).default(1000),
+	})
+	.superRefine(validateCreatedAtRange);
+
+export const exportLeadsResultSchema = z.object({
+	fileName: z.string(),
+	csv: z.string(),
 });
 
 export const createLeadInputSchema = createLeadDataSchema;
@@ -104,8 +242,16 @@ export const updateLeadInputSchema = z.object({
 });
 
 export type LeadListInput = z.infer<typeof leadListInputSchema>;
+export type LeadListResult = z.infer<typeof leadListResultSchema>;
 export type CreateLeadInput = z.infer<typeof createLeadInputSchema>;
+export type CreateLeadResult = z.infer<typeof createLeadResultSchema>;
 export type UpdateLeadInput = z.infer<typeof updateLeadInputSchema>;
+export type AddLeadFollowUpInput = z.infer<typeof addLeadFollowUpInputSchema>;
+export type LeadHistoryInput = z.infer<typeof leadHistoryInputSchema>;
+export type LeadHistoryResult = z.infer<typeof leadHistoryResultSchema>;
+export type LeadFilterOptions = z.infer<typeof leadFilterOptionsSchema>;
+export type ExportLeadsInput = z.infer<typeof exportLeadsInputSchema>;
+export type ExportLeadsResult = z.infer<typeof exportLeadsResultSchema>;
 
 export const leadConversionOptionsInputSchema = z.object({
 	leadId: z.uuid(),
