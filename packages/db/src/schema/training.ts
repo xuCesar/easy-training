@@ -1,9 +1,11 @@
 import { relations, sql } from "drizzle-orm";
 import {
+	boolean,
 	check,
 	date,
 	index,
 	integer,
+	jsonb,
 	pgEnum,
 	pgTable,
 	text,
@@ -21,6 +23,22 @@ export const memberRole = pgEnum("member_role", [
 	"consultant",
 	"teacher",
 	"finance",
+]);
+export const campusAccessMode = pgEnum("campus_access_mode", [
+	"all",
+	"selected",
+]);
+export const organizationAuditAction = pgEnum("organization_audit_action", [
+	"campus_created",
+	"campus_updated",
+	"campus_activated",
+	"campus_deactivated",
+	"invitation_created",
+	"invitation_revoked",
+	"invitation_claimed",
+	"member_role_changed",
+	"member_access_changed",
+	"member_removed",
 ]);
 export const leadStage = pgEnum("lead_stage", [
 	"new",
@@ -112,6 +130,9 @@ export const organizationMember = pgTable(
 			.notNull()
 			.references(() => user.id, { onDelete: "cascade" }),
 		role: memberRole("role").notNull(),
+		campusAccessMode: campusAccessMode("campus_access_mode")
+			.default("all")
+			.notNull(),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
@@ -138,6 +159,7 @@ export const campus = pgTable(
 		address: text("address").notNull(),
 		roomCount: integer("room_count").default(0).notNull(),
 		capacity: integer("capacity").default(0).notNull(),
+		isActive: boolean("is_active").default(true).notNull(),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
@@ -149,6 +171,123 @@ export const campus = pgTable(
 	(table) => [
 		uniqueIndex("campus_org_code_uidx").on(table.organizationId, table.code),
 		index("campus_org_idx").on(table.organizationId),
+	],
+);
+
+export const organizationMemberCampus = pgTable(
+	"organization_member_campus",
+	{
+		organizationMemberId: uuid("organization_member_id")
+			.notNull()
+			.references(() => organizationMember.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id, { onDelete: "cascade" }),
+	},
+	(table) => [
+		uniqueIndex("organization_member_campus_uidx").on(
+			table.organizationMemberId,
+			table.campusId,
+		),
+		index("organization_member_campus_campus_idx").on(table.campusId),
+	],
+);
+
+export const organizationInvitation = pgTable(
+	"organization_invitation",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		emailNormalized: text("email_normalized").notNull(),
+		tokenHash: text("token_hash").notNull(),
+		role: memberRole("role").notNull(),
+		campusAccessMode: campusAccessMode("campus_access_mode")
+			.default("all")
+			.notNull(),
+		createdByUserId: text("created_by_user_id")
+			.notNull()
+			.references(() => user.id),
+		claimedByUserId: text("claimed_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		requestId: uuid("request_id").notNull(),
+		expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+		revokedAt: timestamp("revoked_at", { withTimezone: true }),
+		claimedAt: timestamp("claimed_at", { withTimezone: true }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("organization_invitation_token_hash_uidx").on(table.tokenHash),
+		uniqueIndex("organization_invitation_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("organization_invitation_org_email_idx").on(
+			table.organizationId,
+			table.emailNormalized,
+		),
+		index("organization_invitation_org_expires_idx").on(
+			table.organizationId,
+			table.expiresAt,
+		),
+	],
+);
+
+export const organizationInvitationCampus = pgTable(
+	"organization_invitation_campus",
+	{
+		organizationInvitationId: uuid("organization_invitation_id")
+			.notNull()
+			.references(() => organizationInvitation.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id, { onDelete: "cascade" }),
+	},
+	(table) => [
+		uniqueIndex("organization_invitation_campus_uidx").on(
+			table.organizationInvitationId,
+			table.campusId,
+		),
+	],
+);
+
+export const organizationAuditEvent = pgTable(
+	"organization_audit_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		action: organizationAuditAction("action").notNull(),
+		entityType: text("entity_type").notNull(),
+		entityId: uuid("entity_id").notNull(),
+		actorUserId: text("actor_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		targetUserId: text("target_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		before: jsonb("before"),
+		after: jsonb("after"),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		index("organization_audit_event_org_created_idx").on(
+			table.organizationId,
+			table.createdAt,
+			table.id,
+		),
+		index("organization_audit_event_org_entity_idx").on(
+			table.organizationId,
+			table.entityType,
+			table.entityId,
+		),
 	],
 );
 

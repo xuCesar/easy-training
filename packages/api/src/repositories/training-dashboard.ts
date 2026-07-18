@@ -22,6 +22,9 @@ type DashboardScope = {
 	organizationId: string;
 	userId: string;
 	role: OrganizationRole;
+	campusAccess?: Parameters<
+		typeof getDashboardLearningSummary
+	>[0]["campusAccess"];
 };
 
 export function getDashboardTimeWindow(now: Date) {
@@ -60,21 +63,28 @@ export async function getTrainingDashboardSnapshot(
 			canViewLeads
 				? getDashboardLeadSummary({
 						organizationId: scope.organizationId,
+						campusAccess: scope.campusAccess ?? { kind: "all" },
 						now: window.now,
 						nextDayStart: window.nextDayStart,
 					})
 				: Promise.resolve({ total: 0, items: [] }),
 			getDashboardLearningSummary({
 				organizationId: scope.organizationId,
+				campusAccess: scope.campusAccess ?? { kind: "all" },
 			}),
 			getDashboardTaskSummary({
 				organizationId: scope.organizationId,
 				now: window.now,
 				nextDayStart: window.nextDayStart,
-				ownerUserId: canViewOrganizationOperations ? undefined : scope.userId,
+				ownerUserId:
+					canViewOrganizationOperations &&
+					(scope.campusAccess ?? { kind: "all" }).kind === "all"
+						? undefined
+						: scope.userId,
 			}),
 			getDashboardLessonSummary({
 				organizationId: scope.organizationId,
+				campusAccess: scope.campusAccess ?? { kind: "all" },
 				now: window.now,
 				windowEnd: window.lessonWindowEnd,
 				teacherUserId: scope.role === "teacher" ? scope.userId : undefined,
@@ -82,6 +92,7 @@ export async function getTrainingDashboardSnapshot(
 			canViewFinance
 				? getDashboardReceivableSummary({
 						organizationId: scope.organizationId,
+						campusAccess: scope.campusAccess ?? { kind: "all" },
 						today: window.today,
 					})
 				: Promise.resolve({

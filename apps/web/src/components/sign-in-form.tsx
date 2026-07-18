@@ -38,7 +38,11 @@ export default function SignInForm({
 						queryClient.clear();
 						notifyAuthChange();
 						navigate({
-							to: "/dashboard",
+							to: window.sessionStorage.getItem(
+								"easy-training:invitation-token",
+							)
+								? "/invite"
+								: "/dashboard",
 						});
 						toast.success("登录成功");
 					},

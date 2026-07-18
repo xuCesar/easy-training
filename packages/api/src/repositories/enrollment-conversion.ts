@@ -16,6 +16,9 @@ import type {
 type LeadConversionScope = {
 	organizationId: string;
 	role: OrganizationRole;
+	campusAccess?: Parameters<
+		typeof getLeadConversionOptionsRecord
+	>[0]["campusAccess"];
 };
 
 function canOverridePackageTerms(role: OrganizationRole): boolean {
@@ -52,6 +55,12 @@ function throwConversionError(error: unknown): never {
 			});
 		case "CAMPUS_NOT_FOUND":
 			throw new ORPCError("NOT_FOUND", { message: "校区不存在。" });
+		case "CAMPUS_OUT_OF_SCOPE":
+			throw new ORPCError("FORBIDDEN", { message: "当前账号无权访问该校区。" });
+		case "CAMPUS_INACTIVE":
+			throw new ORPCError("CONFLICT", {
+				message: "校区已停用，不能继续报名。",
+			});
 		case "COURSE_NOT_FOUND":
 			throw new ORPCError("NOT_FOUND", { message: "课程不存在。" });
 		case "CLASS_NOT_FOUND":
@@ -89,6 +98,7 @@ export async function getLeadConversionOptions(
 		const result = await getLeadConversionOptionsRecord({
 			organizationId: scope.organizationId,
 			leadId: input.leadId,
+			campusAccess: scope.campusAccess ?? { kind: "all" },
 		});
 
 		return {
@@ -121,6 +131,7 @@ export async function convertLead(
 		return await convertLeadRecord({
 			organizationId: scope.organizationId,
 			operatorUserId: scope.userId,
+			campusAccess: scope.campusAccess ?? { kind: "all" },
 			canOverridePackageTerms: canOverridePackageTerms(scope.role),
 			...input,
 		});

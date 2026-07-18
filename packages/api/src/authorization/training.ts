@@ -18,3 +18,6 @@ export const financeManagementRoles: ReadonlySet<OrganizationRole> = new Set([
 
 export const organizationOperationsRoles: ReadonlySet<OrganizationRole> =
 	new Set(["owner", "admin", "campus_manager"]);
+
+export const organizationManagementRoles: ReadonlySet<OrganizationRole> =
+	new Set(["owner", "admin"]);

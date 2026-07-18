@@ -13,3 +13,4 @@ export * from "./repositories/enrollment-conversion";
 export * from "./repositories/finance";
 export * from "./repositories/leads";
 export * from "./repositories/organization";
+export * from "./repositories/organization-management";

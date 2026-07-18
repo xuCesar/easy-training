@@ -44,6 +44,7 @@ import {
 	MenuIcon,
 	ReceiptTextIcon,
 	SearchIcon,
+	SettingsIcon,
 	UsersRoundIcon,
 	XIcon,
 } from "lucide-react";
@@ -84,6 +85,13 @@ const navigation = [
 		icon: ReceiptTextIcon,
 		available: true,
 		roles: ["owner", "admin", "campus_manager", "finance"],
+	},
+	{
+		to: "/settings",
+		label: "机构设置",
+		icon: SettingsIcon,
+		available: true,
+		roles: ["owner", "admin"],
 	},
 	{ to: "/dashboard", label: "学员中心", icon: BookOpenIcon, available: false },
 	{

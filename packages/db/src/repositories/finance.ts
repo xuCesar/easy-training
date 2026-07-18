@@ -1,7 +1,27 @@
-import { and, asc, count, desc, eq, ilike, ne, or, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	ilike,
+	inArray,
+	ne,
+	or,
+	sql,
+} from "drizzle-orm";
 
 import { db } from "../index";
-import { course, enrollment, invoice, payment, student, user } from "../schema";
+import {
+	campus,
+	course,
+	enrollment,
+	invoice,
+	payment,
+	student,
+	user,
+} from "../schema";
+import type { CampusAccess } from "./organization";
 
 export type FinanceErrorCode =
 	| "INVOICE_NOT_FOUND"
@@ -10,7 +30,8 @@ export type FinanceErrorCode =
 	| "INVALID_PAYMENT_TIME"
 	| "PAYMENT_EXCEEDS_OUTSTANDING"
 	| "IDEMPOTENCY_CONFLICT"
-	| "RESOURCE_UNAVAILABLE";
+	| "RESOURCE_UNAVAILABLE"
+	| "CAMPUS_INACTIVE";
 
 export class FinanceError extends Error {
 	constructor(public readonly code: FinanceErrorCode) {
@@ -48,6 +69,7 @@ export type PaymentRecord = {
 export type CreatePaymentRecordInput = {
 	organizationId: string;
 	operatorUserId: string;
+	campusAccess: CampusAccess;
 	invoiceId: string;
 	amountInCents: number;
 	receivedAt: Date;
@@ -56,6 +78,14 @@ export type CreatePaymentRecordInput = {
 	note: string | null;
 	requestId: string;
 };
+
+function campusAccessCondition(campusAccess: CampusAccess) {
+	if (campusAccess.kind === "none") return sql`false`;
+	if (campusAccess.kind === "selected") {
+		return inArray(student.campusId, campusAccess.campusIds);
+	}
+	return sql`true`;
+}
 
 const invoiceRecordSelection = {
 	id: invoice.id,
@@ -85,12 +115,14 @@ const paymentRecordSelection = {
 
 export async function listInvoiceRecords(input: {
 	organizationId: string;
+	campusAccess: CampusAccess;
 	query?: string;
 	status: "all" | "open" | "pending" | "partial" | "paid";
 }): Promise<{ items: InvoiceRecord[]; total: number }> {
 	const filters = [
 		eq(invoice.organizationId, input.organizationId),
 		ne(invoice.status, "refunded"),
+		campusAccessCondition(input.campusAccess),
 	];
 
 	switch (input.status) {
@@ -194,6 +226,7 @@ export async function listInvoiceRecords(input: {
 
 export async function getInvoiceDetailRecord(input: {
 	organizationId: string;
+	campusAccess: CampusAccess;
 	id: string;
 }): Promise<{ invoice: InvoiceRecord; payments: PaymentRecord[] } | null> {
 	const [invoiceRecord] = await db
@@ -225,6 +258,7 @@ export async function getInvoiceDetailRecord(input: {
 				eq(invoice.id, input.id),
 				eq(invoice.organizationId, input.organizationId),
 				ne(invoice.status, "refunded"),
+				campusAccessCondition(input.campusAccess),
 			),
 		)
 		.limit(1);
@@ -344,6 +378,7 @@ export async function createPaymentRecord(
 				.select({
 					id: invoice.id,
 					enrollmentId: invoice.enrollmentId,
+					studentId: invoice.studentId,
 					amountInCents: invoice.amountInCents,
 					paidAmountInCents: invoice.paidAmountInCents,
 					status: invoice.status,
@@ -361,6 +396,32 @@ export async function createPaymentRecord(
 			if (!invoiceRecord) {
 				throw new FinanceError("INVOICE_NOT_FOUND");
 			}
+			const [studentRecord] = await tx
+				.select({ campusId: student.campusId })
+				.from(student)
+				.where(
+					and(
+						eq(student.id, invoiceRecord.studentId),
+						eq(student.organizationId, input.organizationId),
+						campusAccessCondition(input.campusAccess),
+					),
+				)
+				.limit(1)
+				.for("key share");
+			if (!studentRecord) throw new FinanceError("INVOICE_NOT_FOUND");
+			const [campusRecord] = await tx
+				.select({ id: campus.id })
+				.from(campus)
+				.where(
+					and(
+						eq(campus.id, studentRecord.campusId),
+						eq(campus.organizationId, input.organizationId),
+						eq(campus.isActive, true),
+					),
+				)
+				.limit(1)
+				.for("update");
+			if (!campusRecord) throw new FinanceError("CAMPUS_INACTIVE");
 
 			const [existingPayment] = await tx
 				.select({

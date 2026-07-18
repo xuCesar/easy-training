@@ -13,8 +13,10 @@ import { queryClient } from "@/utils/orpc";
 import Loader from "./loader";
 
 export default function SignUpForm({
+	isInvitation = false,
 	onSwitchToSignIn,
 }: {
+	isInvitation?: boolean;
 	onSwitchToSignIn: () => void;
 }) {
 	const navigate = useNavigate({
@@ -40,7 +42,11 @@ export default function SignUpForm({
 						queryClient.clear();
 						notifyAuthChange();
 						navigate({
-							to: "/dashboard",
+							to: window.sessionStorage.getItem(
+								"easy-training:invitation-token",
+							)
+								? "/invite"
+								: "/dashboard",
 						});
 						toast.success("注册成功");
 					},
@@ -65,7 +71,9 @@ export default function SignUpForm({
 
 	return (
 		<div className="mx-auto mt-10 w-full max-w-md p-6">
-			<h1 className="mb-6 text-center font-bold text-3xl">创建管理员账号</h1>
+			<h1 className="mb-6 text-center font-bold text-3xl">
+				{isInvitation ? "创建账号并加入机构" : "创建账号"}
+			</h1>
 
 			<form
 				onSubmit={(e) => {
@@ -155,7 +163,11 @@ export default function SignUpForm({
 							className="w-full"
 							disabled={!canSubmit || isSubmitting}
 						>
-							{isSubmitting ? "注册中..." : "注册"}
+							{isSubmitting
+								? "注册中..."
+								: isInvitation
+									? "注册并继续"
+									: "注册"}
 						</Button>
 					)}
 				</form.Subscribe>

@@ -8,3 +8,4 @@
 - 多步业务写入（例如线索转化、账单和收款）需要事务、幂等键或唯一约束保护，不能留下部分成功状态。
 - schema 变更先生成并审查 migration；考虑旧数据回填、nullable/default、外键删除行为、锁表风险和回滚，不直接使用破坏性 `db:push` 处理生产数据。
 - 权限、机构隔离、幂等和财务写入优先在 `packages/db/tests` 增加 PostgreSQL 集成测试。
+- 涉及多校区、成员范围和邀请时，加载 [机构管理契约](organization-management.md)。

@@ -27,6 +27,7 @@ import {
 	teacher,
 	user,
 } from "../schema";
+import type { CampusAccess } from "./organization";
 
 export type DashboardLeadSummaryRow = {
 	id: string;
@@ -68,6 +69,7 @@ export type DashboardReceivableSummaryRow = {
 
 export type GetDashboardLeadSummaryInput = {
 	organizationId: string;
+	campusAccess?: CampusAccess;
 	now: Date;
 	nextDayStart: Date;
 };
@@ -81,6 +83,7 @@ export type GetDashboardTaskSummaryInput = {
 
 export type GetDashboardLessonSummaryInput = {
 	organizationId: string;
+	campusAccess?: CampusAccess;
 	now: Date;
 	windowEnd: Date;
 	teacherUserId?: string;
@@ -88,11 +91,13 @@ export type GetDashboardLessonSummaryInput = {
 
 export type GetDashboardReceivableSummaryInput = {
 	organizationId: string;
+	campusAccess?: CampusAccess;
 	today: string;
 };
 
 export type GetDashboardLearningSummaryInput = {
 	organizationId: string;
+	campusAccess?: CampusAccess;
 };
 
 export type DashboardLearningSummary = {
@@ -102,6 +107,23 @@ export type DashboardLearningSummary = {
 };
 
 const windowTotal = sql<number>`count(*) over()`;
+
+function campusAccessCondition(
+	campusId:
+		| typeof campus.id
+		| typeof lead.campusId
+		| typeof lesson.campusId
+		| typeof student.campusId
+		| typeof classGroup.campusId,
+	campusAccess: CampusAccess | undefined,
+) {
+	if (!campusAccess) return sql`true`;
+	if (campusAccess.kind === "none") return sql`false`;
+	if (campusAccess.kind === "selected") {
+		return inArray(campusId, campusAccess.campusIds);
+	}
+	return sql`true`;
+}
 
 function toDashboardLeadStage(
 	stage: (typeof lead.$inferSelect)["stage"],
@@ -158,6 +180,7 @@ export async function getDashboardLeadSummary(
 		.where(
 			and(
 				eq(lead.organizationId, input.organizationId),
+				campusAccessCondition(lead.campusId, input.campusAccess),
 				ne(lead.stage, "enrolled"),
 				ne(lead.stage, "lost"),
 			),
@@ -254,6 +277,7 @@ export async function getDashboardLessonSummary(
 		eq(lesson.status, "scheduled"),
 		gte(lesson.startsAt, input.now),
 		lt(lesson.startsAt, input.windowEnd),
+		campusAccessCondition(lesson.campusId, input.campusAccess),
 	];
 
 	if (input.teacherUserId !== undefined) {
@@ -376,6 +400,7 @@ export async function getDashboardReceivableSummary(
 		.where(
 			and(
 				eq(invoice.organizationId, input.organizationId),
+				campusAccessCondition(student.campusId, input.campusAccess),
 				inArray(invoice.status, ["pending", "partial", "overdue"]),
 				sql`${outstandingAmount} > 0`,
 			),
@@ -405,11 +430,28 @@ export async function getDashboardLearningSummary(
 		db
 			.select({ value: count() })
 			.from(student)
-			.where(eq(student.organizationId, input.organizationId)),
+			.where(
+				and(
+					eq(student.organizationId, input.organizationId),
+					campusAccessCondition(student.campusId, input.campusAccess),
+				),
+			),
 		db
 			.select({ value: count() })
 			.from(enrollment)
-			.where(eq(enrollment.organizationId, input.organizationId)),
+			.innerJoin(
+				student,
+				and(
+					eq(student.id, enrollment.studentId),
+					eq(student.organizationId, input.organizationId),
+				),
+			)
+			.where(
+				and(
+					eq(enrollment.organizationId, input.organizationId),
+					campusAccessCondition(student.campusId, input.campusAccess),
+				),
+			),
 		db
 			.select({ value: count() })
 			.from(classGroup)
@@ -417,6 +459,7 @@ export async function getDashboardLearningSummary(
 				and(
 					eq(classGroup.organizationId, input.organizationId),
 					inArray(classGroup.status, ["recruiting", "running"]),
+					campusAccessCondition(classGroup.campusId, input.campusAccess),
 				),
 			),
 	]);

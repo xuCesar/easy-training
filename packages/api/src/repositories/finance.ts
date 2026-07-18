@@ -20,6 +20,7 @@ import type {
 type FinanceScope = {
 	organizationId: string;
 	userId: string;
+	campusAccess?: Parameters<typeof listInvoiceRecords>[0]["campusAccess"];
 };
 
 const SHANGHAI_OFFSET_IN_MS = 8 * 60 * 60 * 1000;
@@ -123,7 +124,15 @@ function throwFinanceError(error: unknown): never {
 			throw new ORPCError("CONFLICT", {
 				message: "关联资源已发生变化，请刷新后重试。",
 			});
+		case "CAMPUS_INACTIVE":
+			throw new ORPCError("CONFLICT", {
+				message: "校区已停用，不能继续收款。",
+			});
 	}
+
+	throw new ORPCError("INTERNAL_SERVER_ERROR", {
+		message: "暂时无法处理财务请求，请稍后重试。",
+	});
 }
 
 export async function listInvoices(
@@ -133,6 +142,7 @@ export async function listInvoices(
 	try {
 		const result = await listInvoiceRecords({
 			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess ?? { kind: "all" },
 			query: input.query,
 			status: input.status,
 		});
@@ -153,6 +163,7 @@ export async function getInvoiceDetail(
 	try {
 		const result = await getInvoiceDetailRecord({
 			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess ?? { kind: "all" },
 			id: input.id,
 		});
 		if (!result) {
@@ -185,6 +196,7 @@ export async function createPayment(
 		const result = await createPaymentRecord({
 			organizationId: scope.organizationId,
 			operatorUserId: scope.userId,
+			campusAccess: scope.campusAccess ?? { kind: "all" },
 			invoiceId: input.invoiceId,
 			amountInCents: input.amountInCents,
 			receivedAt: new Date(input.receivedAt),

@@ -6,10 +6,12 @@ import {
 	eq,
 	gte,
 	ilike,
+	inArray,
 	lt,
 	lte,
 	ne,
 	or,
+	sql,
 } from "drizzle-orm";
 
 import { db } from "../index";
@@ -21,6 +23,7 @@ import {
 	organizationMember,
 	user,
 } from "../schema";
+import type { CampusAccess } from "./organization";
 
 const stageToDatabase = {
 	new: "new",
@@ -79,6 +82,7 @@ export type LeadActivityRow = {
 export type CreateLeadRecordInput = {
 	organizationId: string;
 	ownerUserId: string;
+	campusAccess: CampusAccess;
 	requestId: string;
 	name: string;
 	phone: string;
@@ -103,7 +107,9 @@ export class LeadRepositoryError extends Error {
 			| "LEAD_NOT_FOUND"
 			| "LEAD_ENROLLED"
 			| "IDEMPOTENCY_CONFLICT"
-			| "INVALID_CURSOR",
+			| "INVALID_CURSOR"
+			| "CAMPUS_OUT_OF_SCOPE"
+			| "CAMPUS_INACTIVE",
 	) {
 		super(code);
 		this.name = "LeadRepositoryError";
@@ -111,6 +117,53 @@ export class LeadRepositoryError extends Error {
 }
 
 type LeadCursor = { createdAt: string; id: string };
+
+function campusAccessCondition(campusAccess: CampusAccess) {
+	if (campusAccess.kind === "none") return sql`false`;
+	if (campusAccess.kind === "selected") {
+		return inArray(lead.campusId, campusAccess.campusIds);
+	}
+	return sql`true`;
+}
+
+function isCampusAccessible(
+	campusAccess: CampusAccess,
+	campusId: string | null,
+): boolean {
+	if (campusAccess.kind === "all") return true;
+	return (
+		campusId !== null &&
+		campusAccess.kind === "selected" &&
+		campusAccess.campusIds.includes(campusId)
+	);
+}
+
+async function assertWritableCampus(
+	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+	input: {
+		organizationId: string;
+		campusAccess: CampusAccess;
+		campusId: string | null;
+	},
+): Promise<void> {
+	if (!isCampusAccessible(input.campusAccess, input.campusId)) {
+		throw new LeadRepositoryError("CAMPUS_OUT_OF_SCOPE");
+	}
+	if (!input.campusId) return;
+	const [campusRecord] = await tx
+		.select({ id: campus.id })
+		.from(campus)
+		.where(
+			and(
+				eq(campus.id, input.campusId),
+				eq(campus.organizationId, input.organizationId),
+				eq(campus.isActive, true),
+			),
+		)
+		.limit(1)
+		.for("update");
+	if (!campusRecord) throw new LeadRepositoryError("CAMPUS_INACTIVE");
+}
 
 const leadRecordSelection = {
 	id: lead.id,
@@ -182,10 +235,12 @@ function createLeadFilters(input: {
 	createdAtFrom?: Date;
 	createdAtTo?: Date;
 	cursor?: LeadCursor;
+	campusAccess: CampusAccess;
 }) {
 	const filters = [
 		eq(lead.organizationId, input.organizationId),
 		ne(lead.stage, "enrolled"),
+		campusAccessCondition(input.campusAccess),
 	];
 
 	if (input.stage) filters.push(eq(lead.stage, stageToDatabase[input.stage]));
@@ -259,6 +314,7 @@ function getDatabaseError(
 async function getLeadRecord(input: {
 	organizationId: string;
 	id: string;
+	campusAccess: CampusAccess;
 }): Promise<LeadRecordRow | null> {
 	const [row] = await db
 		.select(leadRecordSelection)
@@ -272,7 +328,11 @@ async function getLeadRecord(input: {
 		)
 		.leftJoin(user, eq(user.id, lead.ownerUserId))
 		.where(
-			and(eq(lead.id, input.id), eq(lead.organizationId, input.organizationId)),
+			and(
+				eq(lead.id, input.id),
+				eq(lead.organizationId, input.organizationId),
+				campusAccessCondition(input.campusAccess),
+			),
 		)
 		.limit(1);
 
@@ -314,6 +374,7 @@ export async function listLeadRecords(input: {
 	createdAtTo?: Date;
 	cursor?: string;
 	pageSize: number;
+	campusAccess: CampusAccess;
 }): Promise<{
 	items: LeadRecordRow[];
 	nextCursor: string | null;
@@ -358,12 +419,17 @@ export async function listLeadRecords(input: {
 export async function findLeadStage(input: {
 	organizationId: string;
 	id: string;
+	campusAccess: CampusAccess;
 }): Promise<(typeof lead.$inferSelect)["stage"] | null> {
 	const [row] = await db
 		.select({ stage: lead.stage })
 		.from(lead)
 		.where(
-			and(eq(lead.id, input.id), eq(lead.organizationId, input.organizationId)),
+			and(
+				eq(lead.id, input.id),
+				eq(lead.organizationId, input.organizationId),
+				campusAccessCondition(input.campusAccess),
+			),
 		)
 		.limit(1);
 
@@ -373,7 +439,9 @@ export async function findLeadStage(input: {
 export async function campusExistsInOrganization(input: {
 	organizationId: string;
 	id: string;
+	campusAccess: CampusAccess;
 }): Promise<boolean> {
+	if (!isCampusAccessible(input.campusAccess, input.id)) return false;
 	const [row] = await db
 		.select({ id: campus.id })
 		.from(campus)
@@ -381,6 +449,7 @@ export async function campusExistsInOrganization(input: {
 			and(
 				eq(campus.id, input.id),
 				eq(campus.organizationId, input.organizationId),
+				eq(campus.isActive, true),
 			),
 		)
 		.limit(1);
@@ -411,6 +480,7 @@ export async function createLeadRecord(
 ): Promise<{ lead: LeadRecordRow; replayed: boolean }> {
 	try {
 		const result = await db.transaction(async (tx) => {
+			await assertWritableCampus(tx, input);
 			const [existing] = await tx
 				.select({
 					id: lead.id,
@@ -481,6 +551,7 @@ export async function createLeadRecord(
 		const created = await getLeadRecord({
 			organizationId: input.organizationId,
 			id: result.id,
+			campusAccess: input.campusAccess,
 		});
 		if (!created) throw new Error("Lead result could not be loaded.");
 		return { lead: created, replayed: result.replayed };
@@ -507,6 +578,7 @@ export async function createLeadRecord(
 			const record = await getLeadRecord({
 				organizationId: input.organizationId,
 				id: existing.id,
+				campusAccess: input.campusAccess,
 			});
 			if (
 				!record ||
@@ -528,6 +600,7 @@ export async function updateLeadRecord(input: {
 	organizationId: string;
 	id: string;
 	operatorUserId: string;
+	campusAccess: CampusAccess;
 	data: UpdateLeadRecordInput;
 }): Promise<LeadRecordRow> {
 	const updatedId = await db.transaction(async (tx) => {
@@ -536,6 +609,7 @@ export async function updateLeadRecord(input: {
 				id: lead.id,
 				stage: lead.stage,
 				nextFollowAt: lead.nextFollowAt,
+				campusId: lead.campusId,
 			})
 			.from(lead)
 			.where(
@@ -549,6 +623,18 @@ export async function updateLeadRecord(input: {
 		if (!current) throw new LeadRepositoryError("LEAD_NOT_FOUND");
 		if (current.stage === "enrolled") {
 			throw new LeadRepositoryError("LEAD_ENROLLED");
+		}
+		await assertWritableCampus(tx, {
+			organizationId: input.organizationId,
+			campusAccess: input.campusAccess,
+			campusId: current.campusId,
+		});
+		if (input.data.campusId !== undefined) {
+			await assertWritableCampus(tx, {
+				organizationId: input.organizationId,
+				campusAccess: input.campusAccess,
+				campusId: input.data.campusId,
+			});
 		}
 
 		const [operator] = await tx
@@ -584,6 +670,7 @@ export async function updateLeadRecord(input: {
 	const updated = await getLeadRecord({
 		organizationId: input.organizationId,
 		id: updatedId,
+		campusAccess: input.campusAccess,
 	});
 	if (!updated) throw new LeadRepositoryError("LEAD_NOT_FOUND");
 	return updated;
@@ -593,6 +680,7 @@ export async function addLeadFollowUpRecord(input: {
 	organizationId: string;
 	leadId: string;
 	operatorUserId: string;
+	campusAccess: CampusAccess;
 	content: string;
 	stage: WritableLeadStage;
 	nextFollowAt: Date | null;
@@ -604,7 +692,7 @@ export async function addLeadFollowUpRecord(input: {
 
 	const leadId = await db.transaction(async (tx) => {
 		const [current] = await tx
-			.select({ id: lead.id, stage: lead.stage })
+			.select({ id: lead.id, stage: lead.stage, campusId: lead.campusId })
 			.from(lead)
 			.where(
 				and(
@@ -618,6 +706,11 @@ export async function addLeadFollowUpRecord(input: {
 		if (current.stage === "enrolled") {
 			throw new LeadRepositoryError("LEAD_ENROLLED");
 		}
+		await assertWritableCampus(tx, {
+			organizationId: input.organizationId,
+			campusAccess: input.campusAccess,
+			campusId: current.campusId,
+		});
 
 		const [operator] = await tx
 			.select({ name: user.name })
@@ -657,6 +750,7 @@ export async function addLeadFollowUpRecord(input: {
 	const updated = await getLeadRecord({
 		organizationId: input.organizationId,
 		id: leadId,
+		campusAccess: input.campusAccess,
 	});
 	if (!updated) throw new LeadRepositoryError("LEAD_NOT_FOUND");
 	return updated;
@@ -665,10 +759,12 @@ export async function addLeadFollowUpRecord(input: {
 export async function listLeadActivities(input: {
 	organizationId: string;
 	leadId: string;
+	campusAccess: CampusAccess;
 }): Promise<LeadActivityRow[]> {
 	const exists = await findLeadStage({
 		organizationId: input.organizationId,
 		id: input.leadId,
+		campusAccess: input.campusAccess,
 	});
 	if (!exists) throw new LeadRepositoryError("LEAD_NOT_FOUND");
 
@@ -699,6 +795,7 @@ export async function listLeadActivities(input: {
 
 export async function listLeadFilterOptions(input: {
 	organizationId: string;
+	campusAccess: CampusAccess;
 }): Promise<{
 	campuses: Array<{ id: string; name: string }>;
 	owners: Array<{ id: string; name: string }>;
@@ -707,7 +804,17 @@ export async function listLeadFilterOptions(input: {
 		db
 			.select({ id: campus.id, name: campus.name })
 			.from(campus)
-			.where(eq(campus.organizationId, input.organizationId))
+			.where(
+				and(
+					eq(campus.organizationId, input.organizationId),
+					eq(campus.isActive, true),
+					input.campusAccess.kind === "none"
+						? sql`false`
+						: input.campusAccess.kind === "selected"
+							? inArray(campus.id, input.campusAccess.campusIds)
+							: sql`true`,
+				),
+			)
 			.orderBy(asc(campus.name), asc(campus.id)),
 		db
 			.select({ id: organizationMember.userId, name: user.name })
@@ -729,6 +836,7 @@ export async function exportLeadRecords(input: {
 	createdAtFrom?: Date;
 	createdAtTo?: Date;
 	limit: number;
+	campusAccess: CampusAccess;
 }): Promise<LeadRecordRow[]> {
 	const rows = await db
 		.select(leadRecordSelection)

@@ -1,0 +1,422 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import test from "node:test";
+import { and, eq, inArray } from "drizzle-orm";
+import { db } from "../src";
+import {
+	createLeadRecord,
+	LeadRepositoryError,
+} from "../src/repositories/leads";
+import {
+	claimInvitationRecord,
+	createInvitationRecord,
+	listCampusRecords,
+	listInvitationRecords,
+	OrganizationManagementError,
+	resendInvitationRecord,
+	revokeInvitationRecord,
+	setCampusActiveRecord,
+	updateMemberRecord,
+} from "../src/repositories/organization-management";
+import {
+	campus,
+	lead,
+	organization,
+	organizationMember,
+	session,
+	user,
+} from "../src/schema";
+
+function createFixtureIds() {
+	const prefix = `organization-management-${Date.now()}-${randomUUID().slice(0, 8)}`;
+	return {
+		prefix,
+		organizationA: randomUUID(),
+		organizationB: randomUUID(),
+		campusA: randomUUID(),
+		campusAOther: randomUUID(),
+		campusB: randomUUID(),
+		owner: `${prefix}-owner`,
+		ownerB: `${prefix}-owner-b`,
+		ownerC: `${prefix}-owner-c`,
+		invitee: `${prefix}-invitee`,
+		mismatchUser: `${prefix}-mismatch`,
+	};
+}
+
+type FixtureIds = ReturnType<typeof createFixtureIds>;
+
+function sessionId(userId: string) {
+	return `${userId}-session`;
+}
+
+async function expectManagementError(
+	promise: Promise<unknown>,
+	code: OrganizationManagementError["code"],
+) {
+	await assert.rejects(promise, (error: unknown) => {
+		assert.ok(error instanceof OrganizationManagementError);
+		assert.equal(error.code, code);
+		return true;
+	});
+}
+
+async function expectLeadError(
+	promise: Promise<unknown>,
+	code: LeadRepositoryError["code"],
+) {
+	await assert.rejects(promise, (error: unknown) => {
+		assert.ok(error instanceof LeadRepositoryError);
+		assert.equal(error.code, code);
+		return true;
+	});
+}
+
+async function cleanupFixture(ids: FixtureIds) {
+	const organizationIds = [ids.organizationA, ids.organizationB];
+	const userIds = [
+		ids.owner,
+		ids.ownerB,
+		ids.ownerC,
+		ids.invitee,
+		ids.mismatchUser,
+	];
+
+	await db.delete(lead).where(inArray(lead.organizationId, organizationIds));
+	await db.delete(session).where(inArray(session.userId, userIds));
+	await db
+		.delete(organization)
+		.where(inArray(organization.id, organizationIds));
+	await db.delete(user).where(inArray(user.id, userIds));
+}
+
+async function seedFixture(ids: FixtureIds) {
+	const now = new Date();
+	const users = [
+		[ids.owner, "机构负责人", `${ids.prefix}-owner@example.invalid`],
+		[ids.ownerB, "负责人 B", `${ids.prefix}-owner-b@example.invalid`],
+		[ids.ownerC, "负责人 C", `${ids.prefix}-owner-c@example.invalid`],
+		[ids.invitee, "受邀用户", `${ids.prefix}-invitee@example.invalid`],
+		[
+			ids.mismatchUser,
+			"邮箱不匹配用户",
+			`${ids.prefix}-mismatch@example.invalid`,
+		],
+	] as const;
+	await db
+		.insert(user)
+		.values(users.map(([id, name, email]) => ({ id, name, email })));
+	await db.insert(session).values(
+		users.map(([userId]) => ({
+			id: sessionId(userId),
+			token: `${sessionId(userId)}-token`,
+			userId,
+			expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+			updatedAt: now,
+		})),
+	);
+	await db.insert(organization).values([
+		{ id: ids.organizationA, name: `${ids.prefix} A` },
+		{ id: ids.organizationB, name: `${ids.prefix} B` },
+	]);
+	await db.insert(organizationMember).values([
+		{ organizationId: ids.organizationA, userId: ids.owner, role: "owner" },
+		{ organizationId: ids.organizationA, userId: ids.ownerB, role: "owner" },
+		{ organizationId: ids.organizationA, userId: ids.ownerC, role: "owner" },
+	]);
+	await db.insert(campus).values([
+		{
+			id: ids.campusA,
+			organizationId: ids.organizationA,
+			code: `${ids.prefix}-a`,
+			name: "A 校区",
+			city: "上海",
+			address: "A",
+		},
+		{
+			id: ids.campusAOther,
+			organizationId: ids.organizationA,
+			code: `${ids.prefix}-a-other`,
+			name: "A 第二校区",
+			city: "上海",
+			address: "A2",
+		},
+		{
+			id: ids.campusB,
+			organizationId: ids.organizationB,
+			code: `${ids.prefix}-b`,
+			name: "B 校区",
+			city: "上海",
+			address: "B",
+		},
+	]);
+}
+
+test("重发会撤销旧邀请，撤销后的 token 不能领取", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seedFixture(ids);
+		const email = `${ids.prefix}-new-invitee@example.invalid`;
+		const first = await createInvitationRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			email,
+			role: "teacher",
+			campusAccessMode: "selected",
+			campusIds: [ids.campusA],
+			requestId: randomUUID(),
+		});
+		const resent = await resendInvitationRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			id: first.invitation.id,
+			requestId: randomUUID(),
+		});
+
+		assert.notEqual(resent.invitation.id, first.invitation.id);
+		assert.notEqual(resent.token, first.token);
+		const invitations = await listInvitationRecords({
+			organizationId: ids.organizationA,
+		});
+		const firstPersisted = invitations.find(
+			(invitation) => invitation.id === first.invitation.id,
+		);
+		const resentPersisted = invitations.find(
+			(invitation) => invitation.id === resent.invitation.id,
+		);
+		assert.ok(firstPersisted?.revokedAt);
+		assert.equal(resentPersisted?.revokedAt, null);
+		assert.deepEqual(resentPersisted?.campusIds, [ids.campusA]);
+
+		await revokeInvitationRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			id: resent.invitation.id,
+		});
+		await expectManagementError(
+			claimInvitationRecord({
+				token: resent.token,
+				userId: ids.invitee,
+				userEmail: email,
+				sessionId: sessionId(ids.invitee),
+			}),
+			"INVITATION_INVALID",
+		);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("邀请只允许目标邮箱领取一次，并把当前 session 切换到受邀机构", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seedFixture(ids);
+		const invitation = await createInvitationRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			email: ` ${ids.prefix}-invitee@example.invalid `,
+			role: "consultant",
+			campusAccessMode: "selected",
+			campusIds: [ids.campusA],
+			requestId: randomUUID(),
+		});
+
+		await expectManagementError(
+			claimInvitationRecord({
+				token: invitation.token,
+				userId: ids.mismatchUser,
+				userEmail: `${ids.prefix}-mismatch@example.invalid`,
+				sessionId: sessionId(ids.mismatchUser),
+			}),
+			"INVITATION_EMAIL_MISMATCH",
+		);
+
+		const claimed = await claimInvitationRecord({
+			token: invitation.token,
+			userId: ids.invitee,
+			userEmail: ` ${ids.prefix.toUpperCase()}-INVITEE@EXAMPLE.INVALID `,
+			sessionId: sessionId(ids.invitee),
+		});
+		assert.equal(claimed.organizationId, ids.organizationA);
+		const [membership] = await db
+			.select({ role: organizationMember.role })
+			.from(organizationMember)
+			.where(
+				and(
+					eq(organizationMember.organizationId, ids.organizationA),
+					eq(organizationMember.userId, ids.invitee),
+				),
+			);
+		assert.equal(membership?.role, "consultant");
+		const [persistedSession] = await db
+			.select({ activeOrganizationId: session.activeOrganizationId })
+			.from(session)
+			.where(eq(session.id, sessionId(ids.invitee)));
+		assert.equal(persistedSession?.activeOrganizationId, ids.organizationA);
+
+		await expectManagementError(
+			claimInvitationRecord({
+				token: invitation.token,
+				userId: ids.invitee,
+				userEmail: `${ids.prefix}-invitee@example.invalid`,
+				sessionId: sessionId(ids.invitee),
+			}),
+			"INVITATION_INVALID",
+		);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("并发降级两位 owner 时，事务仍保留最后一位 owner", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seedFixture(ids);
+		await db
+			.delete(organizationMember)
+			.where(
+				and(
+					eq(organizationMember.organizationId, ids.organizationA),
+					eq(organizationMember.userId, ids.ownerC),
+				),
+			);
+		const ownerMembers = await db
+			.select({ id: organizationMember.id, userId: organizationMember.userId })
+			.from(organizationMember)
+			.where(eq(organizationMember.organizationId, ids.organizationA));
+		const memberIdByUser = new Map(
+			ownerMembers.map((member) => [member.userId, member.id]),
+		);
+		const ownerMemberId = memberIdByUser.get(ids.owner);
+		const ownerBMemberId = memberIdByUser.get(ids.ownerB);
+		assert.ok(ownerMemberId);
+		assert.ok(ownerBMemberId);
+
+		const results = await Promise.allSettled([
+			updateMemberRecord({
+				organizationId: ids.organizationA,
+				actorUserId: ids.owner,
+				memberId: ownerMemberId,
+				role: "admin",
+				campusAccessMode: "all",
+				campusIds: [],
+			}),
+			updateMemberRecord({
+				organizationId: ids.organizationA,
+				actorUserId: ids.owner,
+				memberId: ownerBMemberId,
+				role: "admin",
+				campusAccessMode: "all",
+				campusIds: [],
+			}),
+		]);
+		assert.equal(
+			results.filter((result) => result.status === "fulfilled").length,
+			1,
+		);
+		const rejection = results.find(
+			(result): result is PromiseRejectedResult => result.status === "rejected",
+		);
+		const rejectionDetails =
+			typeof rejection?.reason === "object" && rejection.reason !== null
+				? rejection.reason
+				: null;
+		assert.ok(
+			rejection?.reason instanceof OrganizationManagementError,
+			`并发拒绝必须是领域错误，实际 code=${String(
+				rejectionDetails && "code" in rejectionDetails
+					? rejectionDetails.code
+					: undefined,
+			)} message=${String(
+				rejectionDetails && "message" in rejectionDetails
+					? rejectionDetails.message
+					: rejection?.reason,
+			)}`,
+		);
+		if (!(rejection?.reason instanceof OrganizationManagementError)) return;
+		assert.ok(
+			rejection.reason.code === "LAST_OWNER" ||
+				rejection.reason.code === "MEMBER_FORBIDDEN",
+		);
+
+		const remainingOwners = await db
+			.select({ id: organizationMember.id })
+			.from(organizationMember)
+			.where(
+				and(
+					eq(organizationMember.organizationId, ids.organizationA),
+					eq(organizationMember.role, "owner"),
+				),
+			);
+		assert.equal(remainingOwners.length, 1);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("校区范围阻止越权写入，停用校区拒绝新的线索写入", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seedFixture(ids);
+		const ownerMembers = await db
+			.select({ id: organizationMember.id, userId: organizationMember.userId })
+			.from(organizationMember)
+			.where(eq(organizationMember.organizationId, ids.organizationA));
+		const ownerBMemberId = ownerMembers.find(
+			(member) => member.userId === ids.ownerB,
+		)?.id;
+		assert.ok(ownerBMemberId);
+
+		await expectManagementError(
+			updateMemberRecord({
+				organizationId: ids.organizationA,
+				actorUserId: ids.owner,
+				memberId: ownerBMemberId,
+				role: "teacher",
+				campusAccessMode: "selected",
+				campusIds: [ids.campusB],
+			}),
+			"INVALID_SCOPE",
+		);
+		const visibleCampuses = await listCampusRecords({
+			organizationId: ids.organizationA,
+			campusAccess: { kind: "selected", campusIds: [ids.campusA] },
+			includeInactive: true,
+		});
+		assert.deepEqual(
+			visibleCampuses.map((item) => item.id),
+			[ids.campusA],
+		);
+
+		await setCampusActiveRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			id: ids.campusA,
+			isActive: false,
+		});
+		await expectLeadError(
+			createLeadRecord({
+				organizationId: ids.organizationA,
+				ownerUserId: ids.owner,
+				campusAccess: { kind: "all" },
+				name: "停用校区线索",
+				phone: "13800000000",
+				source: "集成测试",
+				stage: "new",
+				campusId: ids.campusA,
+				interestedCourseId: null,
+				nextFollowAt: null,
+				note: null,
+				requestId: randomUUID(),
+			}),
+			"CAMPUS_INACTIVE",
+		);
+		const persistedLeads = await db
+			.select({ id: lead.id })
+			.from(lead)
+			.where(eq(lead.organizationId, ids.organizationA));
+		assert.equal(persistedLeads.length, 0);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});

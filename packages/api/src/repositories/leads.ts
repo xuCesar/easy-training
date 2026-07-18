@@ -33,6 +33,7 @@ import type {
 type LeadScope = {
 	organizationId: string;
 	userId: string;
+	campusAccess: Parameters<typeof listLeadRecords>[0]["campusAccess"];
 };
 
 function toLeadRecord(row: LeadRecordRow): LeadRecord {
@@ -79,6 +80,12 @@ function throwRepositoryError(error: LeadRepositoryError): never {
 			});
 		case "INVALID_CURSOR":
 			throw new ORPCError("BAD_REQUEST", { message: "分页游标无效。" });
+		case "CAMPUS_OUT_OF_SCOPE":
+			throw new ORPCError("FORBIDDEN", { message: "当前账号无权访问该校区。" });
+		case "CAMPUS_INACTIVE":
+			throw new ORPCError("CONFLICT", {
+				message: "校区已停用，不能继续写入。",
+			});
 	}
 }
 
@@ -97,6 +104,7 @@ function throwDatabaseError(error: unknown): never {
 
 async function assertAssociationsBelongToOrganization(input: {
 	organizationId: string;
+	campusAccess: LeadScope["campusAccess"];
 	campusId?: string | null;
 	interestedCourseId?: string | null;
 }): Promise<void> {
@@ -107,6 +115,7 @@ async function assertAssociationsBelongToOrganization(input: {
 			campusExistsInOrganization({
 				organizationId: input.organizationId,
 				id: input.campusId,
+				campusAccess: input.campusAccess,
 			}),
 		);
 	}
@@ -144,6 +153,7 @@ export async function listLeads(
 	try {
 		const result = await listLeadRecords({
 			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
 			...toListInput(input),
 			cursor: input.cursor,
 			pageSize: input.pageSize,
@@ -164,6 +174,7 @@ export async function getLeadFilterOptions(
 	try {
 		return await listLeadFilterOptions({
 			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
 		});
 	} catch (error) {
 		return throwDatabaseError(error);
@@ -177,6 +188,7 @@ export async function createLead(
 	try {
 		await assertAssociationsBelongToOrganization({
 			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
 			campusId: input.campusId,
 			interestedCourseId: input.interestedCourseId,
 		});
@@ -184,6 +196,7 @@ export async function createLead(
 		const result = await createLeadRecord({
 			organizationId: scope.organizationId,
 			ownerUserId: scope.userId,
+			campusAccess: scope.campusAccess,
 			...input,
 			nextFollowAt: input.nextFollowAt ? new Date(input.nextFollowAt) : null,
 		});
@@ -201,6 +214,7 @@ export async function updateLead(
 	try {
 		await assertAssociationsBelongToOrganization({
 			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
 			campusId: input.data.campusId,
 			interestedCourseId: input.data.interestedCourseId,
 		});
@@ -209,6 +223,7 @@ export async function updateLead(
 			organizationId: scope.organizationId,
 			id: input.id,
 			operatorUserId: scope.userId,
+			campusAccess: scope.campusAccess,
 			data: input.data,
 		});
 
@@ -227,6 +242,7 @@ export async function addLeadFollowUp(
 			organizationId: scope.organizationId,
 			leadId: input.leadId,
 			operatorUserId: scope.userId,
+			campusAccess: scope.campusAccess,
 			content: input.content,
 			stage: input.stage as WritableLeadStage,
 			nextFollowAt: input.nextFollowAt ? new Date(input.nextFollowAt) : null,
@@ -246,6 +262,7 @@ export async function getLeadHistory(
 		const items = await listLeadActivities({
 			organizationId: scope.organizationId,
 			leadId,
+			campusAccess: scope.campusAccess,
 		});
 		return { items: items.map(toLeadActivity) };
 	} catch (error) {
@@ -267,6 +284,7 @@ export async function exportLeads(
 	try {
 		const rows = await exportLeadRecords({
 			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
 			...toListInput({ ...input, cursor: undefined, pageSize: 20 }),
 			limit: input.limit,
 		});

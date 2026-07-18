@@ -1,7 +1,13 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
 import { db } from "../index";
-import { organization, organizationMember, session, user } from "../schema";
+import {
+	organization,
+	organizationMember,
+	organizationMemberCampus,
+	session,
+	user,
+} from "../schema";
 
 export type OrganizationContextErrorCode =
 	| "SESSION_NOT_FOUND"
@@ -21,6 +27,11 @@ export type OrganizationSummaryRecord = {
 	role: (typeof organizationMember.$inferSelect)["role"];
 };
 
+export type CampusAccess =
+	| { kind: "all" }
+	| { kind: "selected"; campusIds: string[] }
+	| { kind: "none" };
+
 export type CurrentOrganizationRecord = {
 	organization: {
 		id: string;
@@ -31,8 +42,10 @@ export type CurrentOrganizationRecord = {
 		organizationId: string;
 		userId: string;
 		role: (typeof organizationMember.$inferSelect)["role"];
+		campusAccessMode: (typeof organizationMember.$inferSelect)["campusAccessMode"];
 	};
 	role: (typeof organizationMember.$inferSelect)["role"];
+	campusAccess: CampusAccess;
 	organizations: OrganizationSummaryRecord[];
 };
 
@@ -46,6 +59,7 @@ const membershipSelection = {
 		organizationId: organizationMember.organizationId,
 		userId: organizationMember.userId,
 		role: organizationMember.role,
+		campusAccessMode: organizationMember.campusAccessMode,
 	},
 };
 
@@ -57,10 +71,12 @@ type MembershipRecord = {
 function toCurrentOrganization(
 	current: MembershipRecord,
 	memberships: MembershipRecord[],
+	campusAccess: CampusAccess,
 ): CurrentOrganizationRecord {
 	return {
 		...current,
 		role: current.member.role,
+		campusAccess,
 		organizations: memberships.map(
 			({ organization: organizationRecord, member }) => ({
 				...organizationRecord,
@@ -68,6 +84,34 @@ function toCurrentOrganization(
 			}),
 		),
 	};
+}
+
+function isOrganizationWideRole(
+	role: CurrentOrganizationRecord["role"],
+): boolean {
+	return role === "owner" || role === "admin";
+}
+
+async function getCampusAccess(
+	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+	member: CurrentOrganizationRecord["member"],
+): Promise<CampusAccess> {
+	if (
+		isOrganizationWideRole(member.role) ||
+		member.campusAccessMode === "all"
+	) {
+		return { kind: "all" };
+	}
+
+	const rows = await tx
+		.select({ campusId: organizationMemberCampus.campusId })
+		.from(organizationMemberCampus)
+		.where(eq(organizationMemberCampus.organizationMemberId, member.id))
+		.orderBy(asc(organizationMemberCampus.campusId));
+
+	return rows.length > 0
+		? { kind: "selected", campusIds: rows.map((row) => row.campusId) }
+		: { kind: "none" };
 }
 
 async function listMemberships(
@@ -145,7 +189,11 @@ export async function getOrCreateCurrentOrganization(input: {
 					),
 				);
 
-			return toCurrentOrganization(current, memberships);
+			return toCurrentOrganization(
+				current,
+				memberships,
+				await getCampusAccess(tx, current.member),
+			);
 		}
 
 		const [userRecord] = await tx
@@ -183,6 +231,7 @@ export async function getOrCreateCurrentOrganization(input: {
 				organizationId: organizationMember.organizationId,
 				userId: organizationMember.userId,
 				role: organizationMember.role,
+				campusAccessMode: organizationMember.campusAccessMode,
 			});
 
 		if (!createdMember) {
@@ -203,6 +252,7 @@ export async function getOrCreateCurrentOrganization(input: {
 		return toCurrentOrganization(
 			{ organization: createdOrganization, member: createdMember },
 			[{ organization: createdOrganization, member: createdMember }],
+			{ kind: "all" },
 		);
 	});
 }
@@ -247,6 +297,10 @@ export async function selectCurrentOrganization(input: {
 				and(eq(user.id, input.userId), isNull(user.organizationInitializedAt)),
 			);
 
-		return toCurrentOrganization(selected, memberships);
+		return toCurrentOrganization(
+			selected,
+			memberships,
+			await getCampusAccess(tx, selected.member),
+		);
 	});
 }

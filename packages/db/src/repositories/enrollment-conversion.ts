@@ -12,6 +12,7 @@ import {
 	student,
 	user,
 } from "../schema";
+import type { CampusAccess } from "./organization";
 
 const convertibleLeadStages = ["new", "contacted", "trial_booked"] as const;
 const availableClassStatuses = ["recruiting", "running"] as const;
@@ -30,7 +31,9 @@ export type EnrollmentConversionErrorCode =
 	| "CLASS_NOT_AVAILABLE"
 	| "CLASS_FULL"
 	| "PACKAGE_TERMS_OVERRIDE_FORBIDDEN"
-	| "RESOURCE_UNAVAILABLE";
+	| "RESOURCE_UNAVAILABLE"
+	| "CAMPUS_OUT_OF_SCOPE"
+	| "CAMPUS_INACTIVE";
 
 export class EnrollmentConversionError extends Error {
 	constructor(public readonly code: EnrollmentConversionErrorCode) {
@@ -80,6 +83,7 @@ export type LeadConversionOptionsRecord = {
 export type ConvertLeadRecordInput = {
 	organizationId: string;
 	operatorUserId: string;
+	campusAccess: CampusAccess;
 	leadId: string;
 	student:
 		| { mode: "existing"; studentId: string }
@@ -96,6 +100,26 @@ export type ConvertLeadRecordInput = {
 	invoiceDueDate: string;
 	canOverridePackageTerms: boolean;
 };
+
+function campusAccessCondition(campusAccess: CampusAccess) {
+	if (campusAccess.kind === "none") return sql`false`;
+	if (campusAccess.kind === "selected") {
+		return inArray(campus.id, campusAccess.campusIds);
+	}
+	return sql`true`;
+}
+
+function isCampusAccessible(
+	campusAccess: CampusAccess,
+	campusId: string | null,
+): boolean {
+	return (
+		campusAccess.kind === "all" ||
+		(campusId !== null &&
+			campusAccess.kind === "selected" &&
+			campusAccess.campusIds.includes(campusId))
+	);
+}
 
 export type ConvertLeadRecordResult = {
 	leadId: string;
@@ -151,6 +175,7 @@ function normalizePhoneForComparison(phone: string): string {
 export async function getLeadConversionOptionsRecord(input: {
 	organizationId: string;
 	leadId: string;
+	campusAccess: CampusAccess;
 }): Promise<LeadConversionOptionsRecord> {
 	const [leadRecord] = await db
 		.select({
@@ -166,6 +191,11 @@ export async function getLeadConversionOptionsRecord(input: {
 			and(
 				eq(lead.id, input.leadId),
 				eq(lead.organizationId, input.organizationId),
+				input.campusAccess.kind === "none"
+					? sql`false`
+					: input.campusAccess.kind === "selected"
+						? inArray(lead.campusId, input.campusAccess.campusIds)
+						: sql`true`,
 			),
 		)
 		.limit(1);
@@ -197,6 +227,7 @@ export async function getLeadConversionOptionsRecord(input: {
 			.where(
 				and(
 					eq(student.organizationId, input.organizationId),
+					campusAccessCondition(input.campusAccess),
 					normalizedPhoneEquals(student.guardianPhone, leadRecord.phone),
 				),
 			)
@@ -204,7 +235,13 @@ export async function getLeadConversionOptionsRecord(input: {
 		db
 			.select({ id: campus.id, name: campus.name })
 			.from(campus)
-			.where(eq(campus.organizationId, input.organizationId))
+			.where(
+				and(
+					eq(campus.organizationId, input.organizationId),
+					eq(campus.isActive, true),
+					campusAccessCondition(input.campusAccess),
+				),
+			)
 			.orderBy(asc(campus.name), asc(campus.id)),
 		db
 			.select({
@@ -241,6 +278,8 @@ export async function getLeadConversionOptionsRecord(input: {
 				and(
 					eq(classGroup.organizationId, input.organizationId),
 					inArray(classGroup.status, availableClassStatuses),
+					campusAccessCondition(input.campusAccess),
+					eq(campus.isActive, true),
 				),
 			)
 			.groupBy(classGroup.id, campus.name)
@@ -268,7 +307,12 @@ export async function convertLeadRecord(
 	try {
 		return await db.transaction(async (tx) => {
 			const [leadRecord] = await tx
-				.select({ id: lead.id, phone: lead.phone, stage: lead.stage })
+				.select({
+					id: lead.id,
+					phone: lead.phone,
+					stage: lead.stage,
+					campusId: lead.campusId,
+				})
 				.from(lead)
 				.where(
 					and(
@@ -281,6 +325,26 @@ export async function convertLeadRecord(
 
 			if (!leadRecord) {
 				throw new EnrollmentConversionError("LEAD_NOT_FOUND");
+			}
+			if (!isCampusAccessible(input.campusAccess, leadRecord.campusId)) {
+				throw new EnrollmentConversionError("CAMPUS_OUT_OF_SCOPE");
+			}
+			const [leadCampus] = leadRecord.campusId
+				? await tx
+						.select({ id: campus.id })
+						.from(campus)
+						.where(
+							and(
+								eq(campus.id, leadRecord.campusId),
+								eq(campus.organizationId, input.organizationId),
+								eq(campus.isActive, true),
+							),
+						)
+						.limit(1)
+						.for("update")
+				: [];
+			if (leadRecord.campusId && !leadCampus) {
+				throw new EnrollmentConversionError("CAMPUS_INACTIVE");
 			}
 
 			const [operator] = await tx
@@ -358,6 +422,23 @@ export async function convertLeadRecord(
 				if (!studentRecord) {
 					throw new EnrollmentConversionError("STUDENT_NOT_FOUND");
 				}
+				if (!isCampusAccessible(input.campusAccess, studentRecord.campusId)) {
+					throw new EnrollmentConversionError("CAMPUS_OUT_OF_SCOPE");
+				}
+				const [studentCampus] = await tx
+					.select({ id: campus.id })
+					.from(campus)
+					.where(
+						and(
+							eq(campus.id, studentRecord.campusId),
+							eq(campus.organizationId, input.organizationId),
+							eq(campus.isActive, true),
+						),
+					)
+					.limit(1)
+					.for("update");
+				if (!studentCampus)
+					throw new EnrollmentConversionError("CAMPUS_INACTIVE");
 				if (
 					normalizePhoneForComparison(studentRecord.guardianPhone) !==
 					normalizePhoneForComparison(leadRecord.phone)
@@ -368,6 +449,9 @@ export async function convertLeadRecord(
 				studentId = studentRecord.id;
 				studentCampusId = studentRecord.campusId;
 			} else {
+				if (!isCampusAccessible(input.campusAccess, input.student.campusId)) {
+					throw new EnrollmentConversionError("CAMPUS_OUT_OF_SCOPE");
+				}
 				const [campusRecord] = await tx
 					.select({ id: campus.id })
 					.from(campus)
@@ -375,6 +459,7 @@ export async function convertLeadRecord(
 						and(
 							eq(campus.id, input.student.campusId),
 							eq(campus.organizationId, input.organizationId),
+							eq(campus.isActive, true),
 						),
 					)
 					.limit(1)
@@ -426,6 +511,23 @@ export async function convertLeadRecord(
 				if (!classRecord) {
 					throw new EnrollmentConversionError("CLASS_NOT_FOUND");
 				}
+				if (!isCampusAccessible(input.campusAccess, classRecord.campusId)) {
+					throw new EnrollmentConversionError("CAMPUS_OUT_OF_SCOPE");
+				}
+				const [classCampus] = await tx
+					.select({ id: campus.id })
+					.from(campus)
+					.where(
+						and(
+							eq(campus.id, classRecord.campusId),
+							eq(campus.organizationId, input.organizationId),
+							eq(campus.isActive, true),
+						),
+					)
+					.limit(1)
+					.for("update");
+				if (!classCampus)
+					throw new EnrollmentConversionError("CAMPUS_INACTIVE");
 				if (classRecord.courseId !== input.courseId) {
 					throw new EnrollmentConversionError("CLASS_COURSE_MISMATCH");
 				}
@@ -545,6 +647,9 @@ export async function convertLeadRecord(
 			throw new EnrollmentConversionError("LEAD_ALREADY_CONVERTED");
 		}
 		if (databaseError?.code === "23503") {
+			throw new EnrollmentConversionError("RESOURCE_UNAVAILABLE");
+		}
+		if (databaseError?.code === "40P01" || databaseError?.code === "55P03") {
 			throw new EnrollmentConversionError("RESOURCE_UNAVAILABLE");
 		}
 
