@@ -109,3 +109,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: 完成 P1 报名财务变更能力
+
+**Date**: 2026-07-19
+**Task**: 完成 P1 报名财务变更能力
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+实现续费、转课、退款、欠费跟进与财务工作台交互；补齐收款后的欠费缓存刷新和整行账单点击；完成迁移、集成测试、类型检查、规范检查与构建。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4bf90ce` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
