@@ -7,7 +7,6 @@ import {
 	type PaymentRecord,
 } from "@easy-training/db";
 import { ORPCError } from "@orpc/server";
-
 import type {
 	CreatePaymentInput,
 	CreatePaymentResult,
@@ -16,6 +15,7 @@ import type {
 	InvoiceListInput,
 	InvoiceListResult,
 } from "../contracts/training";
+import { getInvoiceRefunds } from "./enrollment-finance-adjustments";
 
 type FinanceScope = {
 	organizationId: string;
@@ -174,6 +174,7 @@ export async function getInvoiceDetail(
 		return {
 			invoice: invoiceSummary,
 			payments: result.payments.map(toPayment),
+			refunds: await getInvoiceRefunds(scope, input.id),
 			historicalPaidAmountInCents: Math.max(
 				invoiceSummary.paidAmountInCents -
 					result.payments.reduce(

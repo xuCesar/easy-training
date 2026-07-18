@@ -527,6 +527,16 @@ const paymentRecordSchema = z.object({
 	createdAt: z.iso.datetime({ offset: true }),
 });
 
+const refundRecordSchema = z.object({
+	id: z.uuid(),
+	amountInCents: z.number().int().positive(),
+	refundedAt: z.iso.datetime({ offset: true }),
+	method: paymentMethodSchema,
+	reason: z.string(),
+	operatorName: z.string(),
+	createdAt: z.iso.datetime({ offset: true }),
+});
+
 export const invoiceListResultSchema = z.object({
 	items: z.array(invoiceSummarySchema),
 	total: z.number().int().nonnegative(),
@@ -537,6 +547,7 @@ export const invoiceDetailInputSchema = z.object({ id: z.uuid() });
 export const invoiceDetailSchema = z.object({
 	invoice: invoiceSummarySchema,
 	payments: z.array(paymentRecordSchema),
+	refunds: z.array(refundRecordSchema),
 	historicalPaidAmountInCents: z.number().int().nonnegative(),
 });
 
@@ -559,12 +570,126 @@ export const createPaymentResultSchema = z.object({
 	payment: paymentRecordSchema,
 });
 
+const enrollmentAdjustmentSchema = z.object({
+	id: z.uuid(),
+	studentId: z.uuid(),
+	studentName: z.string(),
+	campusId: z.uuid(),
+	campusName: z.string(),
+	courseId: z.uuid(),
+	courseName: z.string(),
+	purchasedLessons: z.number().int().nonnegative(),
+	remainingLessons: z.number().int().nonnegative(),
+	status: z.enum(["active", "transferred"]),
+});
+
+export const enrollmentAdjustmentListResultSchema = z.object({
+	items: z.array(enrollmentAdjustmentSchema),
+	courses: z.array(z.object({ id: z.uuid(), name: z.string() })),
+});
+
+export const renewEnrollmentInputSchema = z.object({
+	enrollmentId: z.uuid(),
+	addedLessons: z.number().int().min(1).max(10_000),
+	amountInCents: z.number().int().min(0).max(100_000_000),
+	dueDate: z.iso.date(),
+	requestId: z.uuid(),
+});
+
+export const renewEnrollmentResultSchema = z.object({
+	enrollmentId: z.uuid(),
+	invoiceId: z.uuid(),
+	addedLessons: z.number().int().positive(),
+});
+
+export const transferEnrollmentInputSchema = z.object({
+	sourceEnrollmentId: z.uuid(),
+	targetCourseId: z.uuid(),
+	requestId: z.uuid(),
+});
+
+export const transferEnrollmentResultSchema = z.object({
+	sourceEnrollmentId: z.uuid(),
+	targetEnrollmentId: z.uuid(),
+	transferredLessons: z.number().int().positive(),
+});
+
+export const createRefundInputSchema = z
+	.object({
+		invoiceId: z.uuid(),
+		amountInCents: z.number().int().min(1).max(100_000_000),
+		refundedAt: z.iso.datetime({ offset: true }),
+		method: paymentMethodSchema,
+		reason: z.string().trim().min(1).max(500),
+		requestId: z.uuid(),
+	})
+	.refine((data) => data.method !== "other" || Boolean(data.reason), {
+		message: "选择其他退款方式时请填写退款原因",
+		path: ["reason"],
+	});
+
+export const createRefundResultSchema = z.object({
+	refund: refundRecordSchema,
+});
+
+const arrearsRecordSchema = z.object({
+	invoiceId: z.uuid(),
+	studentName: z.string(),
+	courseName: z.string().nullable(),
+	amountInCents: z.number().int().nonnegative(),
+	paidAmountInCents: z.number().int().nonnegative(),
+	outstandingAmountInCents: z.number().int().positive(),
+	dueDate: z.iso.date(),
+	isOverdue: z.boolean(),
+	lastFollowUpAt: z.iso.datetime({ offset: true }).nullable(),
+	lastFollowUpNote: z.string().nullable(),
+	lastFollowUpOperatorName: z.string().nullable(),
+});
+
+export const arrearsListResultSchema = z.object({
+	items: z.array(arrearsRecordSchema),
+});
+
+export const createInvoiceFollowUpInputSchema = z.object({
+	invoiceId: z.uuid(),
+	note: z.string().trim().min(1).max(500),
+	followedUpAt: z.iso.datetime({ offset: true }),
+	requestId: z.uuid(),
+});
+
+export const createInvoiceFollowUpResultSchema = z.object({
+	invoiceId: z.uuid(),
+	note: z.string(),
+	followedUpAt: z.iso.datetime({ offset: true }),
+	operatorName: z.string(),
+});
+
 export type InvoiceListInput = z.infer<typeof invoiceListInputSchema>;
 export type InvoiceListResult = z.infer<typeof invoiceListResultSchema>;
 export type InvoiceDetailInput = z.infer<typeof invoiceDetailInputSchema>;
 export type InvoiceDetail = z.infer<typeof invoiceDetailSchema>;
 export type CreatePaymentInput = z.infer<typeof createPaymentInputSchema>;
 export type CreatePaymentResult = z.infer<typeof createPaymentResultSchema>;
+export type EnrollmentAdjustmentListResult = z.infer<
+	typeof enrollmentAdjustmentListResultSchema
+>;
+export type RenewEnrollmentInput = z.infer<typeof renewEnrollmentInputSchema>;
+export type RenewEnrollmentResult = z.infer<typeof renewEnrollmentResultSchema>;
+export type TransferEnrollmentInput = z.infer<
+	typeof transferEnrollmentInputSchema
+>;
+export type TransferEnrollmentResult = z.infer<
+	typeof transferEnrollmentResultSchema
+>;
+export type CreateRefundInput = z.infer<typeof createRefundInputSchema>;
+export type CreateRefundResult = z.infer<typeof createRefundResultSchema>;
+export type ArrearsListResult = z.infer<typeof arrearsListResultSchema>;
+export type CreateInvoiceFollowUpInput = z.infer<
+	typeof createInvoiceFollowUpInputSchema
+>;
+export type CreateInvoiceFollowUpResult = z.infer<
+	typeof createInvoiceFollowUpResultSchema
+>;
 
 export const studentStatusSchema = z.enum([
 	"active",

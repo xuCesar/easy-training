@@ -71,6 +71,20 @@
       "when": 1784380151103,
       "tag": "0009_short_vulcan",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784388352180,
+      "tag": "0010_purple_mephistopheles",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784388389109,
+      "tag": "0011_volatile_killmonger",
+      "breakpoints": true
     }
   ]
 }

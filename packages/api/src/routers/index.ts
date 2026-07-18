@@ -2,6 +2,7 @@ import type { RouterClient } from "@orpc/server";
 
 import {
 	addLeadFollowUpInputSchema,
+	arrearsListResultSchema,
 	assignEnrollmentClassInputSchema,
 	assignEnrollmentClassResultSchema,
 	campusListInputSchema,
@@ -23,16 +24,21 @@ import {
 	createCourseInputSchema,
 	createInvitationInputSchema,
 	createInvitationResultSchema,
+	createInvoiceFollowUpInputSchema,
+	createInvoiceFollowUpResultSchema,
 	createLeadInputSchema,
 	createLeadResultSchema,
 	createLessonInputSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
+	createRefundInputSchema,
+	createRefundResultSchema,
 	createStudentInputSchema,
 	createStudentTagInputSchema,
 	createTeacherInputSchema,
 	currentOrganizationSchema,
 	dashboardSnapshotSchema,
+	enrollmentAdjustmentListResultSchema,
 	exportLeadsInputSchema,
 	exportLeadsResultSchema,
 	invitationListResultSchema,
@@ -53,6 +59,8 @@ import {
 	lessonListResultSchema,
 	memberListResultSchema,
 	removeMemberInputSchema,
+	renewEnrollmentInputSchema,
+	renewEnrollmentResultSchema,
 	resendInvitationInputSchema,
 	revokeInvitationInputSchema,
 	selectOrganizationInputSchema,
@@ -66,6 +74,8 @@ import {
 	studentTagListInputSchema,
 	studentTagListResultSchema,
 	teacherListResultSchema,
+	transferEnrollmentInputSchema,
+	transferEnrollmentResultSchema,
 	updateCampusInputSchema,
 	updateClassGroupInputSchema,
 	updateCourseInputSchema,
@@ -91,6 +101,14 @@ import {
 	convertLead,
 	getLeadConversionOptions,
 } from "../repositories/enrollment-conversion";
+import {
+	createInvoiceFollowUp,
+	createRefund,
+	listArrears,
+	listEnrollmentAdjustments,
+	renewEnrollment,
+	transferEnrollment,
+} from "../repositories/enrollment-finance-adjustments";
 import {
 	createPayment,
 	getInvoiceDetail,
@@ -828,6 +846,82 @@ export const appRouter = {
 					.output(createPaymentResultSchema)
 					.handler(({ context, input }) =>
 						createPayment(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+			adjustments: {
+				list: financeProcedure
+					.output(enrollmentAdjustmentListResultSchema)
+					.handler(({ context }) =>
+						listEnrollmentAdjustments({
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						}),
+					),
+				renew: financeProcedure
+					.input(renewEnrollmentInputSchema)
+					.output(renewEnrollmentResultSchema)
+					.handler(({ context, input }) =>
+						renewEnrollment(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				transfer: financeProcedure
+					.input(transferEnrollmentInputSchema)
+					.output(transferEnrollmentResultSchema)
+					.handler(({ context, input }) =>
+						transferEnrollment(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+			refunds: {
+				create: financeProcedure
+					.input(createRefundInputSchema)
+					.output(createRefundResultSchema)
+					.handler(({ context, input }) =>
+						createRefund(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+			arrears: {
+				list: financeProcedure
+					.output(arrearsListResultSchema)
+					.handler(({ context }) =>
+						listArrears({
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						}),
+					),
+				followUp: financeProcedure
+					.input(createInvoiceFollowUpInputSchema)
+					.output(createInvoiceFollowUpResultSchema)
+					.handler(({ context, input }) =>
+						createInvoiceFollowUp(
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,

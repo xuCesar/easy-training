@@ -10,6 +10,14 @@ import {
 	invoiceListResultSchema,
 } from "../../api/src/contracts/training";
 import {
+	createInvoiceFollowUp,
+	createRefund,
+	listArrears,
+	listEnrollmentAdjustments,
+	renewEnrollment,
+	transferEnrollment,
+} from "../../api/src/repositories/enrollment-finance-adjustments";
+import {
 	createPayment,
 	getInvoiceDetail,
 	listInvoices,
@@ -21,10 +29,14 @@ import {
 	campus,
 	course,
 	enrollment,
+	enrollmentRenewal,
+	enrollmentTransfer,
 	invoice,
+	invoiceFollowUp,
 	organization,
 	organizationMember,
 	payment,
+	refund,
 	session,
 	student,
 	user,
@@ -40,6 +52,7 @@ function createFixtureIds() {
 		campusB: randomUUID(),
 		courseA: randomUUID(),
 		courseB: randomUUID(),
+		courseTransfer: randomUUID(),
 		studentA: randomUUID(),
 		studentB: randomUUID(),
 		enrollmentMain: randomUUID(),
@@ -85,6 +98,18 @@ function getSessionId(userId: string) {
 
 async function cleanupFixture(ids: FixtureIds) {
 	const organizationIds = [ids.organizationA, ids.organizationB];
+	await db
+		.delete(invoiceFollowUp)
+		.where(inArray(invoiceFollowUp.organizationId, organizationIds));
+	await db
+		.delete(refund)
+		.where(inArray(refund.organizationId, organizationIds));
+	await db
+		.delete(enrollmentTransfer)
+		.where(inArray(enrollmentTransfer.organizationId, organizationIds));
+	await db
+		.delete(enrollmentRenewal)
+		.where(inArray(enrollmentRenewal.organizationId, organizationIds));
 	await db
 		.delete(payment)
 		.where(inArray(payment.organizationId, organizationIds));
@@ -193,6 +218,18 @@ async function seedFixture(ids: FixtureIds) {
 			durationMinutes: 60,
 			listPriceInCents: 9_999,
 			lessonsPerPackage: 10,
+			tags: [],
+		},
+		{
+			id: ids.courseTransfer,
+			organizationId: ids.organizationA,
+			code: `${ids.prefix}-course-transfer`,
+			name: "转入课程",
+			category: "art",
+			level: "L2",
+			durationMinutes: 60,
+			listPriceInCents: 12_000,
+			lessonsPerPackage: 12,
 			tags: [],
 		},
 	]);
@@ -686,6 +723,161 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 				status: "open",
 			}),
 			"CONFLICT",
+		);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("续费、转课、退费与欠费跟进保持课时和资金历史可追溯", async () => {
+	const ids = createFixtureIds();
+	const financeScope = {
+		organizationId: ids.organizationA,
+		userId: ids.finance,
+		campusAccess: { kind: "all" } as const,
+	};
+
+	try {
+		await seedFixture(ids);
+
+		const adjustmentList = await listEnrollmentAdjustments(financeScope);
+		assert.ok(
+			adjustmentList.items.some((item) => item.id === ids.enrollmentIdempotent),
+		);
+		assert.ok(
+			adjustmentList.courses.some((item) => item.id === ids.courseTransfer),
+		);
+
+		const renewalRequestId = randomUUID();
+		const renewalInput = {
+			enrollmentId: ids.enrollmentIdempotent,
+			addedLessons: 2,
+			amountInCents: 2_000,
+			dueDate: "2099-02-01",
+			requestId: renewalRequestId,
+		};
+		const [renewal, renewalReplay] = await Promise.all([
+			renewEnrollment(financeScope, renewalInput),
+			renewEnrollment(financeScope, renewalInput),
+		]);
+		assert.deepEqual(renewalReplay, renewal);
+		const [renewedEnrollment] = await db
+			.select()
+			.from(enrollment)
+			.where(eq(enrollment.id, ids.enrollmentIdempotent));
+		assert.equal(renewedEnrollment?.purchasedLessons, 5);
+		assert.equal(renewedEnrollment?.remainingLessons, 5);
+		const renewalInvoices = await db
+			.select({ id: invoice.id })
+			.from(invoice)
+			.where(eq(invoice.id, renewal.invoiceId));
+		assert.equal(renewalInvoices.length, 1);
+		await expectOrpcError(
+			transferEnrollment(financeScope, {
+				sourceEnrollmentId: ids.enrollmentConcurrent,
+				targetCourseId: ids.courseTransfer,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+
+		await createPayment(financeScope, {
+			invoiceId: ids.invoiceMain,
+			amountInCents: 10_000,
+			receivedAt: minutesAgo(30),
+			method: "wechat",
+			referenceNo: null,
+			note: null,
+			requestId: randomUUID(),
+		});
+		const transfer = await transferEnrollment(financeScope, {
+			sourceEnrollmentId: ids.enrollmentMain,
+			targetCourseId: ids.courseTransfer,
+			requestId: randomUUID(),
+		});
+		assert.equal(transfer.transferredLessons, 10);
+		const [sourceEnrollment, targetEnrollment] = await Promise.all([
+			db.select().from(enrollment).where(eq(enrollment.id, ids.enrollmentMain)),
+			db
+				.select()
+				.from(enrollment)
+				.where(eq(enrollment.id, transfer.targetEnrollmentId)),
+		]);
+		assert.equal(sourceEnrollment[0]?.status, "transferred");
+		assert.equal(sourceEnrollment[0]?.remainingLessons, 0);
+		assert.equal(targetEnrollment[0]?.courseId, ids.courseTransfer);
+		assert.equal(targetEnrollment[0]?.remainingLessons, 10);
+
+		const firstRefund = await createRefund(financeScope, {
+			invoiceId: ids.invoiceMain,
+			amountInCents: 4_000,
+			refundedAt: minutesAgo(20),
+			method: "wechat",
+			reason: "转课后退回差额",
+			requestId: randomUUID(),
+		});
+		assert.equal(firstRefund.refund.amountInCents, 4_000);
+		await expectOrpcError(
+			createRefund(financeScope, {
+				invoiceId: ids.invoiceMain,
+				amountInCents: 6_001,
+				refundedAt: minutesAgo(15),
+				method: "wechat",
+				reason: "超额退款",
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+		await createRefund(financeScope, {
+			invoiceId: ids.invoiceMain,
+			amountInCents: 6_000,
+			refundedAt: minutesAgo(10),
+			method: "wechat",
+			reason: "完成退款",
+			requestId: randomUUID(),
+		});
+		const [refundedInvoice] = await db
+			.select()
+			.from(invoice)
+			.where(eq(invoice.id, ids.invoiceMain));
+		assert.equal(refundedInvoice?.status, "refunded");
+		await expectOrpcError(
+			createPayment(financeScope, {
+				invoiceId: ids.invoiceMain,
+				amountInCents: 1,
+				receivedAt: minutesAgo(5),
+				method: "wechat",
+				referenceNo: null,
+				note: null,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+
+		const arrears = await listArrears(financeScope);
+		assert.ok(
+			arrears.items.some((item) => item.invoiceId === ids.invoiceIdempotent),
+		);
+		await createInvoiceFollowUp(financeScope, {
+			invoiceId: ids.invoiceIdempotent,
+			note: "已联系家长，周五前付款",
+			followedUpAt: minutesAgo(5),
+			requestId: randomUUID(),
+		});
+		const arrearsAfterFollowUp = await listArrears(financeScope);
+		assert.equal(
+			arrearsAfterFollowUp.items.find(
+				(item) => item.invoiceId === ids.invoiceIdempotent,
+			)?.lastFollowUpNote,
+			"已联系家长，周五前付款",
+		);
+
+		await expectOrpcError(
+			renewEnrollment(
+				{ ...financeScope, userId: ids.consultant },
+				{ ...renewalInput, requestId: randomUUID() },
+			),
+			"FORBIDDEN",
 		);
 	} finally {
 		await cleanupFixture(ids);

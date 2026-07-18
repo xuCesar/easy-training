@@ -1,0 +1,1 @@
+ALTER TABLE "enrollment_renewal" ADD CONSTRAINT "enrollment_renewal_invoice_id_invoice_id_fk" FOREIGN KEY ("invoice_id") REFERENCES "public"."invoice"("id") ON DELETE no action ON UPDATE no action;

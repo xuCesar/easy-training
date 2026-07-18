@@ -1,6 +1,8 @@
 import {
 	type CreatePaymentInput,
+	type CreateRefundInput,
 	createPaymentInputSchema,
+	createRefundInputSchema,
 	type InvoiceDetail,
 	type InvoiceListInput,
 	type InvoiceListResult,
@@ -51,6 +53,7 @@ import {
 	ClockAlertIcon,
 	LoaderCircleIcon,
 	ReceiptTextIcon,
+	RotateCcwIcon,
 	SearchIcon,
 	XIcon,
 } from "lucide-react";
@@ -58,7 +61,7 @@ import { type FormEvent, useDeferredValue, useState } from "react";
 import { toast } from "sonner";
 
 import { orpc, queryClient } from "@/utils/orpc";
-
+import { FinanceAdjustments } from "./finance-adjustments";
 import { formatCentsToCurrency, formatDate, formatDateTime } from "./format";
 
 type InvoiceSummary = InvoiceListResult["items"][number];
@@ -157,6 +160,8 @@ export function FinanceWorkspace({
 				</Select>
 			</section>
 
+			<FinanceAdjustments organizationId={organizationId} />
+
 			<InvoiceResults
 				data={listQuery.data}
 				isPending={listQuery.isPending}
@@ -250,20 +255,28 @@ function InvoiceResults({
 					</TableHeader>
 					<TableBody>
 						{data.items.map((invoice) => (
-							<TableRow key={invoice.id}>
+							<TableRow
+								key={invoice.id}
+								className="cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+								tabIndex={0}
+								aria-label={`查看 ${invoice.studentName} 的账单详情`}
+								onClick={() => onSelect(invoice.id)}
+								onKeyDown={(event) => {
+									if (event.key === "Enter" || event.key === " ") {
+										event.preventDefault();
+										onSelect(invoice.id);
+									}
+								}}
+							>
 								<TableCell className="max-w-56 whitespace-normal">
-									<button
-										type="button"
-										className="block w-full min-w-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-										onClick={() => onSelect(invoice.id)}
-									>
+									<div className="min-w-0">
 										<span className="block truncate font-medium">
 											{invoice.studentName}
 										</span>
 										<span className="mt-0.5 block truncate text-muted-foreground">
 											{invoice.courseName ?? "课程待确认"}
 										</span>
-									</button>
+									</div>
 								</TableCell>
 								<MoneyCell value={invoice.amountInCents} />
 								<MoneyCell value={invoice.paidAmountInCents} />
@@ -384,6 +397,7 @@ function InvoiceDetailSheet({
 					<InvoiceDetailContent
 						detail={detailQuery.data}
 						paymentFormGeneration={paymentFormGeneration}
+						onClose={onClose}
 						onPaymentCreated={() =>
 							setPaymentFormGeneration((current) => current + 1)
 						}
@@ -398,11 +412,13 @@ function InvoiceDetailSheet({
 function InvoiceDetailContent({
 	detail,
 	paymentFormGeneration,
+	onClose,
 	onPaymentCreated,
 	onPaymentPendingChange,
 }: {
 	detail: InvoiceDetail;
 	paymentFormGeneration: number;
+	onClose: () => void;
 	onPaymentCreated: () => void;
 	onPaymentPendingChange: (pending: boolean) => void;
 }) {
@@ -411,6 +427,14 @@ function InvoiceDetailContent({
 		(left, right) =>
 			new Date(right.receivedAt).getTime() -
 			new Date(left.receivedAt).getTime(),
+	);
+	const refundedAmountInCents = detail.refunds.reduce(
+		(total, refund) => total + refund.amountInCents,
+		0,
+	);
+	const refundableAmountInCents = Math.max(
+		invoice.paidAmountInCents - refundedAmountInCents,
+		0,
 	);
 
 	return (
@@ -435,6 +459,7 @@ function InvoiceDetailContent({
 						value={invoice.outstandingAmountInCents}
 						strong
 					/>
+					<AmountDefinition label="已退" value={refundedAmountInCents} />
 					<div className="col-span-2 sm:col-span-3">
 						<dt className="text-muted-foreground text-xs">付款到期日</dt>
 						<dd className="mt-1 tabular-nums">{formatDate(invoice.dueDate)}</dd>
@@ -454,6 +479,14 @@ function InvoiceDetailContent({
 					该账单已结清，无需继续登记收款。
 				</div>
 			)}
+
+			{invoice.status === "paid" && refundableAmountInCents > 0 ? (
+				<RefundForm
+					invoice={invoice}
+					maxAmountInCents={refundableAmountInCents}
+					onCreated={onClose}
+				/>
+			) : null}
 
 			<section className="min-w-0" aria-labelledby="payment-history-title">
 				<div className="flex items-baseline justify-between gap-3">
@@ -512,7 +545,174 @@ function InvoiceDetailContent({
 					</div>
 				)}
 			</section>
+
+			<section className="min-w-0" aria-labelledby="refund-history-title">
+				<div className="flex items-baseline justify-between gap-3">
+					<h2 id="refund-history-title" className="font-semibold text-sm">
+						退款流水
+					</h2>
+					<span className="text-muted-foreground text-xs">
+						共 {detail.refunds.length} 笔可追溯流水
+					</span>
+				</div>
+				{detail.refunds.length > 0 ? (
+					<ol className="mt-3 divide-y border">
+						{detail.refunds.map((refund) => (
+							<li key={refund.id} className="min-w-0 p-3 text-sm">
+								<div className="flex min-w-0 items-start justify-between gap-3">
+									<div className="min-w-0">
+										<p className="font-medium">
+											{getPaymentMethodLabel(refund.method)}
+										</p>
+										<p className="mt-1 text-muted-foreground text-xs">
+											{formatDateTime(refund.refundedAt)} ·{" "}
+											{refund.operatorName}
+										</p>
+									</div>
+									<span className="shrink-0 font-semibold tabular-nums">
+										-{formatCentsToCurrency(refund.amountInCents)}
+									</span>
+								</div>
+								<p className="mt-2 break-words text-muted-foreground text-xs">
+									{refund.reason}
+								</p>
+							</li>
+						))}
+					</ol>
+				) : (
+					<div className="mt-3 border p-6 text-center text-muted-foreground text-sm">
+						暂无退款流水
+					</div>
+				)}
+			</section>
 		</div>
+	);
+}
+
+function RefundForm({
+	invoice,
+	maxAmountInCents,
+	onCreated,
+}: {
+	invoice: InvoiceSummary;
+	maxAmountInCents: number;
+	onCreated: () => void;
+}) {
+	const [amountInYuan, setAmountInYuan] = useState("");
+	const [method, setMethod] = useState<CreateRefundInput["method"] | "">("");
+	const [reason, setReason] = useState("");
+	const [requestId] = useState(() => crypto.randomUUID());
+	const refundMutation = useMutation(
+		orpc.training.finance.refunds.create.mutationOptions({
+			onSuccess: async () => {
+				toast.success("退款登记成功");
+				await invalidateFinanceQueries();
+				onCreated();
+			},
+			onError: (error) => toast.error(`退款登记失败：${error.message}`),
+		}),
+	);
+
+	function submit(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		if (refundMutation.isPending) return;
+		const amountInCents = parseYuanToCents(amountInYuan);
+		if (amountInCents === null || amountInCents > maxAmountInCents || !method) {
+			toast.error("请检查退款金额和方式");
+			return;
+		}
+		const result = createRefundInputSchema.safeParse({
+			invoiceId: invoice.id,
+			amountInCents,
+			refundedAt: new Date().toISOString(),
+			method,
+			reason,
+			requestId,
+		});
+		if (!result.success) {
+			toast.error("请填写退款原因");
+			return;
+		}
+		refundMutation.mutate(result.data);
+	}
+
+	return (
+		<section className="min-w-0 border p-4" aria-labelledby="refund-form-title">
+			<div className="flex items-start justify-between gap-3">
+				<div>
+					<h2 id="refund-form-title" className="font-semibold text-sm">
+						登记退款
+					</h2>
+					<p className="mt-1 text-muted-foreground text-xs">
+						本账单最多可退 {formatCentsToCurrency(maxAmountInCents)}
+					</p>
+				</div>
+				<RotateCcwIcon className="size-4 text-muted-foreground" />
+			</div>
+			<form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+				<Field>
+					<FieldLabel htmlFor="refund-amount">退款金额（元）</FieldLabel>
+					<Input
+						id="refund-amount"
+						inputMode="decimal"
+						value={amountInYuan}
+						onChange={(event) => setAmountInYuan(event.target.value)}
+						required
+					/>
+				</Field>
+				<Field>
+					<FieldLabel htmlFor="refund-method">退款方式</FieldLabel>
+					<Select
+						value={method || null}
+						onValueChange={(value) => setMethod(value ?? "")}
+					>
+						<SelectTrigger id="refund-method" className="w-full">
+							<SelectValue>
+								{() =>
+									method ? getPaymentMethodLabel(method) : "请选择退款方式"
+								}
+							</SelectValue>
+						</SelectTrigger>
+						<SelectContent>
+							<SelectGroup>
+								{paymentMethods.map((item) => (
+									<SelectItem key={item.value} value={item.value}>
+										{item.label}
+									</SelectItem>
+								))}
+							</SelectGroup>
+						</SelectContent>
+					</Select>
+				</Field>
+				<Field className="sm:col-span-2">
+					<FieldLabel htmlFor="refund-reason">退款原因</FieldLabel>
+					<Textarea
+						id="refund-reason"
+						value={reason}
+						onChange={(event) => setReason(event.target.value)}
+						maxLength={500}
+						required
+					/>
+				</Field>
+				<div className="sm:col-span-2 sm:flex sm:justify-end">
+					<Button
+						type="submit"
+						className="w-full sm:w-auto"
+						disabled={refundMutation.isPending}
+					>
+						{refundMutation.isPending ? (
+							<LoaderCircleIcon
+								className="animate-spin"
+								data-icon="inline-start"
+							/>
+						) : (
+							<RotateCcwIcon data-icon="inline-start" />
+						)}
+						{refundMutation.isPending ? "提交中" : "确认退款"}
+					</Button>
+				</div>
+			</form>
+		</section>
 	);
 }
 
@@ -937,6 +1137,9 @@ function invalidateFinanceQueries() {
 		}),
 		queryClient.invalidateQueries({
 			queryKey: orpc.training.finance.invoices.detail.key(),
+		}),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.finance.arrears.list.key(),
 		}),
 		queryClient.invalidateQueries({
 			queryKey: orpc.training.snapshot.key(),

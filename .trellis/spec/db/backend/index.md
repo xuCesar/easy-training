@@ -10,3 +10,4 @@
 - 权限、机构隔离、幂等和财务写入优先在 `packages/db/tests` 增加 PostgreSQL 集成测试。
 - 涉及多校区、成员范围和邀请时，加载 [机构管理契约](organization-management.md)。
 - 涉及课程、教师、班级和课次时，加载 [教务主数据与排课契约](teaching.md)。
+- 涉及续费、转课、退款或欠费跟进时，加载 [报名与财务变更契约](finance-adjustments.md)。

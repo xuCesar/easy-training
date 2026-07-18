@@ -84,6 +84,10 @@ export const attendanceStatus = pgEnum("attendance_status", [
 	"late",
 	"leave",
 ]);
+export const enrollmentStatus = pgEnum("enrollment_status", [
+	"active",
+	"transferred",
+]);
 export const invoiceStatus = pgEnum("invoice_status", [
 	"paid",
 	"pending",
@@ -632,6 +636,7 @@ export const enrollment = pgTable(
 		remainingLessons: integer("remaining_lessons").notNull(),
 		amountInCents: integer("amount_in_cents").default(0).notNull(),
 		paidAmountInCents: integer("paid_amount_in_cents").default(0).notNull(),
+		status: enrollmentStatus("status").default("active").notNull(),
 		enrolledAt: timestamp("enrolled_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
@@ -644,6 +649,80 @@ export const enrollment = pgTable(
 		index("enrollment_org_idx").on(table.organizationId),
 		index("enrollment_student_idx").on(table.studentId),
 		index("enrollment_class_idx").on(table.classGroupId),
+	],
+);
+
+export const enrollmentRenewal = pgTable(
+	"enrollment_renewal",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		enrollmentId: uuid("enrollment_id")
+			.notNull()
+			.references(() => enrollment.id),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		addedLessons: integer("added_lessons").notNull(),
+		amountInCents: integer("amount_in_cents").notNull(),
+		dueDate: date("due_date").notNull(),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		requestId: uuid("request_id").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("enrollment_renewal_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("enrollment_renewal_org_enrollment_idx").on(
+			table.organizationId,
+			table.enrollmentId,
+		),
+	],
+);
+
+export const enrollmentTransfer = pgTable(
+	"enrollment_transfer",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		sourceEnrollmentId: uuid("source_enrollment_id")
+			.notNull()
+			.references(() => enrollment.id),
+		targetEnrollmentId: uuid("target_enrollment_id")
+			.notNull()
+			.references(() => enrollment.id),
+		targetCourseId: uuid("target_course_id")
+			.notNull()
+			.references(() => course.id),
+		transferredLessons: integer("transferred_lessons").notNull(),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		requestId: uuid("request_id").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("enrollment_transfer_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		uniqueIndex("enrollment_transfer_source_uidx").on(table.sourceEnrollmentId),
+		index("enrollment_transfer_org_target_idx").on(
+			table.organizationId,
+			table.targetEnrollmentId,
+		),
 	],
 );
 
@@ -821,6 +900,77 @@ export const payment = pgTable(
 	],
 );
 
+export const refund = pgTable(
+	"refund",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		amountInCents: integer("amount_in_cents").notNull(),
+		refundedAt: timestamp("refunded_at", { withTimezone: true }).notNull(),
+		method: paymentMethod("method").notNull(),
+		reason: text("reason").notNull(),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		operatorName: text("operator_name").notNull(),
+		requestId: uuid("request_id").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		check("refund_amount_positive_check", sql`${table.amountInCents} > 0`),
+		uniqueIndex("refund_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("refund_org_invoice_refunded_idx").on(
+			table.organizationId,
+			table.invoiceId,
+			table.refundedAt,
+		),
+	],
+);
+
+export const invoiceFollowUp = pgTable(
+	"invoice_follow_up",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		note: text("note").notNull(),
+		followedUpAt: timestamp("followed_up_at", { withTimezone: true }).notNull(),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		operatorName: text("operator_name").notNull(),
+		requestId: uuid("request_id").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("invoice_follow_up_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("invoice_follow_up_org_invoice_followed_idx").on(
+			table.organizationId,
+			table.invoiceId,
+			table.followedUpAt,
+		),
+	],
+);
+
 export const operationTask = pgTable(
 	"operation_task",
 	{
@@ -917,6 +1067,8 @@ export const studentTagAssignmentRelations = relations(
 
 export const invoiceRelations = relations(invoice, ({ many }) => ({
 	payments: many(payment),
+	refunds: many(refund),
+	followUps: many(invoiceFollowUp),
 }));
 
 export const paymentRelations = relations(payment, ({ one }) => ({
@@ -925,6 +1077,23 @@ export const paymentRelations = relations(payment, ({ one }) => ({
 		references: [invoice.id],
 	}),
 }));
+
+export const refundRelations = relations(refund, ({ one }) => ({
+	invoice: one(invoice, {
+		fields: [refund.invoiceId],
+		references: [invoice.id],
+	}),
+}));
+
+export const invoiceFollowUpRelations = relations(
+	invoiceFollowUp,
+	({ one }) => ({
+		invoice: one(invoice, {
+			fields: [invoiceFollowUp.invoiceId],
+			references: [invoice.id],
+		}),
+	}),
+);
 
 export const classGroupRelations = relations(classGroup, ({ one, many }) => ({
 	campus: one(campus, {
@@ -945,6 +1114,7 @@ export const classGroupRelations = relations(classGroup, ({ one, many }) => ({
 
 export const enrollmentRelations = relations(enrollment, ({ many }) => ({
 	lessonConsumptions: many(lessonConsumption),
+	renewals: many(enrollmentRenewal),
 }));
 
 export const lessonRelations = relations(lesson, ({ many }) => ({
