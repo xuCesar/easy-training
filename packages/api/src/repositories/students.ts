@@ -28,6 +28,7 @@ import type {
 
 type StudentScope = {
 	organizationId: string;
+	userId: string;
 	campusAccess: Parameters<typeof listStudentRecords>[0]["campusAccess"];
 };
 
@@ -82,6 +83,10 @@ function throwStudentError(error: unknown): never {
 		case "STUDENT_NOT_FOUND":
 		case "STUDENT_TAG_NOT_FOUND":
 			throw new ORPCError("NOT_FOUND", { message: "目标资源不存在。" });
+		case "MEMBER_FORBIDDEN":
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前账号无权访问学员档案。",
+			});
 		case "CAMPUS_OUT_OF_SCOPE":
 			throw new ORPCError("FORBIDDEN", { message: "当前账号无权访问该校区。" });
 		case "CAMPUS_INACTIVE":

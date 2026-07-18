@@ -21,6 +21,8 @@ import {
 	invoice,
 	lead,
 	organization,
+	organizationMember,
+	organizationMemberCampus,
 	student,
 	studentContact,
 	user,
@@ -37,6 +39,7 @@ function createFixtureIds() {
 		campusB: randomUUID(),
 		courseA: randomUUID(),
 		leadConversion: randomUUID(),
+		managerUserId: `${prefix}-manager`,
 		operatorUserId: `${prefix}-operator`,
 	};
 }
@@ -66,7 +69,9 @@ async function cleanupFixture(ids: FixtureIds) {
 	await db
 		.delete(organization)
 		.where(inArray(organization.id, organizationIds));
-	await db.delete(user).where(eq(user.id, ids.operatorUserId));
+	await db
+		.delete(user)
+		.where(inArray(user.id, [ids.managerUserId, ids.operatorUserId]));
 }
 
 async function seedFixture(ids: FixtureIds) {
@@ -74,11 +79,18 @@ async function seedFixture(ids: FixtureIds) {
 		{ id: ids.organizationA, name: `${ids.prefix} A` },
 		{ id: ids.organizationB, name: `${ids.prefix} B` },
 	]);
-	await db.insert(user).values({
-		id: ids.operatorUserId,
-		name: "学员测试操作人",
-		email: `${ids.operatorUserId}@example.invalid`,
-	});
+	await db.insert(user).values([
+		{
+			id: ids.managerUserId,
+			name: "学员测试管理员",
+			email: `${ids.managerUserId}@example.invalid`,
+		},
+		{
+			id: ids.operatorUserId,
+			name: "学员测试操作人",
+			email: `${ids.operatorUserId}@example.invalid`,
+		},
+	]);
 	await db.insert(campus).values([
 		{
 			id: ids.campusA,
@@ -105,6 +117,35 @@ async function seedFixture(ids: FixtureIds) {
 			address: "B",
 		},
 	]);
+	const createdMembers = await db
+		.insert(organizationMember)
+		.values([
+			{
+				organizationId: ids.organizationA,
+				userId: ids.managerUserId,
+				role: "owner",
+			},
+			{
+				organizationId: ids.organizationA,
+				userId: ids.operatorUserId,
+				role: "consultant",
+				campusAccessMode: "selected",
+			},
+		])
+		.returning({
+			id: organizationMember.id,
+			userId: organizationMember.userId,
+		});
+	const selectedOperatorMember = createdMembers.find(
+		(member) => member.userId === ids.operatorUserId,
+	);
+	if (!selectedOperatorMember) {
+		throw new Error("Operator membership was not created.");
+	}
+	await db.insert(organizationMemberCampus).values({
+		organizationMemberId: selectedOperatorMember.id,
+		campusId: ids.campusA,
+	});
 	await db.insert(course).values({
 		id: ids.courseA,
 		organizationId: ids.organizationA,
@@ -138,12 +179,14 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 		await seedFixture(ids);
 		const tag = await createStudentTagRecord({
 			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
 			campusAccess: allAccess,
 			name: "  重点学员  ",
 		});
 		await expectStudentError(
 			createStudentTagRecord({
 				organizationId: ids.organizationA,
+				userId: ids.managerUserId,
 				campusAccess: allAccess,
 				name: "重点学员",
 			}),
@@ -151,6 +194,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 		);
 		await renameStudentTagRecord({
 			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
 			campusAccess: allAccess,
 			id: tag.id,
 			name: "重点客户",
@@ -158,6 +202,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 
 		const created = await createStudentRecord({
 			organizationId: ids.organizationA,
+			userId: ids.operatorUserId,
 			campusAccess: selectedA,
 			name: "校区 A 学员",
 			campusId: ids.campusA,
@@ -189,6 +234,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 
 		const otherCampusStudent = await createStudentRecord({
 			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
 			campusAccess: allAccess,
 			name: "校区 A2 学员",
 			campusId: ids.campusAOther,
@@ -225,6 +271,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 		assert.ok(primaryContact);
 		const updated = await updateStudentRecord({
 			organizationId: ids.organizationA,
+			userId: ids.operatorUserId,
 			campusAccess: selectedA,
 			id: created.id,
 			data: {
@@ -267,6 +314,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 		await expectStudentError(
 			updateStudentRecord({
 				organizationId: ids.organizationA,
+				userId: ids.operatorUserId,
 				campusAccess: selectedA,
 				id: created.id,
 				data: {
@@ -285,6 +333,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 
 		await setStudentTagActiveRecord({
 			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
 			campusAccess: allAccess,
 			id: tag.id,
 			isActive: false,
@@ -300,6 +349,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 		await expectStudentError(
 			createStudentRecord({
 				organizationId: ids.organizationA,
+				userId: ids.operatorUserId,
 				campusAccess: selectedA,
 				name: "不能分配停用标签",
 				campusId: ids.campusA,
@@ -335,6 +385,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 		await expectStudentError(
 			updateStudentRecord({
 				organizationId: ids.organizationA,
+				userId: ids.operatorUserId,
 				campusAccess: selectedA,
 				id: created.id,
 				data: {
@@ -347,6 +398,98 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 			}),
 			"CAMPUS_INACTIVE",
 		);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("学员写入在事务内重新校验成员当前校区范围", async () => {
+	const ids = createFixtureIds();
+	const staleCampusAccess = {
+		kind: "selected" as const,
+		campusIds: [ids.campusA],
+	};
+
+	try {
+		await seedFixture(ids);
+		const created = await createStudentRecord({
+			organizationId: ids.organizationA,
+			userId: ids.operatorUserId,
+			campusAccess: staleCampusAccess,
+			name: "撤销前学员",
+			campusId: ids.campusA,
+			birthDate: null,
+			status: "trial",
+			contacts: [
+				{
+					name: "撤销前联系人",
+					phone: "13800138001",
+					relationship: null,
+					isPrimary: true,
+				},
+			],
+			tagIds: [],
+		});
+		const [operatorMember] = await db
+			.select({ id: organizationMember.id })
+			.from(organizationMember)
+			.where(eq(organizationMember.userId, ids.operatorUserId))
+			.limit(1);
+		assert.ok(operatorMember);
+
+		await db
+			.delete(organizationMemberCampus)
+			.where(
+				eq(organizationMemberCampus.organizationMemberId, operatorMember.id),
+			);
+		await db.insert(organizationMemberCampus).values({
+			organizationMemberId: operatorMember.id,
+			campusId: ids.campusAOther,
+		});
+
+		await expectStudentError(
+			createStudentRecord({
+				organizationId: ids.organizationA,
+				userId: ids.operatorUserId,
+				campusAccess: staleCampusAccess,
+				name: "撤销后新增",
+				campusId: ids.campusA,
+				birthDate: null,
+				status: "trial",
+				contacts: [
+					{
+						name: "撤销后联系人",
+						phone: "13800138002",
+						relationship: null,
+						isPrimary: true,
+					},
+				],
+				tagIds: [],
+			}),
+			"CAMPUS_OUT_OF_SCOPE",
+		);
+		await expectStudentError(
+			updateStudentRecord({
+				organizationId: ids.organizationA,
+				userId: ids.operatorUserId,
+				campusAccess: staleCampusAccess,
+				id: created.id,
+				data: {
+					name: "不应保存的更新",
+					birthDate: created.birthDate,
+					status: created.status,
+					contacts: created.contacts,
+					tagIds: [],
+				},
+			}),
+			"CAMPUS_OUT_OF_SCOPE",
+		);
+		const persisted = await getStudentRecord({
+			organizationId: ids.organizationA,
+			campusAccess: { kind: "all" },
+			id: created.id,
+		});
+		assert.equal(persisted.name, "撤销前学员");
 	} finally {
 		await cleanupFixture(ids);
 	}

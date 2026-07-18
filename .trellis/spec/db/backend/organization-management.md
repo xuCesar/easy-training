@@ -64,3 +64,58 @@ await assertWritableCampus(tx, {
 ```
 
 先在事务中重检既有归属校区；若要变更归属，再对目标校区执行同样检查。
+
+## 场景：成员权限变更与领域写入并发
+
+### 1. Scope / Trigger
+
+- 触发：任何接收 `userId`、`organizationId` 与预解析 `CampusAccess` 的领域写操作。
+- 目的：防止请求在 middleware 通过后，成员被移除、降级或缩小校区范围，仍使用旧授权快照提交。
+
+### 2. Signatures
+
+- 写 repository 接收 `userId`，在事务内调用 `getCurrentWriteCampusAccess(tx, { organizationId, userId, allowedRoles })`。
+- 成员范围变更和领域写入都必须先获取 `pg_advisory_xact_lock(hashtext(organizationId))`。
+
+### 3. Contracts
+
+- API 层解析的 `CampusAccess` 仅用于当前请求读取与响应；它不能作为写事务的最终授权依据。
+- 事务锁取得后，重新锁定 `organization_member`，按当前角色和 `organization_member_campus` 计算实际范围；owner/admin 固定为 `all`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 数据库领域错误 | API 语义 |
+| --- | --- | --- |
+| 成员已移除或不再具备领域角色 | `MEMBER_FORBIDDEN` | `FORBIDDEN` |
+| 成员范围已移除目标校区 | `CAMPUS_OUT_OF_SCOPE` | `FORBIDDEN` |
+| 目标校区已停用 | `CAMPUS_INACTIVE` | `CONFLICT` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: 范围未变时，使用当前事务重新计算的范围写入启用校区。
+- Base: 同一时刻的成员范围变更与写入按机构锁串行，后获得锁的一方基于最新提交状态执行。
+- Bad: 直接把 router middleware 中的 `CampusAccess` 传给 `assertWritableCampus`，不重新读取成员关系。
+
+### 6. Tests Required
+
+- PostgreSQL 集成测试先取得允许写入的范围快照，再将成员范围切换到另一校区，断言 create/update 均返回 `CAMPUS_OUT_OF_SCOPE`，且既有数据未变。
+- 覆盖成员移除或角色降级后返回 `MEMBER_FORBIDDEN`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await assertWritableCampus(tx, { campusAccess: input.campusAccess, campusId });
+```
+
+#### Correct
+
+```ts
+const campusAccess = await getCurrentWriteCampusAccess(tx, {
+  organizationId: input.organizationId,
+  userId: input.userId,
+  allowedRoles,
+});
+await assertWritableCampus(tx, { campusAccess, campusId });
+```

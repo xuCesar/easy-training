@@ -309,6 +309,7 @@ export const appRouter = {
 					listStudents(
 						{
 							organizationId: context.organization.id,
+							userId: context.session.user.id,
 							campusAccess: context.campusAccess,
 						},
 						input,
@@ -321,6 +322,7 @@ export const appRouter = {
 					getStudent(
 						{
 							organizationId: context.organization.id,
+							userId: context.session.user.id,
 							campusAccess: context.campusAccess,
 						},
 						input.id,
@@ -333,6 +335,7 @@ export const appRouter = {
 					createStudent(
 						{
 							organizationId: context.organization.id,
+							userId: context.session.user.id,
 							campusAccess: context.campusAccess,
 						},
 						input,
@@ -345,6 +348,7 @@ export const appRouter = {
 					updateStudent(
 						{
 							organizationId: context.organization.id,
+							userId: context.session.user.id,
 							campusAccess: context.campusAccess,
 						},
 						input,
@@ -358,6 +362,7 @@ export const appRouter = {
 						listStudentTags(
 							{
 								organizationId: context.organization.id,
+								userId: context.session.user.id,
 								campusAccess: context.campusAccess,
 							},
 							input,
@@ -370,6 +375,7 @@ export const appRouter = {
 						createStudentTag(
 							{
 								organizationId: context.organization.id,
+								userId: context.session.user.id,
 								campusAccess: context.campusAccess,
 							},
 							input,
@@ -382,6 +388,7 @@ export const appRouter = {
 						updateStudentTag(
 							{
 								organizationId: context.organization.id,
+								userId: context.session.user.id,
 								campusAccess: context.campusAccess,
 							},
 							input,
@@ -394,6 +401,7 @@ export const appRouter = {
 						setStudentTagActive(
 							{
 								organizationId: context.organization.id,
+								userId: context.session.user.id,
 								campusAccess: context.campusAccess,
 							},
 							input,

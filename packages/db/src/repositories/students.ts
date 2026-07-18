@@ -3,6 +3,8 @@ import { and, asc, count, desc, eq, gt, inArray, or, sql } from "drizzle-orm";
 import { db } from "../index";
 import {
 	campus,
+	organizationMember,
+	organizationMemberCampus,
 	student,
 	studentContact,
 	studentTag,
@@ -19,6 +21,7 @@ export type StudentRepositoryErrorCode =
 	| "INVALID_TAGS"
 	| "STUDENT_TAG_NOT_FOUND"
 	| "STUDENT_TAG_DUPLICATE"
+	| "MEMBER_FORBIDDEN"
 	| "INVALID_CURSOR";
 
 export class StudentRepositoryError extends Error {
@@ -68,6 +71,7 @@ export type StudentDetailRecord = StudentSummaryRecord & {
 
 export type CreateStudentRecordInput = {
 	organizationId: string;
+	userId: string;
 	campusAccess: CampusAccess;
 	name: string;
 	campusId: string;
@@ -97,6 +101,70 @@ function isCampusAccessible(
 		(campusAccess.kind === "selected" &&
 			campusAccess.campusIds.includes(campusId))
 	);
+}
+
+const studentWriteRoles = new Set<
+	(typeof organizationMember.$inferSelect)["role"]
+>(["owner", "admin", "campus_manager", "consultant"]);
+
+const studentTagWriteRoles = new Set<
+	(typeof organizationMember.$inferSelect)["role"]
+>(["owner", "admin"]);
+
+function isOrganizationWideMember(
+	member: Pick<
+		typeof organizationMember.$inferSelect,
+		"role" | "campusAccessMode"
+	>,
+): boolean {
+	return (
+		member.role === "owner" ||
+		member.role === "admin" ||
+		member.campusAccessMode === "all"
+	);
+}
+
+async function getCurrentWriteCampusAccess(
+	tx: Transaction,
+	input: {
+		organizationId: string;
+		userId: string;
+		allowedRoles: ReadonlySet<(typeof organizationMember.$inferSelect)["role"]>;
+	},
+): Promise<CampusAccess> {
+	// 与成员权限变更共用机构级事务锁，避免请求使用已撤销的授权快照写入。
+	await tx.execute(
+		sql`SELECT pg_advisory_xact_lock(hashtext(${input.organizationId}))`,
+	);
+
+	const [member] = await tx
+		.select({
+			id: organizationMember.id,
+			role: organizationMember.role,
+			campusAccessMode: organizationMember.campusAccessMode,
+		})
+		.from(organizationMember)
+		.where(
+			and(
+				eq(organizationMember.organizationId, input.organizationId),
+				eq(organizationMember.userId, input.userId),
+			),
+		)
+		.limit(1)
+		.for("update");
+	if (!member || !input.allowedRoles.has(member.role)) {
+		throw new StudentRepositoryError("MEMBER_FORBIDDEN");
+	}
+	if (isOrganizationWideMember(member)) return { kind: "all" };
+
+	const scopes = await tx
+		.select({ campusId: organizationMemberCampus.campusId })
+		.from(organizationMemberCampus)
+		.where(eq(organizationMemberCampus.organizationMemberId, member.id))
+		.orderBy(asc(organizationMemberCampus.campusId));
+	return scopes.length > 0
+		? { kind: "selected", campusIds: scopes.map((scope) => scope.campusId) }
+		: { kind: "none" };
 }
 
 function campusAccessCondition(campusAccess: CampusAccess) {
@@ -228,12 +296,6 @@ async function assertWritableCampus(
 	if (!campusRecord) throw new StudentRepositoryError("CAMPUS_NOT_FOUND");
 	if (!campusRecord.isActive) {
 		throw new StudentRepositoryError("CAMPUS_INACTIVE");
-	}
-}
-
-function ensureTagOperationAccess(campusAccess: CampusAccess): void {
-	if (campusAccess.kind === "none") {
-		throw new StudentRepositoryError("CAMPUS_OUT_OF_SCOPE");
 	}
 }
 
@@ -588,7 +650,12 @@ export async function createStudentRecord(
 	const tagIds = normalizeTagIds(input.tagIds);
 	try {
 		const id = await db.transaction(async (tx) => {
-			await assertWritableCampus(tx, input);
+			const campusAccess = await getCurrentWriteCampusAccess(tx, {
+				organizationId: input.organizationId,
+				userId: input.userId,
+				allowedRoles: studentWriteRoles,
+			});
+			await assertWritableCampus(tx, { ...input, campusAccess });
 			await assertAssignableTags(tx, {
 				organizationId: input.organizationId,
 				studentId: null,
@@ -638,6 +705,7 @@ export async function createStudentRecord(
 
 export async function updateStudentRecord(input: {
 	organizationId: string;
+	userId: string;
 	campusAccess: CampusAccess;
 	id: string;
 	data: UpdateStudentRecordInput;
@@ -648,6 +716,11 @@ export async function updateStudentRecord(input: {
 	const tagIds = normalizeTagIds(input.data.tagIds);
 	try {
 		await db.transaction(async (tx) => {
+			const campusAccess = await getCurrentWriteCampusAccess(tx, {
+				organizationId: input.organizationId,
+				userId: input.userId,
+				allowedRoles: studentWriteRoles,
+			});
 			const [current] = await tx
 				.select({ id: student.id, campusId: student.campusId })
 				.from(student)
@@ -662,7 +735,7 @@ export async function updateStudentRecord(input: {
 			if (!current) throw new StudentRepositoryError("STUDENT_NOT_FOUND");
 			await assertWritableCampus(tx, {
 				organizationId: input.organizationId,
-				campusAccess: input.campusAccess,
+				campusAccess,
 				campusId: current.campusId,
 			});
 
@@ -748,24 +821,34 @@ export async function listStudentTagRecords(input: {
 
 export async function createStudentTagRecord(input: {
 	organizationId: string;
+	userId: string;
 	campusAccess: CampusAccess;
 	name: string;
 }): Promise<StudentTagRecord> {
-	ensureTagOperationAccess(input.campusAccess);
 	const tagName = ensureTagName(input.name);
 	try {
-		const [created] = await db
-			.insert(studentTag)
-			.values({
+		const created = await db.transaction(async (tx) => {
+			await getCurrentWriteCampusAccess(tx, {
 				organizationId: input.organizationId,
-				name: tagName.name,
-				nameNormalized: tagName.normalized,
-			})
-			.returning({
-				id: studentTag.id,
-				name: studentTag.name,
-				isActive: studentTag.isActive,
+				userId: input.userId,
+				allowedRoles: studentTagWriteRoles,
 			});
+			const [record] = await tx
+				.insert(studentTag)
+				.values({
+					organizationId: input.organizationId,
+					name: tagName.name,
+					nameNormalized: tagName.normalized,
+				})
+				.returning({
+					id: studentTag.id,
+					name: studentTag.name,
+					isActive: studentTag.isActive,
+				});
+			if (!record)
+				throw new Error("Student tag creation did not return a record.");
+			return record;
+		});
 		if (!created)
 			throw new Error("Student tag creation did not return a record.");
 		return created;
@@ -777,20 +860,64 @@ export async function createStudentTagRecord(input: {
 
 export async function renameStudentTagRecord(input: {
 	organizationId: string;
+	userId: string;
 	campusAccess: CampusAccess;
 	id: string;
 	name: string;
 }): Promise<StudentTagRecord> {
-	ensureTagOperationAccess(input.campusAccess);
 	const tagName = ensureTagName(input.name);
 	try {
-		const [updated] = await db
+		const updated = await db.transaction(async (tx) => {
+			await getCurrentWriteCampusAccess(tx, {
+				organizationId: input.organizationId,
+				userId: input.userId,
+				allowedRoles: studentTagWriteRoles,
+			});
+			const [record] = await tx
+				.update(studentTag)
+				.set({
+					name: tagName.name,
+					nameNormalized: tagName.normalized,
+					updatedAt: new Date(),
+				})
+				.where(
+					and(
+						eq(studentTag.id, input.id),
+						eq(studentTag.organizationId, input.organizationId),
+					),
+				)
+				.returning({
+					id: studentTag.id,
+					name: studentTag.name,
+					isActive: studentTag.isActive,
+				});
+			if (!record) throw new StudentRepositoryError("STUDENT_TAG_NOT_FOUND");
+			return record;
+		});
+		if (!updated) throw new StudentRepositoryError("STUDENT_TAG_NOT_FOUND");
+		return updated;
+	} catch (error) {
+		if (error instanceof StudentRepositoryError) throw error;
+		return mapDatabaseError(error);
+	}
+}
+
+export async function setStudentTagActiveRecord(input: {
+	organizationId: string;
+	userId: string;
+	campusAccess: CampusAccess;
+	id: string;
+	isActive: boolean;
+}): Promise<StudentTagRecord> {
+	const updated = await db.transaction(async (tx) => {
+		await getCurrentWriteCampusAccess(tx, {
+			organizationId: input.organizationId,
+			userId: input.userId,
+			allowedRoles: studentTagWriteRoles,
+		});
+		const [record] = await tx
 			.update(studentTag)
-			.set({
-				name: tagName.name,
-				nameNormalized: tagName.normalized,
-				updatedAt: new Date(),
-			})
+			.set({ isActive: input.isActive, updatedAt: new Date() })
 			.where(
 				and(
 					eq(studentTag.id, input.id),
@@ -802,35 +929,9 @@ export async function renameStudentTagRecord(input: {
 				name: studentTag.name,
 				isActive: studentTag.isActive,
 			});
-		if (!updated) throw new StudentRepositoryError("STUDENT_TAG_NOT_FOUND");
-		return updated;
-	} catch (error) {
-		if (error instanceof StudentRepositoryError) throw error;
-		return mapDatabaseError(error);
-	}
-}
-
-export async function setStudentTagActiveRecord(input: {
-	organizationId: string;
-	campusAccess: CampusAccess;
-	id: string;
-	isActive: boolean;
-}): Promise<StudentTagRecord> {
-	ensureTagOperationAccess(input.campusAccess);
-	const [updated] = await db
-		.update(studentTag)
-		.set({ isActive: input.isActive, updatedAt: new Date() })
-		.where(
-			and(
-				eq(studentTag.id, input.id),
-				eq(studentTag.organizationId, input.organizationId),
-			),
-		)
-		.returning({
-			id: studentTag.id,
-			name: studentTag.name,
-			isActive: studentTag.isActive,
-		});
+		if (!record) throw new StudentRepositoryError("STUDENT_TAG_NOT_FOUND");
+		return record;
+	});
 	if (!updated) throw new StudentRepositoryError("STUDENT_TAG_NOT_FOUND");
 	return updated;
 }
