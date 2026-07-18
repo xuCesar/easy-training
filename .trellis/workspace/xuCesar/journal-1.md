@@ -41,3 +41,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: P1 课程、班级与排课基础能力
+
+**Date**: 2026-07-18
+**Task**: P1 课程、班级与排课基础能力
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+完成课程、教师、班级和课次管理，加入排课冲突与取消审计、报名兼容、移动端筛选与课程时长依赖保护；验证通过类型、构建、规范和 19 项集成测试。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `faee559` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
