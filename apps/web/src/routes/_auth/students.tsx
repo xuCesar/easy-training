@@ -185,7 +185,7 @@ function StudentsRoute() {
 					</Button>
 				</div>
 			</section>
-			<section className="grid gap-3 border p-3 md:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_repeat(3,minmax(9rem,1fr))_auto]">
+			<section className="grid gap-3 border p-3 md:grid-cols-2 xl:grid-cols-4">
 				<div className="relative md:col-span-2 xl:col-span-1">
 					<SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
 					<Input
@@ -227,7 +227,12 @@ function StudentsRoute() {
 					]}
 				/>
 				{isFiltered ? (
-					<Button type="button" variant="ghost" onClick={clearFilters}>
+					<Button
+						type="button"
+						variant="ghost"
+						className="md:col-span-2 md:justify-self-end xl:col-span-4"
+						onClick={clearFilters}
+					>
 						清除筛选
 					</Button>
 				) : null}
