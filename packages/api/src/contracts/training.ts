@@ -566,6 +566,144 @@ export type InvoiceDetail = z.infer<typeof invoiceDetailSchema>;
 export type CreatePaymentInput = z.infer<typeof createPaymentInputSchema>;
 export type CreatePaymentResult = z.infer<typeof createPaymentResultSchema>;
 
+export const studentStatusSchema = z.enum([
+	"active",
+	"trial",
+	"paused",
+	"graduated",
+	"atRisk",
+]);
+
+const studentContactInputSchema = z.object({
+	id: z.uuid().optional(),
+	name: z.string().trim().min(1).max(50),
+	phone: z.string().trim().min(5).max(30),
+	relationship: z.string().trim().min(1).max(30).nullable().default(null),
+	isPrimary: z.boolean(),
+});
+
+const studentContactsSchema = z
+	.array(studentContactInputSchema)
+	.min(1, "请至少填写一位联系人")
+	.max(10, "最多可维护 10 位联系人")
+	.superRefine((contacts, context) => {
+		if (contacts.filter((contact) => contact.isPrimary).length !== 1) {
+			context.addIssue({
+				code: "custom",
+				message: "请且仅选择一位主要联系人",
+				path: ["isPrimary"],
+			});
+		}
+	});
+
+export const studentTagSchema = z.object({
+	id: z.uuid(),
+	name: z.string(),
+	isActive: z.boolean(),
+});
+
+const studentSummarySchema = z.object({
+	id: z.uuid(),
+	name: z.string(),
+	campusId: z.uuid(),
+	campusName: z.string(),
+	status: studentStatusSchema,
+	primaryContactName: z.string(),
+	primaryContactPhoneMasked: z.string(),
+	tags: z.array(studentTagSchema),
+	createdAt: z.iso.datetime({ offset: true }),
+	updatedAt: z.iso.datetime({ offset: true }),
+});
+
+const studentContactSchema = z.object({
+	id: z.uuid(),
+	name: z.string(),
+	phone: z.string(),
+	relationship: z.string().nullable(),
+	isPrimary: z.boolean(),
+});
+
+export const studentDetailSchema = studentSummarySchema.extend({
+	birthDate: z.iso.date().nullable(),
+	contacts: z.array(studentContactSchema),
+});
+
+export const studentListInputSchema = z.object({
+	query: z.string().trim().min(1).max(100).optional(),
+	campusId: z.uuid().optional(),
+	status: z
+		.enum(["all", "active", "trial", "paused", "graduated", "atRisk"])
+		.default("all"),
+	tagId: z.uuid().optional(),
+	cursor: z.string().min(1).max(256).optional(),
+	pageSize: z.number().int().min(1).max(50).default(20),
+});
+
+export const studentListResultSchema = z.object({
+	items: z.array(studentSummarySchema),
+	total: z.number().int().nonnegative(),
+	nextCursor: z.string().nullable(),
+});
+
+export const studentDetailInputSchema = z.object({ id: z.uuid() });
+
+export const createStudentInputSchema = z.object({
+	name: z.string().trim().min(1).max(50),
+	campusId: z.uuid(),
+	birthDate: z.iso.date().nullable().default(null),
+	status: studentStatusSchema.default("trial"),
+	contacts: studentContactsSchema,
+	tagIds: z.array(z.uuid()).max(30).default([]),
+});
+
+export const updateStudentInputSchema = z.object({
+	id: z.uuid(),
+	data: z.object({
+		name: z.string().trim().min(1).max(50),
+		birthDate: z.iso.date().nullable(),
+		status: studentStatusSchema,
+		contacts: studentContactsSchema,
+		tagIds: z.array(z.uuid()).max(30),
+	}),
+});
+
+export const studentTagListInputSchema = z.object({
+	includeInactive: z.boolean().default(false),
+});
+
+export const studentTagListResultSchema = z.object({
+	items: z.array(studentTagSchema),
+});
+
+export const createStudentTagInputSchema = z.object({
+	name: z.string().trim().min(1).max(30),
+});
+
+export const updateStudentTagInputSchema = z.object({
+	id: z.uuid(),
+	name: z.string().trim().min(1).max(30),
+});
+
+export const setStudentTagActiveInputSchema = z.object({
+	id: z.uuid(),
+	isActive: z.boolean(),
+});
+
+export type StudentStatus = z.infer<typeof studentStatusSchema>;
+export type StudentTag = z.infer<typeof studentTagSchema>;
+export type StudentDetail = z.infer<typeof studentDetailSchema>;
+export type StudentListInput = z.infer<typeof studentListInputSchema>;
+export type StudentListResult = z.infer<typeof studentListResultSchema>;
+export type CreateStudentInput = z.infer<typeof createStudentInputSchema>;
+export type UpdateStudentInput = z.infer<typeof updateStudentInputSchema>;
+export type StudentTagListInput = z.infer<typeof studentTagListInputSchema>;
+export type StudentTagListResult = z.infer<typeof studentTagListResultSchema>;
+export type CreateStudentTagInput = z.infer<typeof createStudentTagInputSchema>;
+export type UpdateStudentTagInput = z.infer<typeof updateStudentTagInputSchema>;
+export type SetStudentTagActiveInput = z.infer<
+	typeof setStudentTagActiveInputSchema
+>;
+
 const dashboardFollowUpSchema = z.object({
 	id: z.uuid(),
 	name: z.string(),

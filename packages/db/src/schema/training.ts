@@ -391,6 +391,86 @@ export const student = pgTable(
 	],
 );
 
+export const studentContact = pgTable(
+	"student_contact",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id, { onDelete: "cascade" }),
+		name: text("name").notNull(),
+		phone: text("phone").notNull(),
+		relationship: text("relationship"),
+		isPrimary: boolean("is_primary").default(false).notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("student_contact_primary_uidx")
+			.on(table.studentId)
+			.where(sql`${table.isPrimary} = true`),
+		index("student_contact_student_idx").on(table.studentId),
+	],
+);
+
+export const studentTag = pgTable(
+	"student_tag",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		name: text("name").notNull(),
+		nameNormalized: text("name_normalized").notNull(),
+		isActive: boolean("is_active").default(true).notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("student_tag_org_name_normalized_uidx").on(
+			table.organizationId,
+			table.nameNormalized,
+		),
+		index("student_tag_org_active_name_idx").on(
+			table.organizationId,
+			table.isActive,
+			table.name,
+		),
+	],
+);
+
+export const studentTagAssignment = pgTable(
+	"student_tag_assignment",
+	{
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id, { onDelete: "cascade" }),
+		studentTagId: uuid("student_tag_id")
+			.notNull()
+			.references(() => studentTag.id, { onDelete: "cascade" }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("student_tag_assignment_uidx").on(
+			table.studentId,
+			table.studentTagId,
+		),
+		index("student_tag_assignment_tag_idx").on(table.studentTagId),
+	],
+);
+
 export const lead = pgTable(
 	"lead",
 	{
@@ -715,6 +795,7 @@ export const organizationRelations = relations(organization, ({ many }) => ({
 	campuses: many(campus),
 	courses: many(course),
 	students: many(student),
+	studentTags: many(studentTag),
 	leadActivities: many(leadActivity),
 }));
 
@@ -740,10 +821,41 @@ export const campusRelations = relations(campus, ({ one, many }) => ({
 
 export const studentRelations = relations(student, ({ one, many }) => ({
 	campus: one(campus, { fields: [student.campusId], references: [campus.id] }),
+	contacts: many(studentContact),
+	tagAssignments: many(studentTagAssignment),
 	enrollments: many(enrollment),
 	attendances: many(attendance),
 	invoices: many(invoice),
 }));
+
+export const studentContactRelations = relations(studentContact, ({ one }) => ({
+	student: one(student, {
+		fields: [studentContact.studentId],
+		references: [student.id],
+	}),
+}));
+
+export const studentTagRelations = relations(studentTag, ({ one, many }) => ({
+	organization: one(organization, {
+		fields: [studentTag.organizationId],
+		references: [organization.id],
+	}),
+	assignments: many(studentTagAssignment),
+}));
+
+export const studentTagAssignmentRelations = relations(
+	studentTagAssignment,
+	({ one }) => ({
+		student: one(student, {
+			fields: [studentTagAssignment.studentId],
+			references: [student.id],
+		}),
+		tag: one(studentTag, {
+			fields: [studentTagAssignment.studentTagId],
+			references: [studentTag.id],
+		}),
+	}),
+);
 
 export const invoiceRelations = relations(invoice, ({ many }) => ({
 	payments: many(payment),

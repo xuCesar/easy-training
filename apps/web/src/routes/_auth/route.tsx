@@ -93,7 +93,13 @@ const navigation = [
 		available: true,
 		roles: ["owner", "admin"],
 	},
-	{ to: "/dashboard", label: "学员中心", icon: BookOpenIcon, available: false },
+	{
+		to: "/students",
+		label: "学员中心",
+		icon: BookOpenIcon,
+		available: true,
+		roles: ["owner", "admin", "campus_manager", "consultant"],
+	},
 	{
 		to: "/dashboard",
 		label: "教务排课",

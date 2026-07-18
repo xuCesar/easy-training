@@ -10,6 +10,7 @@ import {
 	lead,
 	leadActivity,
 	student,
+	studentContact,
 	user,
 } from "../schema";
 import type { CampusAccess } from "./organization";
@@ -484,6 +485,13 @@ export async function convertLeadRecord(
 				if (!createdStudent) {
 					throw new Error("Student creation did not return a record.");
 				}
+
+				await tx.insert(studentContact).values({
+					studentId: createdStudent.id,
+					name: input.student.guardianName,
+					phone: leadRecord.phone,
+					isPrimary: true,
+				});
 
 				studentId = createdStudent.id;
 				studentCampusId = createdStudent.campusId;

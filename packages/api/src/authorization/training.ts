@@ -9,6 +9,13 @@ export const leadManagementRoles: ReadonlySet<OrganizationRole> = new Set([
 	"consultant",
 ]);
 
+export const studentManagementRoles: ReadonlySet<OrganizationRole> = new Set([
+	"owner",
+	"admin",
+	"campus_manager",
+	"consultant",
+]);
+
 export const financeManagementRoles: ReadonlySet<OrganizationRole> = new Set([
 	"owner",
 	"admin",

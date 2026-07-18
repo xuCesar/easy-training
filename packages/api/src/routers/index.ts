@@ -15,6 +15,8 @@ import {
 	createLeadResultSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
+	createStudentInputSchema,
+	createStudentTagInputSchema,
 	currentOrganizationSchema,
 	dashboardSnapshotSchema,
 	exportLeadsInputSchema,
@@ -37,9 +39,18 @@ import {
 	revokeInvitationInputSchema,
 	selectOrganizationInputSchema,
 	setCampusActiveInputSchema,
+	setStudentTagActiveInputSchema,
+	studentDetailInputSchema,
+	studentDetailSchema,
+	studentListInputSchema,
+	studentListResultSchema,
+	studentTagListInputSchema,
+	studentTagListResultSchema,
 	updateCampusInputSchema,
 	updateLeadInputSchema,
 	updateMemberInputSchema,
+	updateStudentInputSchema,
+	updateStudentTagInputSchema,
 } from "../contracts/training";
 import {
 	currentOrganizationProcedure,
@@ -50,6 +61,7 @@ import {
 	organizationProcedure,
 	protectedProcedure,
 	publicProcedure,
+	studentProcedure,
 } from "../index";
 import {
 	convertLead,
@@ -87,6 +99,16 @@ import {
 	updateCampus,
 	updateMember,
 } from "../repositories/organization-management";
+import {
+	createStudent,
+	createStudentTag,
+	getStudent,
+	listStudents,
+	listStudentTags,
+	setStudentTagActive,
+	updateStudent,
+	updateStudentTag,
+} from "../repositories/students";
 import { getTrainingDashboardSnapshot } from "../repositories/training-dashboard";
 
 function toCurrentOrganizationResponse(
@@ -278,6 +300,106 @@ export const appRouter = {
 						sessionId: context.session.session.id,
 					}),
 				),
+		},
+		students: {
+			list: studentProcedure
+				.input(studentListInputSchema)
+				.output(studentListResultSchema)
+				.handler(({ context, input }) =>
+					listStudents(
+						{
+							organizationId: context.organization.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			get: studentProcedure
+				.input(studentDetailInputSchema)
+				.output(studentDetailSchema)
+				.handler(({ context, input }) =>
+					getStudent(
+						{
+							organizationId: context.organization.id,
+							campusAccess: context.campusAccess,
+						},
+						input.id,
+					),
+				),
+			create: studentProcedure
+				.input(createStudentInputSchema)
+				.output(studentDetailSchema)
+				.handler(({ context, input }) =>
+					createStudent(
+						{
+							organizationId: context.organization.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			update: studentProcedure
+				.input(updateStudentInputSchema)
+				.output(studentDetailSchema)
+				.handler(({ context, input }) =>
+					updateStudent(
+						{
+							organizationId: context.organization.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			tags: {
+				list: studentProcedure
+					.input(studentTagListInputSchema)
+					.output(studentTagListResultSchema)
+					.handler(({ context, input }) =>
+						listStudentTags(
+							{
+								organizationId: context.organization.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				create: organizationManagementProcedure
+					.input(createStudentTagInputSchema)
+					.output(studentTagListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						createStudentTag(
+							{
+								organizationId: context.organization.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				update: organizationManagementProcedure
+					.input(updateStudentTagInputSchema)
+					.output(studentTagListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						updateStudentTag(
+							{
+								organizationId: context.organization.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				setActive: organizationManagementProcedure
+					.input(setStudentTagActiveInputSchema)
+					.output(studentTagListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						setStudentTagActive(
+							{
+								organizationId: context.organization.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
 		},
 		leads: {
 			filterOptions: leadProcedure

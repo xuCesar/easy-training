@@ -6,6 +6,7 @@ import {
 	type OrganizationRole,
 	organizationManagementRoles,
 	organizationOperationsRoles,
+	studentManagementRoles,
 } from "./authorization/training";
 import type { Context } from "./context";
 import {
@@ -77,6 +78,10 @@ const requireLeadManager = createOrganizationMiddleware(
 	leadManagementRoles,
 	"当前角色无权访问招生线索。",
 );
+const requireStudentManager = createOrganizationMiddleware(
+	studentManagementRoles,
+	"当前角色无权访问学员档案。",
+);
 const requireFinanceManager = createOrganizationMiddleware(
 	financeManagementRoles,
 	"当前角色无权访问财务管理。",
@@ -87,6 +92,7 @@ export const currentOrganizationProcedure = publicProcedure.use(
 	requireCurrentOrganization,
 );
 export const leadProcedure = publicProcedure.use(requireLeadManager);
+export const studentProcedure = publicProcedure.use(requireStudentManager);
 export const leadExportProcedure = publicProcedure.use(
 	createOrganizationMiddleware(
 		organizationOperationsRoles,
