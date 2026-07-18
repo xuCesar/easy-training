@@ -4,19 +4,28 @@ import {
 	addLeadFollowUpInputSchema,
 	campusListInputSchema,
 	campusListResultSchema,
+	cancelLessonInputSchema,
 	claimInvitationInputSchema,
 	claimInvitationResultSchema,
+	classGroupListInputSchema,
+	classGroupListResultSchema,
 	convertLeadInputSchema,
 	convertLeadResultSchema,
+	courseListInputSchema,
+	courseListResultSchema,
 	createCampusInputSchema,
+	createClassGroupInputSchema,
+	createCourseInputSchema,
 	createInvitationInputSchema,
 	createInvitationResultSchema,
 	createLeadInputSchema,
 	createLeadResultSchema,
+	createLessonInputSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
 	createStudentInputSchema,
 	createStudentTagInputSchema,
+	createTeacherInputSchema,
 	currentOrganizationSchema,
 	dashboardSnapshotSchema,
 	exportLeadsInputSchema,
@@ -33,12 +42,15 @@ import {
 	leadHistoryResultSchema,
 	leadListInputSchema,
 	leadListResultSchema,
+	lessonListInputSchema,
+	lessonListResultSchema,
 	memberListResultSchema,
 	removeMemberInputSchema,
 	resendInvitationInputSchema,
 	revokeInvitationInputSchema,
 	selectOrganizationInputSchema,
 	setCampusActiveInputSchema,
+	setCourseActiveInputSchema,
 	setStudentTagActiveInputSchema,
 	studentDetailInputSchema,
 	studentDetailSchema,
@@ -46,13 +58,18 @@ import {
 	studentListResultSchema,
 	studentTagListInputSchema,
 	studentTagListResultSchema,
+	teacherListResultSchema,
 	updateCampusInputSchema,
+	updateClassGroupInputSchema,
+	updateCourseInputSchema,
 	updateLeadInputSchema,
 	updateMemberInputSchema,
 	updateStudentInputSchema,
 	updateStudentTagInputSchema,
+	updateTeacherInputSchema,
 } from "../contracts/training";
 import {
+	academicManagementProcedure,
 	currentOrganizationProcedure,
 	financeProcedure,
 	leadExportProcedure,
@@ -109,6 +126,21 @@ import {
 	updateStudent,
 	updateStudentTag,
 } from "../repositories/students";
+import {
+	cancelLesson,
+	createClassGroup,
+	createCourse,
+	createLesson,
+	createTeacher,
+	listClassGroups,
+	listCourses,
+	listLessons,
+	listTeachers,
+	setCourseActive,
+	updateClassGroup,
+	updateCourse,
+	updateTeacher,
+} from "../repositories/teaching";
 import { getTrainingDashboardSnapshot } from "../repositories/training-dashboard";
 
 function toCurrentOrganizationResponse(
@@ -399,6 +431,181 @@ export const appRouter = {
 					.output(studentTagListResultSchema.shape.items.element)
 					.handler(({ context, input }) =>
 						setStudentTagActive(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+		},
+		teaching: {
+			courses: {
+				list: organizationProcedure
+					.input(courseListInputSchema)
+					.output(courseListResultSchema)
+					.handler(({ context, input }) =>
+						listCourses(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				create: academicManagementProcedure
+					.input(createCourseInputSchema)
+					.output(courseListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						createCourse(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				update: academicManagementProcedure
+					.input(updateCourseInputSchema)
+					.output(courseListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						updateCourse(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				setActive: academicManagementProcedure
+					.input(setCourseActiveInputSchema)
+					.output(courseListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						setCourseActive(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+			teachers: {
+				list: organizationProcedure
+					.output(teacherListResultSchema)
+					.handler(({ context }) =>
+						listTeachers({
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						}),
+					),
+				create: academicManagementProcedure
+					.input(createTeacherInputSchema)
+					.output(teacherListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						createTeacher(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				update: academicManagementProcedure
+					.input(updateTeacherInputSchema)
+					.output(teacherListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						updateTeacher(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+			classes: {
+				list: academicManagementProcedure
+					.input(classGroupListInputSchema)
+					.output(classGroupListResultSchema)
+					.handler(({ context, input }) =>
+						listClassGroups(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				create: academicManagementProcedure
+					.input(createClassGroupInputSchema)
+					.output(classGroupListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						createClassGroup(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				update: academicManagementProcedure
+					.input(updateClassGroupInputSchema)
+					.output(classGroupListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						updateClassGroup(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+			lessons: {
+				list: academicManagementProcedure
+					.input(lessonListInputSchema)
+					.output(lessonListResultSchema)
+					.handler(({ context, input }) =>
+						listLessons(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				create: academicManagementProcedure
+					.input(createLessonInputSchema)
+					.output(lessonListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						createLesson(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				cancel: academicManagementProcedure
+					.input(cancelLessonInputSchema)
+					.output(lessonListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						cancelLesson(
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,

@@ -101,10 +101,11 @@ const navigation = [
 		roles: ["owner", "admin", "campus_manager", "consultant"],
 	},
 	{
-		to: "/dashboard",
+		to: "/academic",
 		label: "教务排课",
 		icon: CalendarDaysIcon,
-		available: false,
+		available: true,
+		roles: ["owner", "admin", "campus_manager"],
 	},
 ] as const;
 

@@ -1,6 +1,7 @@
 import { ORPCError, os } from "@orpc/server";
 
 import {
+	academicManagementRoles,
 	financeManagementRoles,
 	leadManagementRoles,
 	type OrganizationRole,
@@ -104,5 +105,11 @@ export const organizationManagementProcedure = publicProcedure.use(
 	createOrganizationMiddleware(
 		organizationManagementRoles,
 		"当前角色无权管理校区或成员。",
+	),
+);
+export const academicManagementProcedure = publicProcedure.use(
+	createOrganizationMiddleware(
+		academicManagementRoles,
+		"当前角色无权管理教务。",
 	),
 );

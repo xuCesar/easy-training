@@ -15,3 +15,4 @@ export * from "./repositories/leads";
 export * from "./repositories/organization";
 export * from "./repositories/organization-management";
 export * from "./repositories/students";
+export * from "./repositories/teaching";

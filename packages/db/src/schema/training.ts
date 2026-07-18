@@ -344,6 +344,7 @@ export const course = pgTable(
 		listPriceInCents: integer("list_price_in_cents").notNull(),
 		lessonsPerPackage: integer("lessons_per_package").notNull(),
 		tags: text("tags").array().notNull(),
+		isActive: boolean("is_active").default(true).notNull(),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
@@ -355,6 +356,11 @@ export const course = pgTable(
 	(table) => [
 		uniqueIndex("course_org_code_uidx").on(table.organizationId, table.code),
 		index("course_org_idx").on(table.organizationId),
+		index("course_org_active_name_idx").on(
+			table.organizationId,
+			table.isActive,
+			table.name,
+		),
 	],
 );
 
@@ -661,6 +667,11 @@ export const lesson = pgTable(
 		startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
 		endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
 		status: lessonStatus("status").default("scheduled").notNull(),
+		cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+		cancelledByUserId: text("cancelled_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		cancellationReason: text("cancellation_reason"),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
@@ -668,6 +679,17 @@ export const lesson = pgTable(
 	(table) => [
 		index("lesson_campus_starts_idx").on(table.campusId, table.startsAt),
 		index("lesson_teacher_starts_idx").on(table.teacherId, table.startsAt),
+		index("lesson_org_teacher_starts_idx").on(
+			table.organizationId,
+			table.teacherId,
+			table.startsAt,
+		),
+		index("lesson_org_campus_room_starts_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.room,
+			table.startsAt,
+		),
 	],
 );
 

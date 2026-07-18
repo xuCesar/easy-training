@@ -252,7 +252,12 @@ export async function getLeadConversionOptionsRecord(input: {
 				lessonsPerPackage: course.lessonsPerPackage,
 			})
 			.from(course)
-			.where(eq(course.organizationId, input.organizationId))
+			.where(
+				and(
+					eq(course.organizationId, input.organizationId),
+					eq(course.isActive, true),
+				),
+			)
 			.orderBy(asc(course.name), asc(course.id)),
 		db
 			.select({
@@ -384,6 +389,7 @@ export async function convertLeadRecord(
 					and(
 						eq(course.id, input.courseId),
 						eq(course.organizationId, input.organizationId),
+						eq(course.isActive, true),
 					),
 				)
 				.limit(1)

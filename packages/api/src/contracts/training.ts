@@ -704,6 +704,163 @@ export type SetStudentTagActiveInput = z.infer<
 	typeof setStudentTagActiveInputSchema
 >;
 
+const courseCategorySchema = z.enum([
+	"language",
+	"stem",
+	"art",
+	"exam",
+	"sports",
+]);
+const classStatusSchema = z.enum([
+	"recruiting",
+	"running",
+	"paused",
+	"completed",
+]);
+const lessonStatusSchema = z.enum(["scheduled", "completed", "cancelled"]);
+
+const courseDataSchema = z.object({
+	code: z.string().trim().min(1).max(30),
+	name: z.string().trim().min(1).max(100),
+	category: courseCategorySchema,
+	level: z.string().trim().min(1).max(60),
+	durationMinutes: z.number().int().min(15).max(480),
+	listPriceInCents: z.number().int().min(0).max(100_000_000),
+	lessonsPerPackage: z.number().int().min(1).max(1_000),
+	tags: z.array(z.string().trim().min(1).max(30)).max(20).default([]),
+});
+
+const courseSchema = courseDataSchema.extend({
+	id: z.uuid(),
+	organizationId: z.uuid(),
+	isActive: z.boolean(),
+	createdAt: z.iso.datetime({ offset: true }),
+	updatedAt: z.iso.datetime({ offset: true }),
+});
+
+export const courseListInputSchema = z.object({
+	includeInactive: z.boolean().default(false),
+});
+export const courseListResultSchema = z.object({
+	items: z.array(courseSchema),
+});
+export const createCourseInputSchema = courseDataSchema;
+export const updateCourseInputSchema = z.object({
+	id: z.uuid(),
+	data: courseDataSchema,
+});
+export const setCourseActiveInputSchema = z.object({
+	id: z.uuid(),
+	isActive: z.boolean(),
+});
+
+const teacherDataSchema = z.object({
+	name: z.string().trim().min(1).max(100),
+	phone: z.string().trim().min(1).max(40).nullable().default(null),
+	subjects: z.array(z.string().trim().min(1).max(40)).min(1).max(20),
+	weeklyCapacityHours: z.number().int().min(1).max(168),
+	campusIds: z.array(z.uuid()).min(1).max(100),
+});
+const teacherSchema = teacherDataSchema.extend({
+	id: z.uuid(),
+	organizationId: z.uuid(),
+	userId: z.string().nullable(),
+	createdAt: z.iso.datetime({ offset: true }),
+	updatedAt: z.iso.datetime({ offset: true }),
+});
+export const teacherListResultSchema = z.object({
+	items: z.array(teacherSchema),
+});
+export const createTeacherInputSchema = teacherDataSchema;
+export const updateTeacherInputSchema = z.object({
+	id: z.uuid(),
+	data: teacherDataSchema,
+});
+
+const classGroupDataSchema = z.object({
+	name: z.string().trim().min(1).max(100),
+	campusId: z.uuid(),
+	courseId: z.uuid(),
+	teacherId: z.uuid(),
+	capacity: z.number().int().min(1).max(10_000),
+	status: classStatusSchema.default("recruiting"),
+	startDate: z.iso.date(),
+});
+const classGroupSchema = classGroupDataSchema.extend({
+	id: z.uuid(),
+	campusName: z.string(),
+	courseName: z.string(),
+	teacherName: z.string(),
+	scheduleText: z.string(),
+	enrollmentCount: z.number().int().nonnegative(),
+});
+export const classGroupListInputSchema = z.object({
+	campusId: z.uuid().optional(),
+	status: classStatusSchema.optional(),
+});
+export const classGroupListResultSchema = z.object({
+	items: z.array(classGroupSchema),
+});
+export const createClassGroupInputSchema = classGroupDataSchema;
+export const updateClassGroupInputSchema = z.object({
+	id: z.uuid(),
+	data: classGroupDataSchema,
+});
+
+const lessonSchema = z.object({
+	id: z.uuid(),
+	classGroupId: z.uuid(),
+	className: z.string(),
+	courseName: z.string(),
+	campusId: z.uuid(),
+	campusName: z.string(),
+	teacherId: z.uuid(),
+	teacherName: z.string(),
+	room: z.string(),
+	startsAt: z.iso.datetime({ offset: true }),
+	endsAt: z.iso.datetime({ offset: true }),
+	status: lessonStatusSchema,
+	cancelledAt: z.iso.datetime({ offset: true }).nullable(),
+	cancelledByUserId: z.string().nullable(),
+	cancellationReason: z.string().nullable(),
+});
+export const lessonListInputSchema = z.object({
+	campusId: z.uuid().optional(),
+	classGroupId: z.uuid().optional(),
+	from: z.iso.datetime({ offset: true }).optional(),
+	to: z.iso.datetime({ offset: true }).optional(),
+});
+export const lessonListResultSchema = z.object({
+	items: z.array(lessonSchema),
+});
+export const createLessonInputSchema = z.object({
+	classGroupId: z.uuid(),
+	room: z.string().trim().min(1).max(80),
+	startsAt: z.iso.datetime({ offset: true }),
+	endsAt: z.iso.datetime({ offset: true }),
+});
+export const cancelLessonInputSchema = z.object({
+	id: z.uuid(),
+	reason: z.string().trim().min(1).max(300).nullable().default(null),
+});
+
+export type Course = z.infer<typeof courseSchema>;
+export type CourseListInput = z.infer<typeof courseListInputSchema>;
+export type CreateCourseInput = z.infer<typeof createCourseInputSchema>;
+export type UpdateCourseInput = z.infer<typeof updateCourseInputSchema>;
+export type SetCourseActiveInput = z.infer<typeof setCourseActiveInputSchema>;
+export type Teacher = z.infer<typeof teacherSchema>;
+export type CreateTeacherInput = z.infer<typeof createTeacherInputSchema>;
+export type UpdateTeacherInput = z.infer<typeof updateTeacherInputSchema>;
+export type ClassGroup = z.infer<typeof classGroupSchema>;
+export type ClassGroupListInput = z.infer<typeof classGroupListInputSchema>;
+export type CreateClassGroupInput = z.infer<typeof createClassGroupInputSchema>;
+export type UpdateClassGroupInput = z.infer<typeof updateClassGroupInputSchema>;
+export type Lesson = z.infer<typeof lessonSchema>;
+export type LessonListInput = z.infer<typeof lessonListInputSchema>;
+export type CreateLessonInput = z.infer<typeof createLessonInputSchema>;
+export type CancelLessonInput = z.infer<typeof cancelLessonInputSchema>;
+
 const dashboardFollowUpSchema = z.object({
 	id: z.uuid(),
 	name: z.string(),
