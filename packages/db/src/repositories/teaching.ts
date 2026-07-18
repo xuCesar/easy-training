@@ -1,7 +1,7 @@
 import {
 	and,
 	asc,
-	count,
+	countDistinct,
 	desc,
 	eq,
 	gt,
@@ -12,16 +12,20 @@ import {
 	or,
 	sql,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { db } from "../index";
 import {
+	attendance,
 	campus,
 	classGroup,
 	course,
 	enrollment,
 	lesson,
+	lessonConsumption,
 	organizationMember,
 	organizationMemberCampus,
+	student,
 	teacher,
 	teacherCampus,
 } from "../schema";
@@ -42,11 +46,18 @@ export type TeachingRepositoryErrorCode =
 	| "CLASS_LOCKED"
 	| "CLASS_CAPACITY_TOO_LOW"
 	| "CLASS_NOT_SCHEDULABLE"
+	| "CLASS_FULL"
+	| "CLASS_COURSE_MISMATCH"
+	| "CLASS_CAMPUS_MISMATCH"
+	| "CLASS_STUDENT_DUPLICATE"
+	| "ENROLLMENT_NOT_FOUND"
 	| "LESSON_NOT_FOUND"
 	| "LESSON_NOT_CANCELLABLE"
 	| "LESSON_TIME_INVALID"
 	| "LESSON_DURATION_INVALID"
 	| "LESSON_CONFLICT"
+	| "LESSON_COMPLETION_INVALID"
+	| "LESSON_CONSUMPTION_INSUFFICIENT"
 	| "INVALID_INPUT";
 
 export class TeachingRepositoryError extends Error {
@@ -587,6 +598,15 @@ export type ClassGroupRecord = {
 	enrollmentCount: number;
 };
 
+export type ClassEnrollmentRecord = {
+	enrollmentId: string;
+	studentId: string;
+	studentName: string;
+	remainingLessons: number;
+	classGroupId: string | null;
+	className: string | null;
+};
+
 const classSelection = {
 	id: classGroup.id,
 	name: classGroup.name,
@@ -600,7 +620,7 @@ const classSelection = {
 	courseName: course.name,
 	teacherId: classGroup.teacherId,
 	teacherName: teacher.name,
-	enrollmentCount: count(enrollment.id),
+	enrollmentCount: countDistinct(enrollment.studentId),
 };
 
 export async function listClassGroupRecords(input: {
@@ -748,7 +768,7 @@ export async function updateClassGroupRecord(input: {
 			campusId: existing.campusId,
 		});
 		const [occupancy] = await tx
-			.select({ value: count(enrollment.id) })
+			.select({ value: countDistinct(enrollment.studentId) })
 			.from(enrollment)
 			.where(eq(enrollment.classGroupId, existing.id));
 		if (input.capacity < (occupancy?.value ?? 0))
@@ -789,6 +809,182 @@ export async function updateClassGroupRecord(input: {
 	).find((item) => item.id === updatedId);
 	if (!record) throw new Error("Updated class was not readable.");
 	return record;
+}
+
+export async function listClassEnrollmentRecords(input: {
+	organizationId: string;
+	campusAccess: CampusAccess;
+	classGroupId: string;
+}): Promise<ClassEnrollmentRecord[]> {
+	const [group] = await db
+		.select({
+			id: classGroup.id,
+			campusId: classGroup.campusId,
+			courseId: classGroup.courseId,
+		})
+		.from(classGroup)
+		.where(
+			and(
+				eq(classGroup.id, input.classGroupId),
+				eq(classGroup.organizationId, input.organizationId),
+			),
+		)
+		.limit(1);
+	if (!group) throw new TeachingRepositoryError("CLASS_NOT_FOUND");
+	if (!isCampusAccessible(input.campusAccess, group.campusId)) {
+		throw new TeachingRepositoryError("CAMPUS_OUT_OF_SCOPE");
+	}
+	const assignedClass = alias(classGroup, "assigned_class");
+	return db
+		.select({
+			enrollmentId: enrollment.id,
+			studentId: student.id,
+			studentName: student.name,
+			remainingLessons: enrollment.remainingLessons,
+			classGroupId: enrollment.classGroupId,
+			className: assignedClass.name,
+		})
+		.from(enrollment)
+		.innerJoin(
+			student,
+			and(
+				eq(student.id, enrollment.studentId),
+				eq(student.organizationId, input.organizationId),
+				eq(student.campusId, group.campusId),
+			),
+		)
+		.leftJoin(
+			assignedClass,
+			and(
+				eq(assignedClass.id, enrollment.classGroupId),
+				eq(assignedClass.organizationId, input.organizationId),
+			),
+		)
+		.where(
+			and(
+				eq(enrollment.organizationId, input.organizationId),
+				eq(enrollment.courseId, group.courseId),
+			),
+		)
+		.orderBy(asc(student.name), asc(enrollment.id));
+}
+
+export async function assignEnrollmentClassRecord(input: {
+	organizationId: string;
+	userId: string;
+	enrollmentId: string;
+	classGroupId: string | null;
+}): Promise<void> {
+	await db.transaction(async (tx) => {
+		const access = await getCurrentWriteCampusAccess(tx, {
+			organizationId: input.organizationId,
+			userId: input.userId,
+			allowedRoles: academicWriteRoles,
+		});
+		const targetClass = input.classGroupId
+			? await tx
+					.select()
+					.from(classGroup)
+					.where(
+						and(
+							eq(classGroup.id, input.classGroupId),
+							eq(classGroup.organizationId, input.organizationId),
+						),
+					)
+					.limit(1)
+					.for("update")
+					.then(([record]) => record)
+			: null;
+		if (input.classGroupId && !targetClass) {
+			throw new TeachingRepositoryError("CLASS_NOT_FOUND");
+		}
+		if (targetClass) {
+			await assertWritableCampus(tx, {
+				organizationId: input.organizationId,
+				campusAccess: access,
+				campusId: targetClass.campusId,
+			});
+		}
+		const [enrollmentRecord] = await tx
+			.select({
+				id: enrollment.id,
+				studentId: enrollment.studentId,
+				courseId: enrollment.courseId,
+				classGroupId: enrollment.classGroupId,
+				studentCampusId: student.campusId,
+			})
+			.from(enrollment)
+			.innerJoin(
+				student,
+				and(
+					eq(student.id, enrollment.studentId),
+					eq(student.organizationId, input.organizationId),
+				),
+			)
+			.where(
+				and(
+					eq(enrollment.id, input.enrollmentId),
+					eq(enrollment.organizationId, input.organizationId),
+				),
+			)
+			.limit(1)
+			.for("update");
+		if (!enrollmentRecord)
+			throw new TeachingRepositoryError("ENROLLMENT_NOT_FOUND");
+		await assertWritableCampus(tx, {
+			organizationId: input.organizationId,
+			campusAccess: access,
+			campusId: enrollmentRecord.studentCampusId,
+		});
+		if (!input.classGroupId) {
+			await tx
+				.update(enrollment)
+				.set({ classGroupId: null })
+				.where(eq(enrollment.id, enrollmentRecord.id));
+			return;
+		}
+		if (!targetClass) throw new TeachingRepositoryError("CLASS_NOT_FOUND");
+		if (targetClass.courseId !== enrollmentRecord.courseId) {
+			throw new TeachingRepositoryError("CLASS_COURSE_MISMATCH");
+		}
+		if (targetClass.campusId !== enrollmentRecord.studentCampusId) {
+			throw new TeachingRepositoryError("CLASS_CAMPUS_MISMATCH");
+		}
+		if (
+			targetClass.status !== "recruiting" &&
+			targetClass.status !== "running"
+		) {
+			throw new TeachingRepositoryError("CLASS_NOT_SCHEDULABLE");
+		}
+		const [duplicate] = await tx
+			.select({ id: enrollment.id })
+			.from(enrollment)
+			.where(
+				and(
+					eq(enrollment.classGroupId, targetClass.id),
+					eq(enrollment.studentId, enrollmentRecord.studentId),
+				),
+			)
+			.limit(1)
+			.for("update");
+		if (duplicate && duplicate.id !== enrollmentRecord.id) {
+			throw new TeachingRepositoryError("CLASS_STUDENT_DUPLICATE");
+		}
+		const [occupancy] = await tx
+			.select({ value: countDistinct(enrollment.studentId) })
+			.from(enrollment)
+			.where(eq(enrollment.classGroupId, targetClass.id));
+		if (
+			(occupancy?.value ?? 0) >= targetClass.capacity &&
+			enrollmentRecord.classGroupId !== targetClass.id
+		) {
+			throw new TeachingRepositoryError("CLASS_FULL");
+		}
+		await tx
+			.update(enrollment)
+			.set({ classGroupId: targetClass.id })
+			.where(eq(enrollment.id, enrollmentRecord.id));
+	});
 }
 
 export type LessonRecord = {
@@ -1021,6 +1217,211 @@ export async function cancelLessonRecord(input: {
 		})
 	).find((item) => item.id === cancelledId);
 	if (!record) throw new Error("Cancelled lesson was not readable.");
+	return record;
+}
+
+export type LessonAttendanceInput = {
+	enrollmentId: string;
+	status: "present" | "absent" | "late" | "leave";
+	note: string | null;
+};
+
+export type LessonAttendanceRecord = {
+	lesson: LessonRecord;
+	members: Array<{
+		enrollmentId: string;
+		studentId: string;
+		studentName: string;
+		remainingLessons: number;
+		status: (typeof attendance.$inferSelect)["status"] | null;
+		note: string | null;
+	}>;
+};
+
+export async function getLessonAttendanceRecord(input: {
+	organizationId: string;
+	campusAccess: CampusAccess;
+	id: string;
+}): Promise<LessonAttendanceRecord> {
+	const lessonRecord = (
+		await listLessonRecords({
+			organizationId: input.organizationId,
+			campusAccess: input.campusAccess,
+		})
+	).find((item) => item.id === input.id);
+	if (!lessonRecord) {
+		const [exists] = await db
+			.select({ id: lesson.id })
+			.from(lesson)
+			.where(
+				and(
+					eq(lesson.id, input.id),
+					eq(lesson.organizationId, input.organizationId),
+				),
+			)
+			.limit(1);
+		if (!exists) throw new TeachingRepositoryError("LESSON_NOT_FOUND");
+		throw new TeachingRepositoryError("CAMPUS_OUT_OF_SCOPE");
+	}
+	const members = await db
+		.select({
+			enrollmentId: enrollment.id,
+			studentId: student.id,
+			studentName: student.name,
+			remainingLessons: enrollment.remainingLessons,
+			status: attendance.status,
+			note: attendance.note,
+		})
+		.from(enrollment)
+		.innerJoin(
+			student,
+			and(
+				eq(student.id, enrollment.studentId),
+				eq(student.organizationId, input.organizationId),
+			),
+		)
+		.leftJoin(
+			attendance,
+			and(
+				eq(attendance.lessonId, lessonRecord.id),
+				eq(attendance.studentId, enrollment.studentId),
+			),
+		)
+		.where(
+			and(
+				eq(enrollment.organizationId, input.organizationId),
+				eq(enrollment.classGroupId, lessonRecord.classGroupId),
+			),
+		)
+		.orderBy(asc(student.name), asc(enrollment.id));
+	return { lesson: lessonRecord, members };
+}
+
+export async function completeLessonRecord(input: {
+	organizationId: string;
+	userId: string;
+	id: string;
+	attendance: LessonAttendanceInput[];
+}): Promise<LessonRecord> {
+	const completedId = await db.transaction(async (tx) => {
+		const access = await getCurrentWriteCampusAccess(tx, {
+			organizationId: input.organizationId,
+			userId: input.userId,
+			allowedRoles: academicWriteRoles,
+		});
+		const [lessonRecord] = await tx
+			.select()
+			.from(lesson)
+			.where(
+				and(
+					eq(lesson.id, input.id),
+					eq(lesson.organizationId, input.organizationId),
+				),
+			)
+			.limit(1)
+			.for("update");
+		if (!lessonRecord) throw new TeachingRepositoryError("LESSON_NOT_FOUND");
+		await assertWritableCampus(tx, {
+			organizationId: input.organizationId,
+			campusAccess: access,
+			campusId: lessonRecord.campusId,
+		});
+		if (lessonRecord.status !== "scheduled") {
+			throw new TeachingRepositoryError("LESSON_COMPLETION_INVALID");
+		}
+		const [group] = await tx
+			.select({ id: classGroup.id })
+			.from(classGroup)
+			.where(
+				and(
+					eq(classGroup.id, lessonRecord.classGroupId),
+					eq(classGroup.organizationId, input.organizationId),
+				),
+			)
+			.limit(1)
+			.for("update");
+		if (!group) throw new TeachingRepositoryError("CLASS_NOT_FOUND");
+		const memberships = await tx
+			.select({
+				id: enrollment.id,
+				studentId: enrollment.studentId,
+				remainingLessons: enrollment.remainingLessons,
+			})
+			.from(enrollment)
+			.where(
+				and(
+					eq(enrollment.organizationId, input.organizationId),
+					eq(enrollment.classGroupId, lessonRecord.classGroupId),
+				),
+			)
+			.for("update");
+		if (
+			new Set(memberships.map((item) => item.studentId)).size !==
+			memberships.length
+		) {
+			throw new TeachingRepositoryError("CLASS_STUDENT_DUPLICATE");
+		}
+		const submitted = new Map(
+			input.attendance.map((item) => [item.enrollmentId, item]),
+		);
+		if (
+			memberships.length !== input.attendance.length ||
+			submitted.size !== input.attendance.length ||
+			memberships.some((item) => !submitted.has(item.id))
+		) {
+			throw new TeachingRepositoryError("LESSON_COMPLETION_INVALID");
+		}
+		for (const membership of memberships) {
+			const item = submitted.get(membership.id);
+			if (!item) throw new TeachingRepositoryError("LESSON_COMPLETION_INVALID");
+			const consumesLesson =
+				item.status === "present" || item.status === "late";
+			if (consumesLesson && membership.remainingLessons < 1) {
+				throw new TeachingRepositoryError("LESSON_CONSUMPTION_INSUFFICIENT");
+			}
+		}
+		for (const membership of memberships) {
+			const item = submitted.get(membership.id);
+			if (!item) throw new TeachingRepositoryError("LESSON_COMPLETION_INVALID");
+			await tx.insert(attendance).values({
+				lessonId: lessonRecord.id,
+				studentId: membership.studentId,
+				status: item.status,
+				checkedInAt:
+					item.status === "present" || item.status === "late"
+						? new Date()
+						: null,
+				note: item.note?.trim() || null,
+			});
+			if (item.status === "present" || item.status === "late") {
+				await tx.insert(lessonConsumption).values({
+					organizationId: input.organizationId,
+					enrollmentId: membership.id,
+					lessonId: lessonRecord.id,
+					attendanceStatus: item.status,
+					previousRemainingLessons: membership.remainingLessons,
+					remainingLessons: membership.remainingLessons - 1,
+					consumedByUserId: input.userId,
+				});
+				await tx
+					.update(enrollment)
+					.set({ remainingLessons: membership.remainingLessons - 1 })
+					.where(eq(enrollment.id, membership.id));
+			}
+		}
+		await tx
+			.update(lesson)
+			.set({ status: "completed" })
+			.where(eq(lesson.id, lessonRecord.id));
+		return lessonRecord.id;
+	});
+	const record = (
+		await listLessonRecords({
+			organizationId: input.organizationId,
+			campusAccess: { kind: "all" },
+		})
+	).find((item) => item.id === completedId);
+	if (!record) throw new Error("Completed lesson was not readable.");
 	return record;
 }
 

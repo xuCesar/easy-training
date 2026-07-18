@@ -1,7 +1,9 @@
 import type {
+	ClassEnrollment,
 	ClassGroup,
 	Course,
 	Lesson,
+	LessonAttendance,
 	Teacher,
 } from "@easy-training/api/contracts/training";
 import { Badge } from "@easy-training/ui/components/badge";
@@ -36,11 +38,13 @@ import { Link } from "@tanstack/react-router";
 import {
 	CalendarClockIcon,
 	CircleAlertIcon,
+	ClipboardCheckIcon,
 	LoaderCircleIcon,
 	PencilIcon,
 	PlusIcon,
 	PowerIcon,
 	SchoolIcon,
+	UsersRoundIcon,
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
@@ -75,6 +79,9 @@ export function AcademicWorkspace({
 }) {
 	const [editor, setEditor] = useState<Editor>(null);
 	const [cancelTarget, setCancelTarget] = useState<Lesson | null>(null);
+	const [classMembersTarget, setClassMembersTarget] =
+		useState<ClassGroup | null>(null);
+	const [attendanceTarget, setAttendanceTarget] = useState<Lesson | null>(null);
 	const [campusId, setCampusId] = useState<string | undefined>();
 	const [classStatus, setClassStatus] = useState<string>("all");
 	const canManageCatalog = role === "owner" || role === "admin";
@@ -191,6 +198,7 @@ export function AcademicWorkspace({
 					onStatusChange={setClassStatus}
 					onEdit={(value) => setEditor({ kind: "class", value })}
 					onSchedule={(value) => setEditor({ kind: "lesson", value })}
+					onManageMembers={setClassMembersTarget}
 					onCreate={() => setEditor({ kind: "class", value: null })}
 					onRetry={() => void classesQuery.refetch()}
 				/>
@@ -205,6 +213,7 @@ export function AcademicWorkspace({
 					onCampusChange={setCampusId}
 					onSchedule={() => setEditor({ kind: "lesson", value: null })}
 					onCancel={setCancelTarget}
+					onTakeAttendance={setAttendanceTarget}
 					onRetry={() => void lessonsQuery.refetch()}
 				/>
 			) : null}
@@ -271,6 +280,20 @@ export function AcademicWorkspace({
 					onSaved={refresh}
 				/>
 			) : null}
+			{classMembersTarget ? (
+				<ClassMembersDialog
+					classGroup={classMembersTarget}
+					onClose={() => setClassMembersTarget(null)}
+					onSaved={refresh}
+				/>
+			) : null}
+			{attendanceTarget ? (
+				<LessonAttendanceDialog
+					lesson={attendanceTarget}
+					onClose={() => setAttendanceTarget(null)}
+					onSaved={refresh}
+				/>
+			) : null}
 		</div>
 	);
 }
@@ -289,6 +312,12 @@ function invalidateAcademicQueries() {
 		queryClient.invalidateQueries({
 			queryKey: orpc.training.teaching.lessons.list.key(),
 		}),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.teaching.classes.enrollments.key(),
+		}),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.teaching.lessons.attendance.key(),
+		}),
 	]);
 }
 
@@ -303,6 +332,7 @@ function ClassesPanel({
 	onStatusChange,
 	onEdit,
 	onSchedule,
+	onManageMembers,
 	onCreate,
 	onRetry,
 }: {
@@ -316,6 +346,7 @@ function ClassesPanel({
 	onStatusChange: (value: string) => void;
 	onEdit: (item: ClassGroup) => void;
 	onSchedule: (item: ClassGroup) => void;
+	onManageMembers: (item: ClassGroup) => void;
 	onCreate: () => void;
 	onRetry: () => void;
 }) {
@@ -376,6 +407,14 @@ function ClassesPanel({
 									<PencilIcon />
 								</Button>
 								<Button
+									size="icon-sm"
+									variant="ghost"
+									aria-label={`管理${item.name}成员`}
+									onClick={() => onManageMembers(item)}
+								>
+									<UsersRoundIcon />
+								</Button>
+								<Button
 									size="sm"
 									variant="outline"
 									disabled={
@@ -404,6 +443,7 @@ function LessonsPanel({
 	onCampusChange,
 	onSchedule,
 	onCancel,
+	onTakeAttendance,
 	onRetry,
 }: {
 	campuses: Array<{ id: string; name: string }>;
@@ -414,6 +454,7 @@ function LessonsPanel({
 	onCampusChange: (value: string | undefined) => void;
 	onSchedule: () => void;
 	onCancel: (item: Lesson) => void;
+	onTakeAttendance: (item: Lesson) => void;
 	onRetry: () => void;
 }) {
 	const scheduled = lessons.filter((item) => item.status === "scheduled");
@@ -470,7 +511,17 @@ function LessonsPanel({
 								) : null}
 							</div>
 							<div className="hidden md:block" />
-							<div>
+							<div className="flex flex-wrap gap-1">
+								{item.status === "scheduled" ? (
+									<Button
+										size="sm"
+										variant="outline"
+										onClick={() => onTakeAttendance(item)}
+									>
+										<ClipboardCheckIcon data-icon="inline-start" />
+										点名结课
+									</Button>
+								) : null}
 								{item.status === "scheduled" ? (
 									<Button
 										size="sm"
@@ -1319,6 +1370,310 @@ function CancelLessonDialog({
 	);
 }
 
+function ClassMembersDialog({
+	classGroup,
+	onClose,
+	onSaved,
+}: {
+	classGroup: ClassGroup;
+	onClose: () => void;
+	onSaved: () => Promise<unknown>;
+}) {
+	const options = orpc.training.teaching.classes.enrollments.queryOptions({
+		input: { id: classGroup.id },
+	});
+	const query = useQuery(options);
+	const mutation = useMutation(
+		orpc.training.teaching.classes.assignEnrollment.mutationOptions(),
+	);
+	const items = query.data?.items ?? [];
+	const members = items.filter((item) => item.classGroupId === classGroup.id);
+	const candidates = items.filter(
+		(item) => item.classGroupId !== classGroup.id,
+	);
+	const canAssign =
+		classGroup.status === "recruiting" || classGroup.status === "running";
+	function assign(item: ClassEnrollment, classGroupId: string | null) {
+		void mutation
+			.mutateAsync({ enrollmentId: item.enrollmentId, classGroupId })
+			.then(async () => {
+				toast.success(classGroupId ? "学员已入班" : "已移出班级");
+				await onSaved();
+			})
+			.catch((error: Error) => toast.error(error.message));
+	}
+	return (
+		<EditorDialog
+			title={`成员管理 · ${classGroup.name}`}
+			description={`${classGroup.courseName} · ${classGroup.campusName} · ${classGroup.enrollmentCount}/${classGroup.capacity} 人`}
+			pending={mutation.isPending}
+			onClose={onClose}
+		>
+			{query.isPending ? (
+				<div className="grid gap-2">
+					<Skeleton className="h-16" />
+					<Skeleton className="h-16" />
+				</div>
+			) : null}
+			{query.isError ? (
+				<div className="grid gap-3 border p-3 text-sm">
+					<p>成员数据加载失败。</p>
+					<Button variant="outline" onClick={() => void query.refetch()}>
+						重试
+					</Button>
+				</div>
+			) : null}
+			{!query.isPending && !query.isError ? (
+				<div className="grid gap-5">
+					<MemberList
+						title="当前成员"
+						items={members}
+						empty="当前班级还没有学员。"
+						actionLabel="移出"
+						disabled={mutation.isPending}
+						onAction={(item) => assign(item, null)}
+					/>
+					<MemberList
+						title="可入班报名"
+						items={candidates}
+						empty={
+							canAssign
+								? "没有同课程、同校区的可入班报名。"
+								: "当前班级状态不允许新增成员。"
+						}
+						actionLabel="入班"
+						disabled={mutation.isPending || !canAssign}
+						onAction={(item) => assign(item, classGroup.id)}
+					/>
+				</div>
+			) : null}
+		</EditorDialog>
+	);
+}
+
+function MemberList({
+	title,
+	items,
+	empty,
+	actionLabel,
+	disabled,
+	onAction,
+}: {
+	title: string;
+	items: ClassEnrollment[];
+	empty: string;
+	actionLabel: string;
+	disabled: boolean;
+	onAction: (item: ClassEnrollment) => void;
+}) {
+	return (
+		<section className="grid gap-2">
+			<h3 className="font-medium text-sm">{title}</h3>
+			{items.length === 0 ? (
+				<p className="border p-3 text-muted-foreground text-sm">{empty}</p>
+			) : (
+				<div className="grid gap-2">
+					{items.map((item) => (
+						<div
+							key={item.enrollmentId}
+							className="flex items-center justify-between gap-3 border p-3"
+						>
+							<div className="min-w-0">
+								<p className="truncate text-sm">{item.studentName}</p>
+								<p className="truncate text-muted-foreground text-xs">
+									剩余 {item.remainingLessons} 课时
+									{item.className ? ` · 当前：${item.className}` : ""}
+								</p>
+							</div>
+							<Button
+								size="sm"
+								variant={actionLabel === "移出" ? "outline" : "default"}
+								disabled={disabled}
+								onClick={() => onAction(item)}
+							>
+								{actionLabel}
+							</Button>
+						</div>
+					))}
+				</div>
+			)}
+		</section>
+	);
+}
+
+function LessonAttendanceDialog({
+	lesson,
+	onClose,
+	onSaved,
+}: {
+	lesson: Lesson;
+	onClose: () => void;
+	onSaved: () => Promise<unknown>;
+}) {
+	const options = orpc.training.teaching.lessons.attendance.queryOptions({
+		input: { id: lesson.id },
+	});
+	const query = useQuery(options);
+	return (
+		<EditorDialog
+			title="点名并结课"
+			description={`${lesson.className} · ${formatDateTime(lesson.startsAt)} · 到课和迟到各扣 1 课时。`}
+			pending={false}
+			onClose={onClose}
+		>
+			{query.isPending ? (
+				<div className="grid gap-2">
+					<Skeleton className="h-16" />
+					<Skeleton className="h-16" />
+				</div>
+			) : null}
+			{query.isError ? (
+				<div className="grid gap-3 border p-3 text-sm">
+					<p>点名名单加载失败。</p>
+					<Button variant="outline" onClick={() => void query.refetch()}>
+						重试
+					</Button>
+				</div>
+			) : null}
+			{query.data ? (
+				<LessonAttendanceForm
+					data={query.data}
+					onClose={onClose}
+					onSaved={onSaved}
+				/>
+			) : null}
+		</EditorDialog>
+	);
+}
+
+function LessonAttendanceForm({
+	data,
+	onClose,
+	onSaved,
+}: {
+	data: LessonAttendance;
+	onClose: () => void;
+	onSaved: () => Promise<unknown>;
+}) {
+	const mutation = useMutation(
+		orpc.training.teaching.lessons.complete.mutationOptions(),
+	);
+	const [statuses, setStatuses] = useState<Record<string, AttendanceStatus>>(
+		() =>
+			Object.fromEntries(
+				data.members.map((item) => [
+					item.enrollmentId,
+					item.status ?? "present",
+				]),
+			),
+	);
+	function submit(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		const form = new FormData(event.currentTarget);
+		void mutation
+			.mutateAsync({
+				id: data.lesson.id,
+				attendance: data.members.map((item) => ({
+					enrollmentId: item.enrollmentId,
+					status: statuses[item.enrollmentId] ?? "present",
+					note: text(form, `note:${item.enrollmentId}`) || null,
+				})),
+			})
+			.then(async () => {
+				toast.success("考勤已登记，课次已结课");
+				await onSaved();
+				onClose();
+			})
+			.catch((error: Error) => toast.error(error.message));
+	}
+	return (
+		<form className="grid gap-3" onSubmit={submit}>
+			{data.members.length === 0 ? (
+				<p className="border p-3 text-muted-foreground text-sm">
+					当前班级没有成员，无法完成结课。
+				</p>
+			) : (
+				data.members.map((item) => (
+					<div
+						key={item.enrollmentId}
+						className="grid gap-2 border p-3 sm:grid-cols-[minmax(9rem,1fr)_9rem_minmax(10rem,1fr)] sm:items-center"
+					>
+						<div className="min-w-0">
+							<p className="truncate text-sm">{item.studentName}</p>
+							<p className="text-muted-foreground text-xs">
+								剩余 {item.remainingLessons} 课时
+							</p>
+						</div>
+						<AttendanceStatusSelect
+							value={statuses[item.enrollmentId] ?? "present"}
+							onValueChange={(status) =>
+								setStatuses((current) => ({
+									...current,
+									[item.enrollmentId]: status,
+								}))
+							}
+						/>
+						<Input
+							name={`note:${item.enrollmentId}`}
+							defaultValue={item.note ?? ""}
+							placeholder="备注（可选）"
+						/>
+					</div>
+				))
+			)}
+			<DialogFooter>
+				<Button
+					type="button"
+					variant="outline"
+					disabled={mutation.isPending}
+					onClick={onClose}
+				>
+					取消
+				</Button>
+				<Button
+					type="submit"
+					disabled={mutation.isPending || data.members.length === 0}
+				>
+					{mutation.isPending ? (
+						<LoaderCircleIcon className="animate-spin" />
+					) : null}
+					确认结课
+				</Button>
+			</DialogFooter>
+		</form>
+	);
+}
+
+type AttendanceStatus = "present" | "absent" | "late" | "leave";
+
+function AttendanceStatusSelect({
+	value,
+	onValueChange,
+}: {
+	value: AttendanceStatus;
+	onValueChange: (value: AttendanceStatus) => void;
+}) {
+	return (
+		<Select
+			value={value}
+			onValueChange={(next) => {
+				if (next) onValueChange(next as AttendanceStatus);
+			}}
+		>
+			<SelectTrigger aria-label="考勤状态">
+				<SelectValue>{() => attendanceStatusLabels[value]}</SelectValue>
+			</SelectTrigger>
+			<SelectContent>
+				{Object.entries(attendanceStatusLabels).map(([status, label]) => (
+					<SelectItem key={status} value={status}>
+						{label}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
+	);
+}
+
 function EditorDialog({
 	title,
 	description,
@@ -1447,6 +1802,12 @@ const categoryLabels: Record<Course["category"], string> = {
 	art: "艺术",
 	exam: "应试",
 	sports: "运动",
+};
+const attendanceStatusLabels: Record<AttendanceStatus, string> = {
+	present: "到课",
+	absent: "缺勤",
+	late: "迟到",
+	leave: "请假",
 };
 const classStatuses: Array<{
 	value: ClassGroup["status"] | "all";

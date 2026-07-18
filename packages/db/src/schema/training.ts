@@ -716,6 +716,41 @@ export const attendance = pgTable(
 	],
 );
 
+export const lessonConsumption = pgTable(
+	"lesson_consumption",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		enrollmentId: uuid("enrollment_id")
+			.notNull()
+			.references(() => enrollment.id),
+		lessonId: uuid("lesson_id")
+			.notNull()
+			.references(() => lesson.id),
+		attendanceStatus: attendanceStatus("attendance_status").notNull(),
+		previousRemainingLessons: integer("previous_remaining_lessons").notNull(),
+		remainingLessons: integer("remaining_lessons").notNull(),
+		consumedByUserId: text("consumed_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		consumedAt: timestamp("consumed_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("lesson_consumption_enrollment_lesson_uidx").on(
+			table.enrollmentId,
+			table.lessonId,
+		),
+		index("lesson_consumption_org_lesson_idx").on(
+			table.organizationId,
+			table.lessonId,
+		),
+	],
+);
+
 export const invoice = pgTable(
 	"invoice",
 	{
@@ -847,6 +882,7 @@ export const studentRelations = relations(student, ({ one, many }) => ({
 	tagAssignments: many(studentTagAssignment),
 	enrollments: many(enrollment),
 	attendances: many(attendance),
+	lessonConsumptions: many(lessonConsumption),
 	invoices: many(invoice),
 }));
 
@@ -906,3 +942,30 @@ export const classGroupRelations = relations(classGroup, ({ one, many }) => ({
 	lessons: many(lesson),
 	enrollments: many(enrollment),
 }));
+
+export const enrollmentRelations = relations(enrollment, ({ many }) => ({
+	lessonConsumptions: many(lessonConsumption),
+}));
+
+export const lessonRelations = relations(lesson, ({ many }) => ({
+	attendances: many(attendance),
+	consumptions: many(lessonConsumption),
+}));
+
+export const lessonConsumptionRelations = relations(
+	lessonConsumption,
+	({ one }) => ({
+		enrollment: one(enrollment, {
+			fields: [lessonConsumption.enrollmentId],
+			references: [enrollment.id],
+		}),
+		lesson: one(lesson, {
+			fields: [lessonConsumption.lessonId],
+			references: [lesson.id],
+		}),
+		consumedByUser: one(user, {
+			fields: [lessonConsumption.consumedByUserId],
+			references: [user.id],
+		}),
+	}),
+);

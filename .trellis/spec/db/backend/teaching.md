@@ -2,7 +2,7 @@
 
 ## 1. Scope / Trigger
 
-适用于课程、教师、班级和课次的读取与写入。教学领域以 `course -> classGroup -> lesson` 为稳定主链，`lesson` 是唯一排课事实来源，`classGroup.scheduleText` 仅用于兼容展示。
+适用于课程、教师、班级、报名归属和课次的读取与写入。教学领域以 `course -> classGroup -> lesson` 为稳定主链，`lesson` 是唯一排课事实来源，`classGroup.scheduleText` 仅用于兼容展示。
 
 ## 2. Signatures
 
@@ -10,6 +10,8 @@
 - 教师：`list/create/updateTeacherRecord`，教师必须通过 `teacherCampus` 归属一个或多个启用校区。
 - 班级：`list/create/updateClassGroupRecord`，属于单一校区、课程和主讲教师。
 - 课次：`list/create/cancelLessonRecord`；创建输入 `{ classGroupId, room, startsAt, endsAt }`，取消输入 `{ id, reason? }`。
+- 入班：`listClassEnrollmentRecords({ classGroupId })` 与 `assignEnrollmentClassRecord({ enrollmentId, classGroupId | null })`；仍使用 `enrollment.classGroupId`，不维护平行成员表。
+- 点名结课：`getLessonAttendanceRecord({ id })` 返回当前名单；`completeLessonRecord({ id, attendance })` 以完整名单完成考勤、消课和课次结课。
 
 ## 3. Contracts
 
@@ -20,6 +22,9 @@
 - 课次继承班级的校区和主讲教师，限 `recruiting/running` 班级；时长必须等于课程标准时长。时间区间为半开区间 `[startsAt, endsAt)`，以 `Asia/Shanghai` 解释和展示。
 - 冲突判断仅针对 `scheduled` 课次：同教师或同机构内同校区、规范化教室，满足 `existing.startsAt < next.endsAt && existing.endsAt > next.startsAt` 即冲突。
 - 取消仅允许 `scheduled -> cancelled`，写入 `cancelledAt`、`cancelledByUserId` 和可选原因，不改动报名、账单、考勤或课消。
+- 入班只允许同机构、同课程、学员同校区且 `recruiting/running` 的未满班级；移出班级传 `classGroupId: null`，不改动金额、购买课次或剩余课时。同一学员不得在同一班级保留两条报名。
+- 结课只允许 `scheduled -> completed`。提交名单必须与锁定班级后的当前报名全集完全一致；`present/late` 各扣 1 课时，`absent/leave` 不扣。`lessonConsumption` 以 `(enrollmentId, lessonId)` 唯一账本记录扣减前后余额、考勤状态与操作人。
+- 结课与入班都先锁定目标班级，再锁定报名，防止与报名转化并发时遗漏成员或形成锁顺序死锁。余额不足、名单变化或任一写入失败时整笔事务回滚。
 
 ## 4. Validation & Error Matrix
 
@@ -30,20 +35,27 @@
 | 已有报名或课次仍修改课程单次时长 | `COURSE_DURATION_LOCKED` | `CONFLICT` |
 | 教师未归属校区 | `TEACHER_CAMPUS_MISMATCH` | `CONFLICT` |
 | 班级已有依赖仍更换课程或校区 | `CLASS_LOCKED` | `CONFLICT` |
+| 入班跨课程、跨校区、满班或重复学员 | `CLASS_COURSE_MISMATCH` / `CLASS_CAMPUS_MISMATCH` / `CLASS_FULL` / `CLASS_STUDENT_DUPLICATE` | `CONFLICT` |
 | 时间非法、时长不符、资源重叠 | `LESSON_TIME_INVALID` / `LESSON_DURATION_INVALID` / `LESSON_CONFLICT` | `BAD_REQUEST` / `CONFLICT` |
 | 重复取消或不可排课状态 | `LESSON_NOT_CANCELLABLE` / `CLASS_NOT_SCHEDULABLE` | `CONFLICT` |
+| 已完成/取消课次、不完整名单或重复结课 | `LESSON_COMPLETION_INVALID` | `CONFLICT` |
+| 到课/迟到学员余额不足 | `LESSON_CONSUMPTION_INSUFFICIENT` | `CONFLICT` |
 
 ## 5. Good / Base / Bad Cases
 
 - Good：校区负责人在已授权、启用校区为 `running` 班级排入与课程时长一致的课次；相邻时间的两节课允许。
 - Base：已取消课次仍可查询并保留资源与审计字段，但不参与新的冲突判断。
+- Base：已完成课次可读取考勤和消课历史，但不可修改、重复点名或取消；已有空班级可继续调整课程时长，已有报名或课次则不可。
 - Bad：在客户端提交教师、校区或机构 ID 后直接信任其关联关系；或用 `scheduleText` 作为第二套可编辑排程来源。
+- Bad：在前端逐个保存考勤再扣余额，或直接更新 `remainingLessons` 而不写唯一流水；这会留下部分成功和重复扣减路径。
 
 ## 6. Tests Required
 
 - PostgreSQL 集成测试覆盖机构隔离、停用课程、停用/越权校区、教师校区归属、容量边界和报名转化候选过滤。
 - 覆盖同教师与同校区教室冲突、相邻时间、取消后重排、重复取消及并发创建。
 - 覆盖权限在读取快照后被撤销时，事务内重新校验仍会拒绝写入。
+- 覆盖入班的课程/校区/容量/重复学员限制与移出班级；结课需断言考勤、余额和账本同事务写入，余额不足全回滚，重复/并发请求最多一方成功。
+- 有 `lessonConsumption` 时，测试清理先删流水，再删报名与课次；生产删除策略应显式评估账本保留需求。
 
 ## 7. Wrong vs Correct
 
@@ -65,3 +77,21 @@ return getLessonAfterCommit(lessonId);
 ```
 
 写入返回需要关联读取时，事务内使用同一个 `tx` 完成查询，或先提交后以已授权资源 ID 读取；不要混用全局 `db` 连接。
+
+### Wrong
+
+```ts
+await tx.update(enrollment).set({ remainingLessons: sql`${enrollment.remainingLessons} - 1` });
+await tx.update(lesson).set({ status: "completed" });
+```
+
+没有锁定班级和完整名单，也没有幂等账本；并发入班、重试或余额不足会造成账实不一致。
+
+### Correct
+
+```ts
+await tx.select({ id: classGroup.id }).from(classGroup).where(...).for("update");
+// 锁定后的完整名单预检余额，再写 attendance、lessonConsumption、余额与 completed 状态。
+```
+
+目标班级锁必须先于报名锁取得，并以 `(enrollmentId, lessonId)` 唯一流水作为重复扣减的数据库保护。

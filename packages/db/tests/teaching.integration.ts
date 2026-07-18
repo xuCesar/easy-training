@@ -5,7 +5,9 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import { db } from "../src";
 import {
+	assignEnrollmentClassRecord,
 	cancelLessonRecord,
+	completeLessonRecord,
 	createClassGroupRecord,
 	createCourseRecord,
 	createLessonRecord,
@@ -14,11 +16,13 @@ import {
 	updateCourseRecord,
 } from "../src/repositories/teaching";
 import {
+	attendance,
 	campus,
 	classGroup,
 	course,
 	enrollment,
 	lesson,
+	lessonConsumption,
 	organization,
 	organizationMember,
 	organizationMemberCampus,
@@ -44,6 +48,18 @@ function createFixtureIds() {
 type FixtureIds = ReturnType<typeof createFixtureIds>;
 
 async function cleanup(ids: FixtureIds) {
+	await db
+		.delete(lessonConsumption)
+		.where(eq(lessonConsumption.organizationId, ids.organizationId));
+	const lessonIds = (
+		await db
+			.select({ id: lesson.id })
+			.from(lesson)
+			.where(eq(lesson.organizationId, ids.organizationId))
+	).map((item) => item.id);
+	if (lessonIds.length > 0) {
+		await db.delete(attendance).where(inArray(attendance.lessonId, lessonIds));
+	}
 	await db
 		.delete(enrollment)
 		.where(eq(enrollment.organizationId, ids.organizationId));
@@ -151,6 +167,81 @@ function courseUpdateData(
 	durationMinutes: number,
 ) {
 	return { ...record, durationMinutes };
+}
+
+async function createClassFixture(
+	ids: FixtureIds,
+	input?: { capacity?: number; campusId?: string; courseId?: string },
+) {
+	const trainingCourse = input?.courseId
+		? null
+		: await createCourseRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				code: `C-${randomUUID().slice(0, 8)}`,
+				name: "考勤测试课程",
+				category: "language",
+				level: "L1",
+				durationMinutes: 60,
+				listPriceInCents: 12_800,
+				lessonsPerPackage: 12,
+				tags: [],
+			});
+	const campusId = input?.campusId ?? ids.campusA;
+	const instructor = await createTeacherRecord({
+		organizationId: ids.organizationId,
+		userId: ids.adminId,
+		name: `教师-${randomUUID().slice(0, 6)}`,
+		phone: null,
+		subjects: ["英语"],
+		weeklyCapacityHours: 20,
+		campusIds: [campusId],
+	});
+	const group = await createClassGroupRecord({
+		organizationId: ids.organizationId,
+		userId: ids.adminId,
+		name: `测试班-${randomUUID().slice(0, 6)}`,
+		campusId,
+		courseId: input?.courseId ?? trainingCourse?.id ?? "",
+		teacherId: instructor.id,
+		capacity: input?.capacity ?? 10,
+		status: "running",
+		startDate: "2026-08-01",
+	});
+	return { course: trainingCourse, group };
+}
+
+async function createEnrollmentFixture(input: {
+	ids: FixtureIds;
+	courseId: string;
+	classGroupId: string | null;
+	studentId?: string;
+	studentName?: string;
+	remainingLessons?: number;
+}) {
+	const studentId = input.studentId ?? randomUUID();
+	if (!input.studentId) {
+		await db.insert(student).values({
+			id: studentId,
+			organizationId: input.ids.organizationId,
+			campusId: input.ids.campusA,
+			name: input.studentName ?? "测试学员",
+			guardianName: "测试家长",
+			guardianPhone: `139${randomUUID().replace(/-/gu, "").slice(0, 8)}`,
+		});
+	}
+	const remainingLessons = input.remainingLessons ?? 3;
+	const enrollmentId = randomUUID();
+	await db.insert(enrollment).values({
+		id: enrollmentId,
+		organizationId: input.ids.organizationId,
+		studentId,
+		courseId: input.courseId,
+		classGroupId: input.classGroupId,
+		purchasedLessons: Math.max(remainingLessons, 1),
+		remainingLessons,
+	});
+	return { enrollmentId, studentId };
 }
 
 test("校区负责人只能在授权校区开班，课次冲突和取消状态保持一致", async () => {
@@ -458,6 +549,281 @@ test("课程单次时长仅可在未产生报名和课次时调整", async () =>
 			}),
 			"COURSE_DURATION_LOCKED",
 		);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("报名仅能进入同课程、同校区且未满的班级", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course: trainingCourse, group: classA } = await createClassFixture(
+			ids,
+			{
+				capacity: 1,
+			},
+		);
+		assert.ok(trainingCourse);
+		const { course: otherCourse } = await createClassFixture(ids);
+		assert.ok(otherCourse);
+		const { group: otherCourseClass } = await createClassFixture(ids, {
+			courseId: otherCourse.id,
+		});
+		const { group: otherCampusClass } = await createClassFixture(ids, {
+			campusId: ids.campusB,
+			courseId: trainingCourse.id,
+		});
+		const first = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: null,
+			studentName: "小林",
+		});
+		await assignEnrollmentClassRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			enrollmentId: first.enrollmentId,
+			classGroupId: classA.id,
+		});
+		await expectError(
+			assignEnrollmentClassRecord({
+				organizationId: ids.organizationId,
+				userId: ids.managerId,
+				enrollmentId: first.enrollmentId,
+				classGroupId: otherCourseClass.id,
+			}),
+			"CLASS_COURSE_MISMATCH",
+		);
+		await expectError(
+			assignEnrollmentClassRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				enrollmentId: first.enrollmentId,
+				classGroupId: otherCampusClass.id,
+			}),
+			"CLASS_CAMPUS_MISMATCH",
+		);
+		const second = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: null,
+			studentName: "小周",
+		});
+		await expectError(
+			assignEnrollmentClassRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				enrollmentId: second.enrollmentId,
+				classGroupId: classA.id,
+			}),
+			"CLASS_FULL",
+		);
+		const duplicate = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: null,
+			studentId: first.studentId,
+		});
+		await expectError(
+			assignEnrollmentClassRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				enrollmentId: duplicate.enrollmentId,
+				classGroupId: classA.id,
+			}),
+			"CLASS_STUDENT_DUPLICATE",
+		);
+		await assignEnrollmentClassRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			enrollmentId: first.enrollmentId,
+			classGroupId: null,
+		});
+		const [unassigned] = await db
+			.select({ classGroupId: enrollment.classGroupId })
+			.from(enrollment)
+			.where(eq(enrollment.id, first.enrollmentId));
+		assert.equal(unassigned?.classGroupId, null);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("结课原子写入考勤和消课，重复或并发结课不会重复扣课", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course, group } = await createClassFixture(ids);
+		assert.ok(course);
+		const attendees = await Promise.all([
+			createEnrollmentFixture({
+				ids,
+				courseId: course.id,
+				classGroupId: group.id,
+				studentName: "到课学员",
+			}),
+			createEnrollmentFixture({
+				ids,
+				courseId: course.id,
+				classGroupId: group.id,
+				studentName: "迟到学员",
+			}),
+			createEnrollmentFixture({
+				ids,
+				courseId: course.id,
+				classGroupId: group.id,
+				studentName: "缺勤学员",
+			}),
+			createEnrollmentFixture({
+				ids,
+				courseId: course.id,
+				classGroupId: group.id,
+				studentName: "请假学员",
+			}),
+		]);
+		const lessonOne = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "A201",
+			startsAt: new Date("2026-08-03T02:00:00.000Z"),
+			endsAt: new Date("2026-08-03T03:00:00.000Z"),
+		});
+		const roster = ["present", "late", "absent", "leave"] as const;
+		await completeLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			id: lessonOne.id,
+			attendance: attendees.map((item, index) => ({
+				enrollmentId: item.enrollmentId,
+				status: roster[index] ?? "present",
+				note: null,
+			})),
+		});
+		const attendanceRows = await db
+			.select()
+			.from(attendance)
+			.where(eq(attendance.lessonId, lessonOne.id));
+		const consumptionRows = await db
+			.select()
+			.from(lessonConsumption)
+			.where(eq(lessonConsumption.lessonId, lessonOne.id));
+		assert.equal(attendanceRows.length, 4);
+		assert.equal(consumptionRows.length, 2);
+		const balances = await db
+			.select({
+				id: enrollment.id,
+				remainingLessons: enrollment.remainingLessons,
+			})
+			.from(enrollment)
+			.where(
+				inArray(
+					enrollment.id,
+					attendees.map((item) => item.enrollmentId),
+				),
+			);
+		assert.deepEqual(
+			balances
+				.map((item) => item.remainingLessons)
+				.sort((left, right) => left - right),
+			[2, 2, 3, 3],
+		);
+		await expectError(
+			completeLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.managerId,
+				id: lessonOne.id,
+				attendance: attendees.map((item) => ({
+					enrollmentId: item.enrollmentId,
+					status: "present",
+					note: null,
+				})),
+			}),
+			"LESSON_COMPLETION_INVALID",
+		);
+		const lessonTwo = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "A202",
+			startsAt: new Date("2026-08-04T02:00:00.000Z"),
+			endsAt: new Date("2026-08-04T03:00:00.000Z"),
+		});
+		const concurrent = await Promise.allSettled(
+			Array.from({ length: 2 }, () =>
+				completeLessonRecord({
+					organizationId: ids.organizationId,
+					userId: ids.adminId,
+					id: lessonTwo.id,
+					attendance: attendees.map((item) => ({
+						enrollmentId: item.enrollmentId,
+						status: "absent",
+						note: null,
+					})),
+				}),
+			),
+		);
+		assert.equal(
+			concurrent.filter((result) => result.status === "fulfilled").length,
+			1,
+		);
+		const secondLessonAttendance = await db
+			.select()
+			.from(attendance)
+			.where(eq(attendance.lessonId, lessonTwo.id));
+		assert.equal(secondLessonAttendance.length, 4);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("课时不足时结课整体回滚，不保留考勤或消课流水", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course, group } = await createClassFixture(ids);
+		assert.ok(course);
+		const member = await createEnrollmentFixture({
+			ids,
+			courseId: course.id,
+			classGroupId: group.id,
+			remainingLessons: 0,
+		});
+		const scheduled = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "A203",
+			startsAt: new Date("2026-08-05T02:00:00.000Z"),
+			endsAt: new Date("2026-08-05T03:00:00.000Z"),
+		});
+		await expectError(
+			completeLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: scheduled.id,
+				attendance: [
+					{ enrollmentId: member.enrollmentId, status: "present", note: null },
+				],
+			}),
+			"LESSON_CONSUMPTION_INSUFFICIENT",
+		);
+		const [lessonAfter] = await db
+			.select({ status: lesson.status })
+			.from(lesson)
+			.where(eq(lesson.id, scheduled.id));
+		assert.equal(lessonAfter?.status, "scheduled");
+		const [balance] = await db
+			.select({ remainingLessons: enrollment.remainingLessons })
+			.from(enrollment)
+			.where(eq(enrollment.id, member.enrollmentId));
+		assert.equal(balance?.remainingLessons, 0);
+		const rows = await db
+			.select({ id: attendance.id })
+			.from(attendance)
+			.where(eq(attendance.lessonId, scheduled.id));
+		assert.equal(rows.length, 0);
 	} finally {
 		await cleanup(ids);
 	}

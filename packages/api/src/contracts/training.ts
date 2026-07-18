@@ -807,6 +807,26 @@ export const updateClassGroupInputSchema = z.object({
 	data: classGroupDataSchema,
 });
 
+const classEnrollmentSchema = z.object({
+	enrollmentId: z.uuid(),
+	studentId: z.uuid(),
+	studentName: z.string(),
+	remainingLessons: z.number().int().nonnegative(),
+	classGroupId: z.uuid().nullable(),
+	className: z.string().nullable(),
+});
+export const classEnrollmentListInputSchema = z.object({ id: z.uuid() });
+export const classEnrollmentListResultSchema = z.object({
+	items: z.array(classEnrollmentSchema),
+});
+export const assignEnrollmentClassInputSchema = z.object({
+	enrollmentId: z.uuid(),
+	classGroupId: z.uuid().nullable(),
+});
+export const assignEnrollmentClassResultSchema = z.object({
+	enrollmentId: z.uuid(),
+});
+
 const lessonSchema = z.object({
 	id: z.uuid(),
 	classGroupId: z.uuid(),
@@ -843,6 +863,31 @@ export const cancelLessonInputSchema = z.object({
 	id: z.uuid(),
 	reason: z.string().trim().min(1).max(300).nullable().default(null),
 });
+export const completeLessonInputSchema = z.object({
+	id: z.uuid(),
+	attendance: z
+		.array(
+			z.object({
+				enrollmentId: z.uuid(),
+				status: z.enum(["present", "absent", "late", "leave"]),
+				note: z.string().trim().max(300).nullable().default(null),
+			}),
+		)
+		.max(10_000),
+});
+const lessonAttendanceMemberSchema = z.object({
+	enrollmentId: z.uuid(),
+	studentId: z.uuid(),
+	studentName: z.string(),
+	remainingLessons: z.number().int().nonnegative(),
+	status: z.enum(["present", "absent", "late", "leave"]).nullable(),
+	note: z.string().nullable(),
+});
+export const lessonAttendanceInputSchema = z.object({ id: z.uuid() });
+export const lessonAttendanceResultSchema = z.object({
+	lesson: lessonSchema,
+	members: z.array(lessonAttendanceMemberSchema),
+});
 
 export type Course = z.infer<typeof courseSchema>;
 export type CourseListInput = z.infer<typeof courseListInputSchema>;
@@ -856,10 +901,20 @@ export type ClassGroup = z.infer<typeof classGroupSchema>;
 export type ClassGroupListInput = z.infer<typeof classGroupListInputSchema>;
 export type CreateClassGroupInput = z.infer<typeof createClassGroupInputSchema>;
 export type UpdateClassGroupInput = z.infer<typeof updateClassGroupInputSchema>;
+export type ClassEnrollmentListInput = z.infer<
+	typeof classEnrollmentListInputSchema
+>;
+export type AssignEnrollmentClassInput = z.infer<
+	typeof assignEnrollmentClassInputSchema
+>;
+export type ClassEnrollment = z.infer<typeof classEnrollmentSchema>;
 export type Lesson = z.infer<typeof lessonSchema>;
 export type LessonListInput = z.infer<typeof lessonListInputSchema>;
 export type CreateLessonInput = z.infer<typeof createLessonInputSchema>;
 export type CancelLessonInput = z.infer<typeof cancelLessonInputSchema>;
+export type CompleteLessonInput = z.infer<typeof completeLessonInputSchema>;
+export type LessonAttendanceInput = z.infer<typeof lessonAttendanceInputSchema>;
+export type LessonAttendance = z.infer<typeof lessonAttendanceResultSchema>;
 
 const dashboardFollowUpSchema = z.object({
 	id: z.uuid(),

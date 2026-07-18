@@ -2,13 +2,18 @@ import type { RouterClient } from "@orpc/server";
 
 import {
 	addLeadFollowUpInputSchema,
+	assignEnrollmentClassInputSchema,
+	assignEnrollmentClassResultSchema,
 	campusListInputSchema,
 	campusListResultSchema,
 	cancelLessonInputSchema,
 	claimInvitationInputSchema,
 	claimInvitationResultSchema,
+	classEnrollmentListInputSchema,
+	classEnrollmentListResultSchema,
 	classGroupListInputSchema,
 	classGroupListResultSchema,
+	completeLessonInputSchema,
 	convertLeadInputSchema,
 	convertLeadResultSchema,
 	courseListInputSchema,
@@ -42,6 +47,8 @@ import {
 	leadHistoryResultSchema,
 	leadListInputSchema,
 	leadListResultSchema,
+	lessonAttendanceInputSchema,
+	lessonAttendanceResultSchema,
 	lessonListInputSchema,
 	lessonListResultSchema,
 	memberListResultSchema,
@@ -127,11 +134,15 @@ import {
 	updateStudentTag,
 } from "../repositories/students";
 import {
+	assignEnrollmentClass,
 	cancelLesson,
+	completeLesson,
 	createClassGroup,
 	createCourse,
 	createLesson,
 	createTeacher,
+	getLessonAttendance,
+	listClassEnrollments,
 	listClassGroups,
 	listCourses,
 	listLessons,
@@ -573,6 +584,32 @@ export const appRouter = {
 							input,
 						),
 					),
+				enrollments: academicManagementProcedure
+					.input(classEnrollmentListInputSchema)
+					.output(classEnrollmentListResultSchema)
+					.handler(({ context, input }) =>
+						listClassEnrollments(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				assignEnrollment: academicManagementProcedure
+					.input(assignEnrollmentClassInputSchema)
+					.output(assignEnrollmentClassResultSchema)
+					.handler(({ context, input }) =>
+						assignEnrollmentClass(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
 			},
 			lessons: {
 				list: academicManagementProcedure
@@ -593,6 +630,32 @@ export const appRouter = {
 					.output(lessonListResultSchema.shape.items.element)
 					.handler(({ context, input }) =>
 						createLesson(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				attendance: academicManagementProcedure
+					.input(lessonAttendanceInputSchema)
+					.output(lessonAttendanceResultSchema)
+					.handler(({ context, input }) =>
+						getLessonAttendance(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				complete: academicManagementProcedure
+					.input(completeLessonInputSchema)
+					.output(lessonListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						completeLesson(
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,

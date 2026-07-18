@@ -31,6 +31,7 @@ export type EnrollmentConversionErrorCode =
 	| "CLASS_CAMPUS_MISMATCH"
 	| "CLASS_NOT_AVAILABLE"
 	| "CLASS_FULL"
+	| "CLASS_STUDENT_DUPLICATE"
 	| "PACKAGE_TERMS_OVERRIDE_FORBIDDEN"
 	| "RESOURCE_UNAVAILABLE"
 	| "CAMPUS_OUT_OF_SCOPE"
@@ -560,21 +561,22 @@ export async function convertLeadRecord(
 					.from(enrollment)
 					.where(eq(enrollment.classGroupId, classRecord.id));
 
+				const [currentStudentEnrollment] = await tx
+					.select({ id: enrollment.id })
+					.from(enrollment)
+					.where(
+						and(
+							eq(enrollment.classGroupId, classRecord.id),
+							eq(enrollment.studentId, studentId),
+						),
+					)
+					.limit(1)
+					.for("update");
+				if (currentStudentEnrollment) {
+					throw new EnrollmentConversionError("CLASS_STUDENT_DUPLICATE");
+				}
 				if ((occupancy?.value ?? 0) >= classRecord.capacity) {
-					const [currentStudentEnrollment] = await tx
-						.select({ id: enrollment.id })
-						.from(enrollment)
-						.where(
-							and(
-								eq(enrollment.classGroupId, classRecord.id),
-								eq(enrollment.studentId, studentId),
-							),
-						)
-						.limit(1);
-
-					if (!currentStudentEnrollment) {
-						throw new EnrollmentConversionError("CLASS_FULL");
-					}
+					throw new EnrollmentConversionError("CLASS_FULL");
 				}
 			}
 

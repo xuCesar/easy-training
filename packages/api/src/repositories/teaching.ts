@@ -1,9 +1,13 @@
 import {
+	assignEnrollmentClassRecord,
 	cancelLessonRecord,
+	completeLessonRecord,
 	createClassGroupRecord,
 	createCourseRecord,
 	createLessonRecord,
 	createTeacherRecord,
+	getLessonAttendanceRecord,
+	listClassEnrollmentRecords,
 	listClassGroupRecords,
 	listCourseRecords,
 	listLessonRecords,
@@ -17,9 +21,12 @@ import {
 import { ORPCError } from "@orpc/server";
 
 import type {
+	AssignEnrollmentClassInput,
 	CancelLessonInput,
+	ClassEnrollmentListInput,
 	ClassGroup,
 	ClassGroupListInput,
+	CompleteLessonInput,
 	Course,
 	CourseListInput,
 	CreateClassGroupInput,
@@ -27,6 +34,7 @@ import type {
 	CreateLessonInput,
 	CreateTeacherInput,
 	Lesson,
+	LessonAttendanceInput,
 	LessonListInput,
 	SetCourseActiveInput,
 	Teacher,
@@ -93,6 +101,7 @@ function throwTeachingError(error: unknown): never {
 		case "COURSE_NOT_FOUND":
 		case "TEACHER_NOT_FOUND":
 		case "CLASS_NOT_FOUND":
+		case "ENROLLMENT_NOT_FOUND":
 		case "LESSON_NOT_FOUND":
 			throw new ORPCError("NOT_FOUND", { message: "目标教务资源不存在。" });
 		case "CAMPUS_NOT_FOUND":
@@ -123,6 +132,20 @@ function throwTeachingError(error: unknown): never {
 			throw new ORPCError("CONFLICT", {
 				message: "班级容量不能低于现有报名人数。",
 			});
+		case "CLASS_FULL":
+			throw new ORPCError("CONFLICT", { message: "班级容量已满。" });
+		case "CLASS_COURSE_MISMATCH":
+			throw new ORPCError("CONFLICT", {
+				message: "报名课程与目标班级课程不一致。",
+			});
+		case "CLASS_CAMPUS_MISMATCH":
+			throw new ORPCError("CONFLICT", {
+				message: "学员所属校区与目标班级校区不一致。",
+			});
+		case "CLASS_STUDENT_DUPLICATE":
+			throw new ORPCError("CONFLICT", {
+				message: "该学员已在目标班级中，不能重复入班。",
+			});
 		case "CLASS_NOT_SCHEDULABLE":
 			throw new ORPCError("CONFLICT", {
 				message: "当前班级状态不能新增课次。",
@@ -137,6 +160,14 @@ function throwTeachingError(error: unknown): never {
 			});
 		case "LESSON_NOT_CANCELLABLE":
 			throw new ORPCError("CONFLICT", { message: "仅可取消已排课次。" });
+		case "LESSON_COMPLETION_INVALID":
+			throw new ORPCError("CONFLICT", {
+				message: "仅可为已排课次登记完整考勤并结课。",
+			});
+		case "LESSON_CONSUMPTION_INSUFFICIENT":
+			throw new ORPCError("CONFLICT", {
+				message: "存在剩余课时不足的学员，无法完成结课。",
+			});
 	}
 }
 
@@ -285,6 +316,37 @@ export async function updateClassGroup(
 		return throwTeachingError(error);
 	}
 }
+export async function listClassEnrollments(
+	scope: TeachingScope,
+	input: ClassEnrollmentListInput,
+) {
+	try {
+		return {
+			items: await listClassEnrollmentRecords({
+				organizationId: scope.organizationId,
+				campusAccess: scope.campusAccess,
+				classGroupId: input.id,
+			}),
+		};
+	} catch (error) {
+		return throwTeachingError(error);
+	}
+}
+export async function assignEnrollmentClass(
+	scope: TeachingScope,
+	input: AssignEnrollmentClassInput,
+) {
+	try {
+		await assignEnrollmentClassRecord({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			...input,
+		});
+		return { enrollmentId: input.enrollmentId };
+	} catch (error) {
+		return throwTeachingError(error);
+	}
+}
 export async function listLessons(
 	scope: TeachingScope,
 	input: LessonListInput,
@@ -315,6 +377,42 @@ export async function createLesson(
 				room: input.room,
 				startsAt: new Date(input.startsAt),
 				endsAt: new Date(input.endsAt),
+			}),
+		);
+	} catch (error) {
+		return throwTeachingError(error);
+	}
+}
+
+export async function getLessonAttendance(
+	scope: TeachingScope,
+	input: LessonAttendanceInput,
+) {
+	try {
+		const record = await getLessonAttendanceRecord({
+			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
+			id: input.id,
+		});
+		return {
+			lesson: toLesson(record.lesson),
+			members: record.members,
+		};
+	} catch (error) {
+		return throwTeachingError(error);
+	}
+}
+
+export async function completeLesson(
+	scope: TeachingScope,
+	input: CompleteLessonInput,
+) {
+	try {
+		return toLesson(
+			await completeLessonRecord({
+				organizationId: scope.organizationId,
+				userId: scope.userId,
+				...input,
 			}),
 		);
 	} catch (error) {
