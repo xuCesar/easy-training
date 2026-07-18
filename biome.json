@@ -9,6 +9,9 @@
 		"ignoreUnknown": false,
 		"includes": [
 			"**",
+			"!**/.agents",
+			"!**/.codex",
+			"!**/.trellis",
 			"!**/.next",
 			"!**/dist",
 			"!**/.turbo",

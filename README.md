@@ -94,6 +94,39 @@ pnpm db:migrate   # 执行 migration
 pnpm db:studio    # 打开 Drizzle Studio
 ```
 
+## Trellis AI 开发工作流
+
+仓库已使用 Trellis `0.6.7` 管理 Codex 的项目规范、任务上下文和跨会话记录。核心入口如下：
+
+- `AGENTS.md`：AI 助手入口。
+- `.trellis/spec/`：项目级与 workspace 级工程规范。
+- `.trellis/tasks/`：任务 PRD、设计、执行计划和归档。
+- `.trellis/workspace/`：按开发者维护的会话记录。
+- `.codex/`、`.agents/skills/`：Codex Hooks、代理和 Trellis skills。
+
+当前采用保守配置：只集成 Codex、主代理 inline 实现，并设置 `session_auto_commit: false`。Trellis 不会自动暂存或提交 session/task 文件。
+
+首次在新的开发环境使用时，确保 Node.js >= 18、Python >= 3.9，并初始化个人身份：
+
+```bash
+python3 ./.trellis/scripts/init_developer.py <your-name>
+```
+
+如需更新 Trellis 生成文件，使用仓库当前固定版本并先审查 diff：
+
+```bash
+pnpm dlx @mindfoldhq/trellis@0.6.7 update --codex
+```
+
+Codex 自动注入工作流状态还需要在用户级 `~/.codex/config.toml` 启用 Hooks，并在 Codex 中执行一次 `/hooks` 审批项目 Hook：
+
+```toml
+[features]
+hooks = true
+```
+
+用户级 Codex 配置不属于仓库，本项目不会自动修改。
+
 ## 当前数据边界
 
 认证数据和教培领域 schema 已接入 PostgreSQL。认证用户首次进入业务系统时，会自动创建一个机构并成为 `owner`；后续业务接口只使用服务端解析出的机构上下文，不接受客户端传入的机构 ID。
