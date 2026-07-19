@@ -1107,11 +1107,16 @@ function ClassEditor({
 			courseId: text(data, "courseId"),
 			teacherId: text(data, "teacherId"),
 			capacity: number(data, "capacity"),
-			status: text(data, "status") as ClassGroup["status"],
 			startDate: text(data, "startDate"),
 		};
 		const request = value
-			? updateMutation.mutateAsync({ id: value.id, data: input })
+			? updateMutation.mutateAsync({
+					id: value.id,
+					data: {
+						...input,
+						status: text(data, "status") as ClassGroup["status"],
+					},
+				})
 			: createMutation.mutateAsync(input);
 		void request
 			.then(async () => {
@@ -1139,12 +1144,14 @@ function ClassEditor({
 					defaultValue={value?.name}
 					required
 				/>
-				<SelectField
-					label="班级状态"
-					name="status"
-					defaultValue={value?.status ?? "recruiting"}
-					items={classStatuses}
-				/>
+				{value ? (
+					<SelectField
+						label="班级状态"
+						name="status"
+						defaultValue={value.status}
+						items={getEditableClassStatuses(value.status)}
+					/>
+				) : null}
 				<SelectField
 					label="校区"
 					name="campusId"
@@ -1818,6 +1825,22 @@ const classStatuses: Array<{
 	{ value: "paused", label: "已暂停" },
 	{ value: "completed", label: "已结课" },
 ];
+
+function getEditableClassStatuses(
+	status: ClassGroup["status"],
+): Array<{ value: ClassGroup["status"]; label: string }> {
+	const allowedStatuses: Record<ClassGroup["status"], ClassGroup["status"][]> =
+		{
+			recruiting: ["recruiting", "running"],
+			running: ["running", "paused", "completed"],
+			paused: ["paused", "running", "completed"],
+			completed: ["completed"],
+		};
+	return classStatuses.filter(
+		(item): item is { value: ClassGroup["status"]; label: string } =>
+			item.value !== "all" && allowedStatuses[status].includes(item.value),
+	);
+}
 const statusLabels: Record<string, string> = {
 	recruiting: "招生中",
 	running: "进行中",

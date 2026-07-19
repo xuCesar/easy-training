@@ -128,6 +128,14 @@ function throwTeachingError(error: unknown): never {
 			throw new ORPCError("CONFLICT", {
 				message: "班级已有报名或课次，不能变更课程或校区。",
 			});
+		case "CLASS_STATUS_TRANSITION_INVALID":
+			throw new ORPCError("CONFLICT", {
+				message: "当前班级状态不允许执行该变更。",
+			});
+		case "CLASS_HAS_SCHEDULED_LESSONS":
+			throw new ORPCError("CONFLICT", {
+				message: "请先完成或取消全部已排课次，再将班级结课。",
+			});
 		case "CLASS_CAPACITY_TOO_LOW":
 			throw new ORPCError("CONFLICT", {
 				message: "班级容量不能低于现有报名人数。",
@@ -145,6 +153,10 @@ function throwTeachingError(error: unknown): never {
 		case "CLASS_STUDENT_DUPLICATE":
 			throw new ORPCError("CONFLICT", {
 				message: "该学员已在目标班级中，不能重复入班。",
+			});
+		case "ENROLLMENT_NOT_ACTIVE":
+			throw new ORPCError("CONFLICT", {
+				message: "该报名已失效，不能调整班级。",
 			});
 		case "CLASS_NOT_SCHEDULABLE":
 			throw new ORPCError("CONFLICT", {

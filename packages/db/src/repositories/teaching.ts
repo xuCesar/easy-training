@@ -44,6 +44,8 @@ export type TeachingRepositoryErrorCode =
 	| "TEACHER_CAMPUS_MISMATCH"
 	| "CLASS_NOT_FOUND"
 	| "CLASS_LOCKED"
+	| "CLASS_STATUS_TRANSITION_INVALID"
+	| "CLASS_HAS_SCHEDULED_LESSONS"
 	| "CLASS_CAPACITY_TOO_LOW"
 	| "CLASS_NOT_SCHEDULABLE"
 	| "CLASS_FULL"
@@ -51,6 +53,7 @@ export type TeachingRepositoryErrorCode =
 	| "CLASS_CAMPUS_MISMATCH"
 	| "CLASS_STUDENT_DUPLICATE"
 	| "ENROLLMENT_NOT_FOUND"
+	| "ENROLLMENT_NOT_ACTIVE"
 	| "LESSON_NOT_FOUND"
 	| "LESSON_NOT_CANCELLABLE"
 	| "LESSON_TIME_INVALID"
@@ -69,6 +72,7 @@ export class TeachingRepositoryError extends Error {
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
+type ClassStatus = (typeof classGroup.$inferSelect)["status"];
 
 const courseWriteRoles = new Set<MemberRole>(["owner", "admin"]);
 const academicWriteRoles = new Set<MemberRole>([
@@ -76,6 +80,24 @@ const academicWriteRoles = new Set<MemberRole>([
 	"admin",
 	"campus_manager",
 ]);
+const allowedClassStatusTransitions: Record<
+	ClassStatus,
+	ReadonlySet<ClassStatus>
+> = {
+	recruiting: new Set(["recruiting", "running"]),
+	running: new Set(["running", "paused", "completed"]),
+	paused: new Set(["paused", "running", "completed"]),
+	completed: new Set(["completed"]),
+};
+
+function assertClassStatusTransition(
+	currentStatus: ClassStatus,
+	nextStatus: ClassStatus,
+) {
+	if (!allowedClassStatusTransitions[currentStatus].has(nextStatus)) {
+		throw new TeachingRepositoryError("CLASS_STATUS_TRANSITION_INVALID");
+	}
+}
 
 function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
 	return (
@@ -660,7 +682,14 @@ export async function listClassGroupRecords(input: {
 				eq(teacher.organizationId, input.organizationId),
 			),
 		)
-		.leftJoin(enrollment, eq(enrollment.classGroupId, classGroup.id))
+		.leftJoin(
+			enrollment,
+			and(
+				eq(enrollment.classGroupId, classGroup.id),
+				eq(enrollment.organizationId, input.organizationId),
+				eq(enrollment.status, "active"),
+			),
+		)
 		.where(and(...filters))
 		.groupBy(classGroup.id, campus.name, course.name, teacher.name)
 		.orderBy(
@@ -693,7 +722,6 @@ export async function createClassGroupRecord(input: {
 	courseId: string;
 	teacherId: string;
 	capacity: number;
-	status: (typeof classGroup.$inferInsert)["status"];
 	startDate: string;
 }): Promise<ClassGroupRecord> {
 	ensurePositive(input.capacity);
@@ -713,7 +741,8 @@ export async function createClassGroupRecord(input: {
 				courseId: input.courseId,
 				teacherId: input.teacherId,
 				capacity: input.capacity,
-				status: input.status,
+				// 班级只能从招生中开始，后续必须通过受控状态迁移进入其他阶段。
+				status: "recruiting",
 				startDate: input.startDate,
 				scheduleText: "排课待定",
 			})
@@ -740,7 +769,7 @@ export async function updateClassGroupRecord(input: {
 	courseId: string;
 	teacherId: string;
 	capacity: number;
-	status: (typeof classGroup.$inferInsert)["status"];
+	status: ClassStatus;
 	startDate: string;
 }): Promise<ClassGroupRecord> {
 	ensurePositive(input.capacity);
@@ -767,10 +796,17 @@ export async function updateClassGroupRecord(input: {
 			campusAccess: access,
 			campusId: existing.campusId,
 		});
+		assertClassStatusTransition(existing.status, input.status);
 		const [occupancy] = await tx
 			.select({ value: countDistinct(enrollment.studentId) })
 			.from(enrollment)
-			.where(eq(enrollment.classGroupId, existing.id));
+			.where(
+				and(
+					eq(enrollment.organizationId, input.organizationId),
+					eq(enrollment.classGroupId, existing.id),
+					eq(enrollment.status, "active"),
+				),
+			);
 		if (input.capacity < (occupancy?.value ?? 0))
 			throw new TeachingRepositoryError("CLASS_CAPACITY_TOO_LOW");
 		const [dependentLesson] = await tx
@@ -784,6 +820,23 @@ export async function updateClassGroupRecord(input: {
 				existing.campusId !== input.campusId
 			)
 				throw new TeachingRepositoryError("CLASS_LOCKED");
+		}
+		if (existing.status !== "completed" && input.status === "completed") {
+			const [scheduledLesson] = await tx
+				.select({ id: lesson.id })
+				.from(lesson)
+				.where(
+					and(
+						eq(lesson.organizationId, input.organizationId),
+						eq(lesson.classGroupId, existing.id),
+						eq(lesson.status, "scheduled"),
+					),
+				)
+				.limit(1)
+				.for("update");
+			if (scheduledLesson) {
+				throw new TeachingRepositoryError("CLASS_HAS_SCHEDULED_LESSONS");
+			}
 		}
 		await assertClassDependencies(tx, { ...input, campusAccess: access });
 		await tx
@@ -864,6 +917,7 @@ export async function listClassEnrollmentRecords(input: {
 			and(
 				eq(enrollment.organizationId, input.organizationId),
 				eq(enrollment.courseId, group.courseId),
+				eq(enrollment.status, "active"),
 			),
 		)
 		.orderBy(asc(student.name), asc(enrollment.id));
@@ -912,6 +966,7 @@ export async function assignEnrollmentClassRecord(input: {
 				courseId: enrollment.courseId,
 				classGroupId: enrollment.classGroupId,
 				studentCampusId: student.campusId,
+				status: enrollment.status,
 			})
 			.from(enrollment)
 			.innerJoin(
@@ -936,6 +991,9 @@ export async function assignEnrollmentClassRecord(input: {
 			campusAccess: access,
 			campusId: enrollmentRecord.studentCampusId,
 		});
+		if (enrollmentRecord.status !== "active") {
+			throw new TeachingRepositoryError("ENROLLMENT_NOT_ACTIVE");
+		}
 		if (!input.classGroupId) {
 			await tx
 				.update(enrollment)
@@ -963,6 +1021,7 @@ export async function assignEnrollmentClassRecord(input: {
 				and(
 					eq(enrollment.classGroupId, targetClass.id),
 					eq(enrollment.studentId, enrollmentRecord.studentId),
+					eq(enrollment.status, "active"),
 				),
 			)
 			.limit(1)
@@ -973,7 +1032,13 @@ export async function assignEnrollmentClassRecord(input: {
 		const [occupancy] = await tx
 			.select({ value: countDistinct(enrollment.studentId) })
 			.from(enrollment)
-			.where(eq(enrollment.classGroupId, targetClass.id));
+			.where(
+				and(
+					eq(enrollment.organizationId, input.organizationId),
+					eq(enrollment.classGroupId, targetClass.id),
+					eq(enrollment.status, "active"),
+				),
+			);
 		if (
 			(occupancy?.value ?? 0) >= targetClass.capacity &&
 			enrollmentRecord.classGroupId !== targetClass.id
@@ -1291,6 +1356,7 @@ export async function getLessonAttendanceRecord(input: {
 			and(
 				eq(enrollment.organizationId, input.organizationId),
 				eq(enrollment.classGroupId, lessonRecord.classGroupId),
+				eq(enrollment.status, "active"),
 			),
 		)
 		.orderBy(asc(student.name), asc(enrollment.id));
@@ -1352,6 +1418,7 @@ export async function completeLessonRecord(input: {
 				and(
 					eq(enrollment.organizationId, input.organizationId),
 					eq(enrollment.classGroupId, lessonRecord.classGroupId),
+					eq(enrollment.status, "active"),
 				),
 			)
 			.for("update");

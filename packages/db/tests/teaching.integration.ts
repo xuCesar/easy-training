@@ -12,7 +12,10 @@ import {
 	createCourseRecord,
 	createLessonRecord,
 	createTeacherRecord,
+	getLessonAttendanceRecord,
+	listClassEnrollmentRecords,
 	TeachingRepositoryError,
+	updateClassGroupRecord,
 	updateCourseRecord,
 } from "../src/repositories/teaching";
 import {
@@ -205,7 +208,6 @@ async function createClassFixture(
 		courseId: input?.courseId ?? trainingCourse?.id ?? "",
 		teacherId: instructor.id,
 		capacity: input?.capacity ?? 10,
-		status: "running",
 		startDate: "2026-08-01",
 	});
 	return { course: trainingCourse, group };
@@ -244,6 +246,21 @@ async function createEnrollmentFixture(input: {
 	return { enrollmentId, studentId };
 }
 
+function classUpdateData(
+	record: Awaited<ReturnType<typeof createClassGroupRecord>>,
+	status: Awaited<ReturnType<typeof createClassGroupRecord>>["status"],
+) {
+	return {
+		name: record.name,
+		campusId: record.campusId,
+		courseId: record.courseId,
+		teacherId: record.teacherId,
+		capacity: record.capacity,
+		status,
+		startDate: record.startDate,
+	};
+}
+
 test("校区负责人只能在授权校区开班，课次冲突和取消状态保持一致", async () => {
 	const ids = createFixtureIds();
 	try {
@@ -277,7 +294,6 @@ test("校区负责人只能在授权校区开班，课次冲突和取消状态�
 			courseId: trainingCourse.id,
 			teacherId: instructor.id,
 			capacity: 12,
-			status: "recruiting",
 			startDate: "2026-08-01",
 		});
 
@@ -290,7 +306,6 @@ test("校区负责人只能在授权校区开班，课次冲突和取消状态�
 				courseId: trainingCourse.id,
 				teacherId: instructor.id,
 				capacity: 12,
-				status: "recruiting",
 				startDate: "2026-08-01",
 			}),
 			"CAMPUS_OUT_OF_SCOPE",
@@ -416,7 +431,6 @@ test("停用课程不能用于新班级", async () => {
 				courseId: inactiveCourse.id,
 				teacherId: instructor.id,
 				capacity: 10,
-				status: "recruiting",
 				startDate: "2026-08-01",
 			}),
 			"COURSE_INACTIVE",
@@ -459,7 +473,6 @@ test("课程单次时长仅可在未产生报名和课次时调整", async () =>
 			courseId: editableCourse.id,
 			teacherId: instructor.id,
 			capacity: 12,
-			status: "recruiting",
 			startDate: "2026-08-01",
 		});
 		const updated = await updateCourseRecord({
@@ -490,7 +503,6 @@ test("课程单次时长仅可在未产生报名和课次时调整", async () =>
 			courseId: lessonLockedCourse.id,
 			teacherId: instructor.id,
 			capacity: 12,
-			status: "recruiting",
 			startDate: "2026-08-01",
 		});
 		await createLessonRecord({
@@ -645,6 +657,164 @@ test("报名仅能进入同课程、同校区且未满的班级", async () => {
 			.from(enrollment)
 			.where(eq(enrollment.id, first.enrollmentId));
 		assert.equal(unassigned?.classGroupId, null);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("班级状态遵循受控迁移，结课前必须处理已排课次", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course, group } = await createClassFixture(ids);
+		assert.ok(course);
+		assert.equal(group.status, "recruiting");
+		await expectError(
+			updateClassGroupRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: group.id,
+				...classUpdateData(group, "paused"),
+			}),
+			"CLASS_STATUS_TRANSITION_INVALID",
+		);
+		const running = await updateClassGroupRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: group.id,
+			...classUpdateData(group, "running"),
+		});
+		const scheduled = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: running.id,
+			room: "A204",
+			startsAt: new Date("2026-08-06T02:00:00.000Z"),
+			endsAt: new Date("2026-08-06T03:00:00.000Z"),
+		});
+		await expectError(
+			updateClassGroupRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: running.id,
+				...classUpdateData(running, "completed"),
+			}),
+			"CLASS_HAS_SCHEDULED_LESSONS",
+		);
+		await cancelLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: scheduled.id,
+			reason: null,
+		});
+		const completed = await updateClassGroupRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: running.id,
+			...classUpdateData(running, "completed"),
+		});
+		assert.equal(completed.status, "completed");
+		await expectError(
+			updateClassGroupRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: completed.id,
+				...classUpdateData(completed, "running"),
+			}),
+			"CLASS_STATUS_TRANSITION_INVALID",
+		);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("非 active 报名不能入班，且不出现在成员、点名或消课路径", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course, group } = await createClassFixture(ids);
+		assert.ok(course);
+		const activeEnrollment = await createEnrollmentFixture({
+			ids,
+			courseId: course.id,
+			classGroupId: group.id,
+			studentName: "有效报名",
+		});
+		const legacyTransferredEnrollment = await createEnrollmentFixture({
+			ids,
+			courseId: course.id,
+			classGroupId: group.id,
+			studentName: "遗留转课报名",
+		});
+		const transferredCandidate = await createEnrollmentFixture({
+			ids,
+			courseId: course.id,
+			classGroupId: null,
+			studentName: "已转课候选人",
+		});
+		await db
+			.update(enrollment)
+			.set({ status: "transferred" })
+			.where(
+				inArray(enrollment.id, [
+					legacyTransferredEnrollment.enrollmentId,
+					transferredCandidate.enrollmentId,
+				]),
+			);
+		await expectError(
+			assignEnrollmentClassRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				enrollmentId: transferredCandidate.enrollmentId,
+				classGroupId: group.id,
+			}),
+			"ENROLLMENT_NOT_ACTIVE",
+		);
+		const members = await listClassEnrollmentRecords({
+			organizationId: ids.organizationId,
+			campusAccess: { kind: "all" },
+			classGroupId: group.id,
+		});
+		assert.deepEqual(
+			members.map((item) => item.enrollmentId),
+			[activeEnrollment.enrollmentId],
+		);
+		const scheduled = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "A205",
+			startsAt: new Date("2026-08-07T02:00:00.000Z"),
+			endsAt: new Date("2026-08-07T03:00:00.000Z"),
+		});
+		const attendanceBeforeCompletion = await getLessonAttendanceRecord({
+			organizationId: ids.organizationId,
+			campusAccess: { kind: "all" },
+			id: scheduled.id,
+		});
+		assert.deepEqual(
+			attendanceBeforeCompletion.members.map((item) => item.enrollmentId),
+			[activeEnrollment.enrollmentId],
+		);
+		await completeLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: scheduled.id,
+			attendance: [
+				{
+					enrollmentId: activeEnrollment.enrollmentId,
+					status: "present",
+					note: null,
+				},
+			],
+		});
+		const consumptions = await db
+			.select({ enrollmentId: lessonConsumption.enrollmentId })
+			.from(lessonConsumption)
+			.where(eq(lessonConsumption.lessonId, scheduled.id));
+		assert.deepEqual(consumptions, [
+			{ enrollmentId: activeEnrollment.enrollmentId },
+		]);
 	} finally {
 		await cleanup(ids);
 	}

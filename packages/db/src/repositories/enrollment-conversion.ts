@@ -280,7 +280,14 @@ export async function getLeadConversionOptionsRecord(input: {
 					eq(campus.organizationId, input.organizationId),
 				),
 			)
-			.leftJoin(enrollment, eq(enrollment.classGroupId, classGroup.id))
+			.leftJoin(
+				enrollment,
+				and(
+					eq(enrollment.classGroupId, classGroup.id),
+					eq(enrollment.organizationId, input.organizationId),
+					eq(enrollment.status, "active"),
+				),
+			)
 			.where(
 				and(
 					eq(classGroup.organizationId, input.organizationId),
@@ -559,15 +566,23 @@ export async function convertLeadRecord(
 				const [occupancy] = await tx
 					.select({ value: countDistinct(enrollment.studentId) })
 					.from(enrollment)
-					.where(eq(enrollment.classGroupId, classRecord.id));
+					.where(
+						and(
+							eq(enrollment.organizationId, input.organizationId),
+							eq(enrollment.classGroupId, classRecord.id),
+							eq(enrollment.status, "active"),
+						),
+					);
 
 				const [currentStudentEnrollment] = await tx
 					.select({ id: enrollment.id })
 					.from(enrollment)
 					.where(
 						and(
+							eq(enrollment.organizationId, input.organizationId),
 							eq(enrollment.classGroupId, classRecord.id),
 							eq(enrollment.studentId, studentId),
+							eq(enrollment.status, "active"),
 						),
 					)
 					.limit(1)

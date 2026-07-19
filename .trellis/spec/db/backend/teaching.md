@@ -18,12 +18,14 @@
 - 所有教学写入在机构 advisory lock 内调用 `getCurrentWriteCampusAccess`，重新读取成员角色与校区范围；不使用 API middleware 的授权快照作为最终写入依据。
 - 课程停用会阻断新班级、课次和报名转化，但不删除历史班级、报名或课次。
 - 课程单次时长仅可在尚无报名和课次时修改；允许已有空班级，已有报名（含未分班报名）或任一课次时必须创建新课程版本。
-- 新建班级要求课程和校区启用、教师归属目标校区、容量为正；已有报名或课次时禁止更换课程或校区，容量不能小于报名数。
+- 新建班级要求课程和校区启用、教师归属目标校区、容量为正，且仓储/API 固定写为 `recruiting`；已有报名或课次时禁止更换课程或校区，容量不能小于 active 报名数。
+- 班级状态唯一允许 `recruiting → running`、`running → paused | completed`、`paused → running | completed`；`completed` 只能保持完成态，不能重新开启。首次进入 `completed` 前不得存在 `scheduled` 课次。
 - 课次继承班级的校区和主讲教师，限 `recruiting/running` 班级；时长必须等于课程标准时长。时间区间为半开区间 `[startsAt, endsAt)`，以 `Asia/Shanghai` 解释和展示。
 - 冲突判断仅针对 `scheduled` 课次：同教师或同机构内同校区、规范化教室，满足 `existing.startsAt < next.endsAt && existing.endsAt > next.startsAt` 即冲突。
 - 取消仅允许 `scheduled -> cancelled`，写入 `cancelledAt`、`cancelledByUserId` 和可选原因，不改动报名、账单、考勤或课消。
-- 入班只允许同机构、同课程、学员同校区且 `recruiting/running` 的未满班级；移出班级传 `classGroupId: null`，不改动金额、购买课次或剩余课时。同一学员不得在同一班级保留两条报名。
-- 结课只允许 `scheduled -> completed`。提交名单必须与锁定班级后的当前报名全集完全一致；`present/late` 各扣 1 课时，`absent/leave` 不扣。`lessonConsumption` 以 `(enrollmentId, lessonId)` 唯一账本记录扣减前后余额、考勤状态与操作人。
+- 入班只允许 `enrollment.status = active`、同机构、同课程、学员同校区且 `recruiting/running` 的未满班级；移出班级传 `classGroupId: null`，不改动金额、购买课次或剩余课时。同一学员不得在同一班级保留两条 active 报名。
+- 成员列表、容量、报名转化班级候选/入班校验、点名名单和结课消课均只使用 active 报名；这同时保护历史遗留的 `transferred` 记录，即使其错误保留了 `classGroupId` 也不得占用席位、阻止同学员重新报名或参与考勤、扣课。
+- 结课只允许 `scheduled -> completed`。提交名单必须与锁定班级后的当前 active 报名全集完全一致；`present/late` 各扣 1 课时，`absent/leave` 不扣。`lessonConsumption` 以 `(enrollmentId, lessonId)` 唯一账本记录扣减前后余额、考勤状态与操作人。
 - 结课与入班都先锁定目标班级，再锁定报名，防止与报名转化并发时遗漏成员或形成锁顺序死锁。余额不足、名单变化或任一写入失败时整笔事务回滚。
 
 ## 4. Validation & Error Matrix
@@ -35,6 +37,8 @@
 | 已有报名或课次仍修改课程单次时长 | `COURSE_DURATION_LOCKED` | `CONFLICT` |
 | 教师未归属校区 | `TEACHER_CAMPUS_MISMATCH` | `CONFLICT` |
 | 班级已有依赖仍更换课程或校区 | `CLASS_LOCKED` | `CONFLICT` |
+| 非法班级状态跃迁或仍有待上课次时结课 | `CLASS_STATUS_TRANSITION_INVALID` / `CLASS_HAS_SCHEDULED_LESSONS` | `CONFLICT` |
+| 已转课或其他非 active 报名调整班级 | `ENROLLMENT_NOT_ACTIVE` | `CONFLICT` |
 | 入班跨课程、跨校区、满班或重复学员 | `CLASS_COURSE_MISMATCH` / `CLASS_CAMPUS_MISMATCH` / `CLASS_FULL` / `CLASS_STUDENT_DUPLICATE` | `CONFLICT` |
 | 时间非法、时长不符、资源重叠 | `LESSON_TIME_INVALID` / `LESSON_DURATION_INVALID` / `LESSON_CONFLICT` | `BAD_REQUEST` / `CONFLICT` |
 | 重复取消或不可排课状态 | `LESSON_NOT_CANCELLABLE` / `CLASS_NOT_SCHEDULABLE` | `CONFLICT` |
@@ -54,7 +58,7 @@
 - PostgreSQL 集成测试覆盖机构隔离、停用课程、停用/越权校区、教师校区归属、容量边界和报名转化候选过滤。
 - 覆盖同教师与同校区教室冲突、相邻时间、取消后重排、重复取消及并发创建。
 - 覆盖权限在读取快照后被撤销时，事务内重新校验仍会拒绝写入。
-- 覆盖入班的课程/校区/容量/重复学员限制与移出班级；结课需断言考勤、余额和账本同事务写入，余额不足全回滚，重复/并发请求最多一方成功。
+- 覆盖班级状态图、完成前处理待上课次，以及入班的课程/校区/容量/重复学员限制与移出班级；已转课或历史非 active 报名不得出现在成员/点名/消课路径。结课需断言考勤、余额和账本同事务写入，余额不足全回滚，重复/并发请求最多一方成功。
 - 有 `lessonConsumption` 时，测试清理先删流水，再删报名与课次；生产删除策略应显式评估账本保留需求。
 
 ## 7. Wrong vs Correct

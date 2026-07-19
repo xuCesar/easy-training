@@ -1095,7 +1095,9 @@ export const classGroupListInputSchema = z.object({
 export const classGroupListResultSchema = z.object({
 	items: z.array(classGroupSchema),
 });
-export const createClassGroupInputSchema = classGroupDataSchema;
+export const createClassGroupInputSchema = classGroupDataSchema.omit({
+	status: true,
+});
 export const updateClassGroupInputSchema = z.object({
 	id: z.uuid(),
 	data: classGroupDataSchema,

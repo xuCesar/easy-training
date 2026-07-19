@@ -496,6 +496,15 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 
 	try {
 		await seedFixture(ids);
+		await db.insert(enrollment).values({
+			organizationId: ids.organizationA,
+			studentId: ids.studentMatchingA1,
+			courseId: ids.courseA,
+			classGroupId: ids.classAvailable,
+			purchasedLessons: 24,
+			remainingLessons: 0,
+			status: "transferred",
+		});
 
 		const options = leadConversionOptionsSchema.parse(
 			await getLeadConversionOptions(scopeA, { leadId: ids.leadOptions }),
