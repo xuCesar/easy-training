@@ -177,3 +177,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: 学员档案并发保护收尾
+
+**Date**: 2026-07-19
+**Task**: 学员档案并发保护收尾
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+确认学员档案乐观并发保护验收完成；类型检查、Biome、构建及 27 项 PostgreSQL 集成测试通过；归档任务并忽略 Playwright CLI 临时产物。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9522e34` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
