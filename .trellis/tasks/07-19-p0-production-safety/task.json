@@ -28,5 +28,7 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "githubIssue": 6
+  }
 }

@@ -22,5 +22,7 @@
   "parent": "07-19-p0-production-safety",
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "githubIssue": 18
+  }
 }

@@ -3,7 +3,7 @@
   "name": "p0-request-state-boundaries",
   "title": "P0 教务状态边界",
   "description": "收紧班级生命周期、有效报名、课次点名与消课边界。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",
@@ -22,5 +22,7 @@
   "parent": "07-19-p0-production-safety",
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "githubIssue": 20
+  }
 }
