@@ -1227,7 +1227,7 @@ function CampusField({
 function InvitationStatus({ invitation }: { invitation: Invitation }) {
 	if (invitation.claimedAt) return <Badge variant="secondary">已领取</Badge>;
 	if (invitation.revokedAt) return <Badge variant="secondary">已撤销</Badge>;
-	if (new Date(invitation.expiresAt).getTime() <= Date.now())
+	if (!isActiveInvitation(invitation))
 		return <Badge variant="secondary">已过期</Badge>;
 	return <Badge>待领取</Badge>;
 }
@@ -1326,11 +1326,18 @@ function roleLabel(role: Role): string {
 function accessLabel(mode: AccessMode, count: number): string {
 	return mode === "all" ? "全部校区" : `指定校区（${count} 个）`;
 }
+function isActiveInvitation(invitation: Invitation): boolean {
+	return (
+		!invitation.claimedAt &&
+		!invitation.revokedAt &&
+		new Date(invitation.expiresAt).getTime() > Date.now()
+	);
+}
 function canRevoke(invitation: Invitation): boolean {
-	return !invitation.claimedAt && !invitation.revokedAt;
+	return isActiveInvitation(invitation);
 }
 function canResend(invitation: Invitation): boolean {
-	return !invitation.claimedAt;
+	return isActiveInvitation(invitation);
 }
 function confirmationDetails(confirmation: Confirmation) {
 	if (confirmation.kind === "campus") {

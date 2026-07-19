@@ -23,7 +23,8 @@
     "07-19-p0-critical-business-audit",
     "07-19-p0-invitation-email-control",
     "07-19-p0-observability-delivery",
-    "07-19-p0-csv-request-contract"
+    "07-19-p0-csv-request-contract",
+    "07-19-invitation-resend-ux"
   ],
   "parent": null,
   "relatedFiles": [],
