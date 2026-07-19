@@ -39,6 +39,19 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"member_role_changed",
 	"member_access_changed",
 	"member_removed",
+	"lead_imported",
+	"lead_exported",
+	"notification_read",
+	"notifications_marked_read",
+]);
+export const organizationNotificationType = pgEnum(
+	"organization_notification_type",
+	["lead_import_completed", "lead_import_failed", "invoice_follow_up"],
+);
+export const leadImportBatchStatus = pgEnum("lead_import_batch_status", [
+	"processing",
+	"completed",
+	"completed_with_errors",
 ]);
 export const leadStage = pgEnum("lead_stage", [
 	"new",
@@ -269,6 +282,9 @@ export const organizationAuditEvent = pgTable(
 		action: organizationAuditAction("action").notNull(),
 		entityType: text("entity_type").notNull(),
 		entityId: uuid("entity_id").notNull(),
+		campusId: uuid("campus_id").references(() => campus.id, {
+			onDelete: "set null",
+		}),
 		actorUserId: text("actor_user_id").references(() => user.id, {
 			onDelete: "set null",
 		}),
@@ -291,6 +307,52 @@ export const organizationAuditEvent = pgTable(
 			table.organizationId,
 			table.entityType,
 			table.entityId,
+		),
+		index("organization_audit_event_org_campus_created_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.createdAt,
+			table.id,
+		),
+	],
+);
+
+export const organizationNotification = pgTable(
+	"organization_notification",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		recipientUserId: text("recipient_user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id").references(() => campus.id, {
+			onDelete: "set null",
+		}),
+		type: organizationNotificationType("type").notNull(),
+		title: text("title").notNull(),
+		body: text("body").notNull(),
+		entityType: text("entity_type").notNull(),
+		entityId: uuid("entity_id").notNull(),
+		idempotencyKey: text("idempotency_key").notNull(),
+		readAt: timestamp("read_at", { withTimezone: true }),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("organization_notification_recipient_key_uidx").on(
+			table.organizationId,
+			table.recipientUserId,
+			table.idempotencyKey,
+		),
+		index("organization_notification_recipient_read_created_idx").on(
+			table.organizationId,
+			table.recipientUserId,
+			table.readAt,
+			table.createdAt,
+			table.id,
 		),
 	],
 );
@@ -567,6 +629,39 @@ export const leadActivity = pgTable(
 		index("lead_activity_org_lead_created_idx").on(
 			table.organizationId,
 			table.leadId,
+			table.createdAt,
+			table.id,
+		),
+	],
+);
+
+export const leadImportBatch = pgTable(
+	"lead_import_batch",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		requestId: uuid("request_id").notNull(),
+		createdByUserId: text("created_by_user_id")
+			.notNull()
+			.references(() => user.id),
+		status: leadImportBatchStatus("status").notNull(),
+		totalRows: integer("total_rows").notNull(),
+		importedRows: integer("imported_rows").notNull(),
+		errorRows: integer("error_rows").notNull(),
+		errors: jsonb("errors").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("lead_import_batch_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("lead_import_batch_org_created_idx").on(
+			table.organizationId,
 			table.createdAt,
 			table.id,
 		),

@@ -5,6 +5,8 @@ import {
 	arrearsListResultSchema,
 	assignEnrollmentClassInputSchema,
 	assignEnrollmentClassResultSchema,
+	auditEventListInputSchema,
+	auditEventListResultSchema,
 	campusListInputSchema,
 	campusListResultSchema,
 	cancelLessonInputSchema,
@@ -15,6 +17,8 @@ import {
 	classGroupListInputSchema,
 	classGroupListResultSchema,
 	completeLessonInputSchema,
+	confirmLeadImportInputSchema,
+	confirmLeadImportResultSchema,
 	convertLeadInputSchema,
 	convertLeadResultSchema,
 	courseListInputSchema,
@@ -57,7 +61,13 @@ import {
 	lessonAttendanceResultSchema,
 	lessonListInputSchema,
 	lessonListResultSchema,
+	markNotificationReadInputSchema,
+	markNotificationsReadResultSchema,
 	memberListResultSchema,
+	notificationListInputSchema,
+	notificationListResultSchema,
+	previewLeadImportInputSchema,
+	previewLeadImportResultSchema,
 	removeMemberInputSchema,
 	renewEnrollmentInputSchema,
 	renewEnrollmentResultSchema,
@@ -123,6 +133,14 @@ import {
 	listLeads,
 	updateLead,
 } from "../repositories/leads";
+import {
+	confirmLeadImport,
+	getNotifications,
+	listAuditEvents,
+	previewLeadImport,
+	readAllNotifications,
+	readNotification,
+} from "../repositories/operations";
 import {
 	type CurrentOrganization as CurrentOrganizationContext,
 	selectCurrentOrganization,
@@ -360,6 +378,59 @@ export const appRouter = {
 						email: context.session.user.email,
 						sessionId: context.session.session.id,
 					}),
+				),
+		},
+		notifications: {
+			list: organizationProcedure
+				.input(notificationListInputSchema)
+				.output(notificationListResultSchema)
+				.handler(({ context, input }) =>
+					getNotifications(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			read: organizationProcedure
+				.input(markNotificationReadInputSchema)
+				.output(markNotificationsReadResultSchema)
+				.handler(async ({ context, input }) => {
+					await readNotification(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input.id,
+					);
+					return { count: 1 };
+				}),
+			readAll: organizationProcedure
+				.output(markNotificationsReadResultSchema)
+				.handler(({ context }) =>
+					readAllNotifications({
+						organizationId: context.organization.id,
+						userId: context.session.user.id,
+						campusAccess: context.campusAccess,
+					}),
+				),
+		},
+		audit: {
+			list: organizationManagementProcedure
+				.input(auditEventListInputSchema)
+				.output(auditEventListResultSchema)
+				.handler(({ context, input }) =>
+					listAuditEvents(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
 				),
 		},
 		students: {
@@ -698,6 +769,25 @@ export const appRouter = {
 			},
 		},
 		leads: {
+			import: {
+				preview: leadProcedure
+					.input(previewLeadImportInputSchema)
+					.output(previewLeadImportResultSchema)
+					.handler(({ input }) => previewLeadImport(input)),
+				confirm: leadProcedure
+					.input(confirmLeadImportInputSchema)
+					.output(confirmLeadImportResultSchema)
+					.handler(({ context, input }) =>
+						confirmLeadImport(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
 			filterOptions: leadProcedure
 				.output(leadFilterOptionsSchema)
 				.handler(({ context }) =>

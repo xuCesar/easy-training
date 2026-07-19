@@ -60,6 +60,7 @@ import {
 	PencilIcon,
 	PlusIcon,
 	SearchIcon,
+	UploadIcon,
 	UsersRoundIcon,
 } from "lucide-react";
 import {
@@ -129,6 +130,14 @@ function LeadsRoute() {
 	const [editor, setEditor] = useState<LeadRecord | null | "new">(null);
 	const [followUpLead, setFollowUpLead] = useState<LeadRecord | null>(null);
 	const [conversionLead, setConversionLead] = useState<LeadRecord | null>(null);
+	const [importOpen, setImportOpen] = useState(false);
+	const [importContent, setImportContent] = useState<string | null>(null);
+	const [importRequestId, setImportRequestId] = useState<string | null>(null);
+	const [importPreview, setImportPreview] = useState<{
+		totalRows: number;
+		validRows: number;
+		errors: Array<{ row: number; message: string }>;
+	} | null>(null);
 	const deferredSearch = useDeferredValue(search.trim());
 	const filterOptions = useQuery({
 		...orpc.training.leads.filterOptions.queryOptions(),
@@ -175,6 +184,27 @@ function LeadsRoute() {
 			onError: () => toast.error("暂时无法导出线索，请稍后重试"),
 		}),
 	);
+	const previewImportMutation = useMutation(
+		orpc.training.leads.import.preview.mutationOptions({
+			onSuccess: setImportPreview,
+			onError: () => toast.error("无法解析 CSV，请确认模板格式。"),
+		}),
+	);
+	const confirmImportMutation = useMutation(
+		orpc.training.leads.import.confirm.mutationOptions({
+			onSuccess: async (result) => {
+				toast.success(`已导入 ${result.importedRows} 条线索`);
+				setImportOpen(false);
+				setImportContent(null);
+				setImportRequestId(null);
+				setImportPreview(null);
+				await queryClient.invalidateQueries({
+					queryKey: ["training-leads", organization.id],
+				});
+			},
+			onError: () => toast.error("线索导入失败，请稍后重试。"),
+		}),
+	);
 	const pages = listQuery.data?.pages ?? [];
 	const items = pages.flatMap((page) => page.items);
 	const total = pages[0]?.total ?? 0;
@@ -199,6 +229,19 @@ function LeadsRoute() {
 		setCreatedAtTo("");
 	}
 
+	function downloadImportTemplate() {
+		const csv =
+			'\uFEFF"姓名","手机号","来源","跟进状态","备注"\n"张同学","13800138000","线上咨询","new","可选备注"';
+		const url = URL.createObjectURL(
+			new Blob([csv], { type: "text/csv;charset=utf-8" }),
+		);
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = "招生线索导入模板.csv";
+		anchor.click();
+		URL.revokeObjectURL(url);
+	}
+
 	return (
 		<div className="flex flex-col gap-5">
 			<section className="flex flex-wrap items-end justify-between gap-3">
@@ -210,6 +253,14 @@ function LeadsRoute() {
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
+					<Button variant="outline" onClick={downloadImportTemplate}>
+						<DownloadIcon data-icon="inline-start" />
+						下载模板
+					</Button>
+					<Button variant="outline" onClick={() => setImportOpen(true)}>
+						<UploadIcon data-icon="inline-start" />
+						导入
+					</Button>
 					{canExport ? (
 						<Button
 							variant="outline"
@@ -332,6 +383,81 @@ function LeadsRoute() {
 					onClose={() => setConversionLead(null)}
 				/>
 			) : null}
+			<Dialog
+				open={importOpen}
+				onOpenChange={(open) => {
+					setImportOpen(open);
+					if (!open) {
+						setImportContent(null);
+						setImportRequestId(null);
+						setImportPreview(null);
+					}
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>导入招生线索</DialogTitle>
+						<DialogDescription>
+							CSV 首行需包含：姓名、手机号、来源；可选：跟进状态、备注。
+						</DialogDescription>
+					</DialogHeader>
+					<Input
+						type="file"
+						accept=".csv,text/csv"
+						disabled={
+							previewImportMutation.isPending || confirmImportMutation.isPending
+						}
+						onChange={(event) => {
+							const file = event.target.files?.[0];
+							if (!file || file.size > 500_000) {
+								if (file) toast.error("文件不能超过 500KB");
+								return;
+							}
+							const reader = new FileReader();
+							reader.onload = () => {
+								if (typeof reader.result !== "string") return;
+								setImportContent(reader.result);
+								setImportRequestId(crypto.randomUUID());
+								previewImportMutation.mutate({ content: reader.result });
+							};
+							reader.readAsText(file);
+						}}
+					/>
+					{importPreview ? (
+						<p className="text-sm">
+							共 {importPreview.totalRows} 行，其中 {importPreview.validRows}{" "}
+							行可导入。
+							{importPreview.errors.length
+								? ` ${importPreview.errors.length} 行校验失败。`
+								: ""}
+						</p>
+					) : null}
+					<DialogFooter>
+						<Button variant="outline" onClick={() => setImportOpen(false)}>
+							取消
+						</Button>
+						<Button
+							disabled={
+								!importContent ||
+								!importRequestId ||
+								!importPreview?.validRows ||
+								confirmImportMutation.isPending
+							}
+							onClick={() =>
+								importContent &&
+								importRequestId &&
+								confirmImportMutation.mutate({
+									content: importContent,
+									campusId,
+									requestId: importRequestId,
+								})
+							}
+						>
+							{confirmImportMutation.isPending ? "正在导入" : "确认导入"}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }

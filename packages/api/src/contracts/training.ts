@@ -372,6 +372,96 @@ export const exportLeadsResultSchema = z.object({
 	csv: z.string(),
 });
 
+const auditActionSchema = z.enum([
+	"campus_created",
+	"campus_updated",
+	"campus_activated",
+	"campus_deactivated",
+	"invitation_created",
+	"invitation_revoked",
+	"invitation_claimed",
+	"member_role_changed",
+	"member_access_changed",
+	"member_removed",
+	"lead_imported",
+	"lead_exported",
+	"notification_read",
+	"notifications_marked_read",
+]);
+
+export const auditEventListInputSchema = z.object({
+	action: auditActionSchema.optional(),
+	actorUserId: z.string().optional(),
+	createdAtFrom: z.iso.datetime({ offset: true }).optional(),
+	createdAtTo: z.iso.datetime({ offset: true }).optional(),
+	pageSize: z.number().int().min(1).max(100).default(50),
+});
+export const auditEventListResultSchema = z.object({
+	items: z.array(
+		z.object({
+			id: z.uuid(),
+			action: auditActionSchema,
+			entityType: z.string(),
+			entityId: z.uuid(),
+			campusId: z.uuid().nullable(),
+			actorUserId: z.string().nullable(),
+			actorName: z.string().nullable(),
+			createdAt: z.iso.datetime({ offset: true }),
+		}),
+	),
+});
+
+const notificationSchema = z.object({
+	id: z.uuid(),
+	type: z.enum([
+		"lead_import_completed",
+		"lead_import_failed",
+		"invoice_follow_up",
+	]),
+	title: z.string(),
+	body: z.string(),
+	entityType: z.string(),
+	entityId: z.uuid(),
+	readAt: z.iso.datetime({ offset: true }).nullable(),
+	createdAt: z.iso.datetime({ offset: true }),
+});
+export const notificationListInputSchema = z.object({
+	limit: z.number().int().min(1).max(100).default(20),
+});
+export const notificationListResultSchema = z.object({
+	items: z.array(notificationSchema),
+	unreadCount: z.number().int().nonnegative(),
+});
+export const markNotificationReadInputSchema = z.object({ id: z.uuid() });
+export const markNotificationsReadResultSchema = z.object({
+	count: z.number().int().nonnegative(),
+});
+
+export const previewLeadImportInputSchema = z.object({
+	content: z.string().max(500_000),
+});
+export const previewLeadImportResultSchema = z.object({
+	totalRows: z.number().int().nonnegative(),
+	validRows: z.number().int().nonnegative(),
+	errors: z.array(
+		z.object({ row: z.number().int().positive(), message: z.string() }),
+	),
+});
+export const confirmLeadImportInputSchema = z.object({
+	requestId: z.uuid(),
+	campusId: z.uuid().nullable(),
+	content: z.string().max(500_000),
+});
+export const confirmLeadImportResultSchema = z.object({
+	batchId: z.uuid(),
+	importedRows: z.number().int().nonnegative(),
+	errorRows: z.number().int().nonnegative(),
+	errors: z.array(
+		z.object({ row: z.number().int().positive(), message: z.string() }),
+	),
+	replayed: z.boolean(),
+});
+
 export const createLeadInputSchema = createLeadDataSchema;
 
 export const updateLeadInputSchema = z.object({
@@ -390,6 +480,24 @@ export type LeadHistoryResult = z.infer<typeof leadHistoryResultSchema>;
 export type LeadFilterOptions = z.infer<typeof leadFilterOptionsSchema>;
 export type ExportLeadsInput = z.infer<typeof exportLeadsInputSchema>;
 export type ExportLeadsResult = z.infer<typeof exportLeadsResultSchema>;
+export type AuditEventListInput = z.infer<typeof auditEventListInputSchema>;
+export type AuditEventListResult = z.infer<typeof auditEventListResultSchema>;
+export type NotificationListInput = z.infer<typeof notificationListInputSchema>;
+export type NotificationListResult = z.infer<
+	typeof notificationListResultSchema
+>;
+export type PreviewLeadImportInput = z.infer<
+	typeof previewLeadImportInputSchema
+>;
+export type PreviewLeadImportResult = z.infer<
+	typeof previewLeadImportResultSchema
+>;
+export type ConfirmLeadImportInput = z.infer<
+	typeof confirmLeadImportInputSchema
+>;
+export type ConfirmLeadImportResult = z.infer<
+	typeof confirmLeadImportResultSchema
+>;
 
 export const leadConversionOptionsInputSchema = z.object({
 	leadId: z.uuid(),

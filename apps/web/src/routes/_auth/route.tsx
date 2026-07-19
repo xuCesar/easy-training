@@ -39,6 +39,7 @@ import {
 	CalendarDaysIcon,
 	CheckIcon,
 	ChevronsUpDownIcon,
+	ClipboardListIcon,
 	LayoutDashboardIcon,
 	LoaderCircleIcon,
 	MenuIcon,
@@ -94,6 +95,13 @@ const navigation = [
 		roles: ["owner", "admin"],
 	},
 	{
+		to: "/audit",
+		label: "操作审计",
+		icon: ClipboardListIcon,
+		available: true,
+		roles: ["owner", "admin"],
+	},
+	{
 		to: "/students",
 		label: "学员中心",
 		icon: BookOpenIcon,
@@ -127,6 +135,27 @@ function AuthLayout() {
 		],
 	});
 	const organization = organizationQuery.data;
+	const notificationOptions = orpc.training.notifications.list.queryOptions({
+		input: { limit: 20 },
+	});
+	const notificationsQuery = useQuery({
+		...notificationOptions,
+		enabled: Boolean(organization),
+		queryKey: [
+			...notificationOptions.queryKey,
+			{ organizationId: organization?.id },
+		],
+	});
+	const markAllNotificationsRead = useMutation(
+		orpc.training.notifications.readAll.mutationOptions({
+			onSuccess: () => void notificationsQuery.refetch(),
+		}),
+	);
+	const markNotificationRead = useMutation(
+		orpc.training.notifications.read.mutationOptions({
+			onSuccess: () => void notificationsQuery.refetch(),
+		}),
+	);
 	useLayoutEffect(() => {
 		if (!organization || isSwitchingOrganization) {
 			setExpectedOrganizationId(null);
@@ -319,16 +348,79 @@ function AuthLayout() {
 								/>
 							</div>
 						</div>
-						<Tooltip>
-							<TooltipTrigger
+						<DropdownMenu>
+							<DropdownMenuTrigger
 								render={
-									<Button variant="ghost" size="icon" aria-label="查看通知" />
+									<Button
+										variant="ghost"
+										size="icon"
+										aria-label="查看通知"
+										className="relative"
+									/>
 								}
 							>
 								<BellIcon data-icon="inline" />
-							</TooltipTrigger>
-							<TooltipContent>通知中心即将开放</TooltipContent>
-						</Tooltip>
+								{notificationsQuery.data?.unreadCount ? (
+									<span className="absolute top-1 right-1 grid size-4 place-items-center rounded-full bg-destructive text-[10px] text-destructive-foreground">
+										{Math.min(notificationsQuery.data.unreadCount, 9)}
+									</span>
+								) : null}
+							</DropdownMenuTrigger>
+							<DropdownMenuContent
+								align="end"
+								className="w-80 max-w-[calc(100vw-2rem)]"
+							>
+								<DropdownMenuGroup>
+									<DropdownMenuLabel className="flex items-center justify-between">
+										<span>通知</span>
+										{notificationsQuery.data?.unreadCount ? (
+											<button
+												type="button"
+												className="font-normal text-primary text-xs"
+												disabled={markAllNotificationsRead.isPending}
+												onClick={() =>
+													markAllNotificationsRead.mutate(undefined)
+												}
+											>
+												全部已读
+											</button>
+										) : null}
+									</DropdownMenuLabel>
+								</DropdownMenuGroup>
+								<DropdownMenuSeparator />
+								{notificationsQuery.isPending ? (
+									<DropdownMenuItem disabled>正在加载通知</DropdownMenuItem>
+								) : null}
+								{notificationsQuery.isError ? (
+									<DropdownMenuItem disabled>通知加载失败</DropdownMenuItem>
+								) : null}
+								{notificationsQuery.data?.items.length === 0 ? (
+									<DropdownMenuItem disabled>暂无通知</DropdownMenuItem>
+								) : null}
+								{notificationsQuery.data?.items.map((item) => (
+									<DropdownMenuItem
+										key={item.id}
+										className="items-start"
+										onClick={() =>
+											!item.readAt &&
+											markNotificationRead.mutate({ id: item.id })
+										}
+									>
+										<span className="min-w-0 flex-1">
+											<span className="block truncate font-medium">
+												{item.title}
+											</span>
+											<span className="block whitespace-normal text-muted-foreground text-xs">
+												{item.body}
+											</span>
+										</span>
+										{!item.readAt ? (
+											<span className="mt-1 size-2 shrink-0 rounded-full bg-primary" />
+										) : null}
+									</DropdownMenuItem>
+								))}
+							</DropdownMenuContent>
+						</DropdownMenu>
 						<DropdownMenu>
 							<DropdownMenuTrigger
 								render={

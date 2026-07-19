@@ -10,6 +10,7 @@ import {
 	listLeadActivities,
 	listLeadFilterOptions,
 	listLeadRecords,
+	recordLeadExport,
 	updateLeadRecord,
 	type WritableLeadStage,
 } from "@easy-training/db";
@@ -305,6 +306,11 @@ export async function exportLeads(
 			),
 		];
 		const date = new Date().toISOString().slice(0, 10);
+		await recordLeadExport({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			resultCount: rows.length,
+		});
 		return {
 			fileName: `招生线索-${date}.csv`,
 			csv: `\uFEFF${lines.join("\n")}`,
