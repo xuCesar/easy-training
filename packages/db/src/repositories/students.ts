@@ -14,6 +14,7 @@ import type { CampusAccess } from "./organization";
 
 export type StudentRepositoryErrorCode =
 	| "STUDENT_NOT_FOUND"
+	| "STUDENT_VERSION_CONFLICT"
 	| "CAMPUS_NOT_FOUND"
 	| "CAMPUS_OUT_OF_SCOPE"
 	| "CAMPUS_INACTIVE"
@@ -708,6 +709,7 @@ export async function updateStudentRecord(input: {
 	userId: string;
 	campusAccess: CampusAccess;
 	id: string;
+	expectedUpdatedAt: Date;
 	data: UpdateStudentRecordInput;
 }): Promise<StudentDetailRecord> {
 	const contacts = normalizeContacts(input.data.contacts, {
@@ -722,7 +724,11 @@ export async function updateStudentRecord(input: {
 				allowedRoles: studentWriteRoles,
 			});
 			const [current] = await tx
-				.select({ id: student.id, campusId: student.campusId })
+				.select({
+					id: student.id,
+					campusId: student.campusId,
+					updatedAt: student.updatedAt,
+				})
 				.from(student)
 				.where(
 					and(
@@ -738,6 +744,9 @@ export async function updateStudentRecord(input: {
 				campusAccess,
 				campusId: current.campusId,
 			});
+			if (current.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) {
+				throw new StudentRepositoryError("STUDENT_VERSION_CONFLICT");
+			}
 
 			const existingContacts = await tx
 				.select({ id: studentContact.id })
@@ -784,7 +793,7 @@ export async function updateStudentRecord(input: {
 					status: input.data.status,
 					guardianName: primaryContact.name,
 					guardianPhone: primaryContact.phone,
-					updatedAt: new Date(),
+					updatedAt: sql`greatest(clock_timestamp(), ${student.updatedAt} + interval '1 millisecond')`,
 				})
 				.where(eq(student.id, current.id));
 		});

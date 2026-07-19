@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { eq, inArray } from "drizzle-orm";
+import { createRouterClient } from "../../api/node_modules/@orpc/server/dist/index.mjs";
+import type { Context } from "../../api/src/context";
+import { appRouter } from "../../api/src/routers";
 import { db } from "../src";
 import { convertLeadRecord } from "../src/repositories/enrollment-conversion";
 import {
@@ -23,6 +26,7 @@ import {
 	organization,
 	organizationMember,
 	organizationMemberCampus,
+	session,
 	student,
 	studentContact,
 	user,
@@ -46,6 +50,27 @@ function createFixtureIds() {
 
 type FixtureIds = ReturnType<typeof createFixtureIds>;
 
+function sessionId(userId: string) {
+	return `${userId}-session`;
+}
+
+function createSessionClient(
+	userId: string,
+	name: string,
+	expectedOrganizationId: string,
+) {
+	return createRouterClient(appRouter, {
+		context: {
+			auth: null,
+			session: {
+				session: { id: sessionId(userId) },
+				user: { id: userId, name },
+			},
+			expectedOrganizationId,
+		} as unknown as Context,
+	});
+}
+
 async function expectStudentError(
 	promise: Promise<unknown>,
 	code: StudentRepositoryError["code"],
@@ -53,6 +78,27 @@ async function expectStudentError(
 	await assert.rejects(promise, (error: unknown) => {
 		assert.ok(error instanceof StudentRepositoryError);
 		assert.equal(error.code, code);
+		return true;
+	});
+}
+
+async function expectOrpcError(
+	promise: Promise<unknown>,
+	code: string,
+	reason?: string,
+) {
+	await assert.rejects(promise, (error: unknown) => {
+		assert.ok(typeof error === "object" && error !== null && "code" in error);
+		assert.equal(error.code, code);
+		if (reason) {
+			assert.ok(
+				"data" in error &&
+					typeof error.data === "object" &&
+					error.data !== null &&
+					"reason" in error.data,
+			);
+			assert.equal(error.data.reason, reason);
+		}
 		return true;
 	});
 }
@@ -70,11 +116,15 @@ async function cleanupFixture(ids: FixtureIds) {
 		.delete(organization)
 		.where(inArray(organization.id, organizationIds));
 	await db
+		.delete(session)
+		.where(inArray(session.userId, [ids.managerUserId, ids.operatorUserId]));
+	await db
 		.delete(user)
 		.where(inArray(user.id, [ids.managerUserId, ids.operatorUserId]));
 }
 
 async function seedFixture(ids: FixtureIds) {
+	const now = new Date();
 	await db.insert(organization).values([
 		{ id: ids.organizationA, name: `${ids.prefix} A` },
 		{ id: ids.organizationB, name: `${ids.prefix} B` },
@@ -89,6 +139,22 @@ async function seedFixture(ids: FixtureIds) {
 			id: ids.operatorUserId,
 			name: "学员测试操作人",
 			email: `${ids.operatorUserId}@example.invalid`,
+		},
+	]);
+	await db.insert(session).values([
+		{
+			id: sessionId(ids.managerUserId),
+			token: `${sessionId(ids.managerUserId)}-token`,
+			userId: ids.managerUserId,
+			expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+			updatedAt: now,
+		},
+		{
+			id: sessionId(ids.operatorUserId),
+			token: `${sessionId(ids.operatorUserId)}-token`,
+			userId: ids.operatorUserId,
+			expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+			updatedAt: now,
 		},
 	]);
 	await db.insert(campus).values([
@@ -274,6 +340,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 			userId: ids.operatorUserId,
 			campusAccess: selectedA,
 			id: created.id,
+			expectedUpdatedAt: created.updatedAt,
 			data: {
 				name: "校区 A 学员（更新）",
 				birthDate: "2018-01-02",
@@ -317,6 +384,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 				userId: ids.operatorUserId,
 				campusAccess: selectedA,
 				id: created.id,
+				expectedUpdatedAt: updated.updatedAt,
 				data: {
 					name: updated.name,
 					birthDate: updated.birthDate,
@@ -388,6 +456,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 				userId: ids.operatorUserId,
 				campusAccess: selectedA,
 				id: created.id,
+				expectedUpdatedAt: afterTagDisabled.updatedAt,
 				data: {
 					name: afterTagDisabled.name,
 					birthDate: afterTagDisabled.birthDate,
@@ -474,6 +543,7 @@ test("学员写入在事务内重新校验成员当前校区范围", async () =>
 				userId: ids.operatorUserId,
 				campusAccess: staleCampusAccess,
 				id: created.id,
+				expectedUpdatedAt: created.updatedAt,
 				data: {
 					name: "不应保存的更新",
 					birthDate: created.birthDate,
@@ -490,6 +560,251 @@ test("学员写入在事务内重新校验成员当前校区范围", async () =>
 			id: created.id,
 		});
 		assert.equal(persisted.name, "撤销前学员");
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("学员档案以版本令牌原子保护联系人、主要联系人和标签更新", async () => {
+	const ids = createFixtureIds();
+	const scope = {
+		organizationId: ids.organizationA,
+		userId: ids.operatorUserId,
+		campusAccess: { kind: "selected" as const, campusIds: [ids.campusA] },
+	};
+
+	async function createConcurrentStudent(name: string, tagId: string) {
+		return createStudentRecord({
+			...scope,
+			name,
+			campusId: ids.campusA,
+			birthDate: null,
+			status: "trial",
+			contacts: [
+				{
+					name: "初始联系人",
+					phone: "13800138000",
+					relationship: "母亲",
+					isPrimary: true,
+				},
+			],
+			tagIds: [tagId],
+		});
+	}
+
+	async function assertWinnerPersisted(
+		studentId: string,
+		winner: Awaited<ReturnType<typeof getStudentRecord>>,
+	) {
+		const persisted = await getStudentRecord({
+			organizationId: ids.organizationA,
+			campusAccess: scope.campusAccess,
+			id: studentId,
+		});
+		assert.deepEqual(persisted.contacts, winner.contacts);
+		assert.deepEqual(persisted.tags, winner.tags);
+		const primaryContact = winner.contacts.find((contact) => contact.isPrimary);
+		assert.ok(primaryContact);
+		const [guardian] = await db
+			.select({
+				guardianName: student.guardianName,
+				guardianPhone: student.guardianPhone,
+			})
+			.from(student)
+			.where(eq(student.id, studentId));
+		assert.deepEqual(guardian, {
+			guardianName: primaryContact.name,
+			guardianPhone: primaryContact.phone,
+		});
+	}
+
+	try {
+		await seedFixture(ids);
+		const tagInitial = await createStudentTagRecord({
+			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
+			campusAccess: { kind: "all" },
+			name: "初始标签",
+		});
+		const tagWinner = await createStudentTagRecord({
+			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
+			campusAccess: { kind: "all" },
+			name: "成功标签",
+		});
+		const tagLoser = await createStudentTagRecord({
+			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
+			campusAccess: { kind: "all" },
+			name: "冲突标签",
+		});
+
+		const contactStudent = await createConcurrentStudent(
+			"联系人并发学员",
+			tagInitial.id,
+		);
+		const contactUpdates = await Promise.allSettled([
+			updateStudentRecord({
+				...scope,
+				id: contactStudent.id,
+				expectedUpdatedAt: contactStudent.updatedAt,
+				data: {
+					name: contactStudent.name,
+					birthDate: contactStudent.birthDate,
+					status: contactStudent.status,
+					contacts: [
+						...contactStudent.contacts,
+						{
+							name: "并发新增联系人 A",
+							phone: "13900139001",
+							relationship: "父亲",
+							isPrimary: false,
+						},
+					],
+					tagIds: [tagInitial.id],
+				},
+			}),
+			updateStudentRecord({
+				...scope,
+				id: contactStudent.id,
+				expectedUpdatedAt: contactStudent.updatedAt,
+				data: {
+					name: contactStudent.name,
+					birthDate: contactStudent.birthDate,
+					status: contactStudent.status,
+					contacts: [
+						...contactStudent.contacts,
+						{
+							name: "并发新增联系人 B",
+							phone: "13900139002",
+							relationship: "父亲",
+							isPrimary: false,
+						},
+					],
+					tagIds: [tagInitial.id],
+				},
+			}),
+		]);
+		const contactWinner = contactUpdates.find(
+			(
+				result,
+			): result is PromiseFulfilledResult<
+				Awaited<ReturnType<typeof updateStudentRecord>>
+			> => result.status === "fulfilled",
+		);
+		const contactConflict = contactUpdates.find(
+			(result): result is PromiseRejectedResult => result.status === "rejected",
+		);
+		assert.equal(
+			contactUpdates.filter((result) => result.status === "fulfilled").length,
+			1,
+		);
+		assert.equal(
+			contactUpdates.filter((result) => result.status === "rejected").length,
+			1,
+		);
+		assert.ok(contactWinner);
+		assert.ok(contactConflict?.reason instanceof StudentRepositoryError);
+		assert.equal(contactConflict.reason.code, "STUDENT_VERSION_CONFLICT");
+		await assertWinnerPersisted(contactStudent.id, contactWinner.value);
+
+		const primaryStudent = await createConcurrentStudent(
+			"主要联系人并发学员",
+			tagInitial.id,
+		);
+		const originalPrimary = primaryStudent.contacts[0];
+		assert.ok(originalPrimary);
+		const primaryWinner = await updateStudentRecord({
+			...scope,
+			id: primaryStudent.id,
+			expectedUpdatedAt: primaryStudent.updatedAt,
+			data: {
+				name: primaryStudent.name,
+				birthDate: primaryStudent.birthDate,
+				status: primaryStudent.status,
+				contacts: [
+					{ ...originalPrimary, isPrimary: false },
+					{
+						name: "成功主要联系人",
+						phone: "13900139003",
+						relationship: "父亲",
+						isPrimary: true,
+					},
+				],
+				tagIds: [tagInitial.id],
+			},
+		});
+		await expectStudentError(
+			updateStudentRecord({
+				...scope,
+				id: primaryStudent.id,
+				expectedUpdatedAt: primaryStudent.updatedAt,
+				data: {
+					name: primaryStudent.name,
+					birthDate: primaryStudent.birthDate,
+					status: primaryStudent.status,
+					contacts: primaryStudent.contacts,
+					tagIds: [tagInitial.id],
+				},
+			}),
+			"STUDENT_VERSION_CONFLICT",
+		);
+		await assertWinnerPersisted(primaryStudent.id, primaryWinner);
+
+		const tagStudent = await createConcurrentStudent(
+			"标签并发学员",
+			tagInitial.id,
+		);
+		const tagWinnerResult = await updateStudentRecord({
+			...scope,
+			id: tagStudent.id,
+			expectedUpdatedAt: tagStudent.updatedAt,
+			data: {
+				name: tagStudent.name,
+				birthDate: tagStudent.birthDate,
+				status: tagStudent.status,
+				contacts: tagStudent.contacts,
+				tagIds: [tagWinner.id],
+			},
+		});
+		await expectStudentError(
+			updateStudentRecord({
+				...scope,
+				id: tagStudent.id,
+				expectedUpdatedAt: tagStudent.updatedAt,
+				data: {
+					name: tagStudent.name,
+					birthDate: tagStudent.birthDate,
+					status: tagStudent.status,
+					contacts: tagStudent.contacts,
+					tagIds: [tagLoser.id],
+				},
+			}),
+			"STUDENT_VERSION_CONFLICT",
+		);
+		await assertWinnerPersisted(tagStudent.id, tagWinnerResult);
+
+		const client = createSessionClient(
+			ids.managerUserId,
+			"学员测试管理员",
+			ids.organizationA,
+		);
+		await expectOrpcError(
+			client.training.students.update({
+				id: tagStudent.id,
+				expectedUpdatedAt: tagStudent.updatedAt.toISOString(),
+				data: {
+					name: tagStudent.name,
+					birthDate: tagStudent.birthDate,
+					status: "trial",
+					contacts: tagStudent.contacts,
+					tagIds: [tagLoser.id],
+				},
+			}),
+			"CONFLICT",
+			"STUDENT_VERSION_CONFLICT",
+		);
+		await assertWinnerPersisted(tagStudent.id, tagWinnerResult);
 	} finally {
 		await cleanupFixture(ids);
 	}

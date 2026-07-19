@@ -919,6 +919,7 @@ export const createStudentInputSchema = z.object({
 
 export const updateStudentInputSchema = z.object({
 	id: z.uuid(),
+	expectedUpdatedAt: z.iso.datetime({ offset: true }),
 	data: z.object({
 		name: z.string().trim().min(1).max(50),
 		birthDate: z.iso.date().nullable(),

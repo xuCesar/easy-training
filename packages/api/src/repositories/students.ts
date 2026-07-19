@@ -93,6 +93,11 @@ function throwStudentError(error: unknown): never {
 			throw new ORPCError("CONFLICT", {
 				message: "校区已停用，不能继续写入。",
 			});
+		case "STUDENT_VERSION_CONFLICT":
+			throw new ORPCError("CONFLICT", {
+				message: "该学员档案已被其他人更新，请刷新最新资料后重试。",
+				data: { reason: "STUDENT_VERSION_CONFLICT" },
+			});
 		case "CONTACT_INVARIANT":
 			throw new ORPCError("BAD_REQUEST", {
 				message: "请且仅保留一位主要联系人。",
@@ -168,6 +173,7 @@ export async function updateStudent(
 			await updateStudentRecord({
 				...scope,
 				id: input.id,
+				expectedUpdatedAt: new Date(input.expectedUpdatedAt),
 				data: { ...input.data, status: toDatabaseStatus(input.data.status) },
 			}),
 		);

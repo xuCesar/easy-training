@@ -526,12 +526,22 @@ function StudentEditor({
 	const detailQuery = useQuery({ ...detailOptions, enabled: isEditing });
 	const [values, setValues] = useState<StudentFormValues>(emptyStudentForm);
 	const [formError, setFormError] = useState<string | null>(null);
+	const [expectedUpdatedAt, setExpectedUpdatedAt] = useState<string | null>(
+		null,
+	);
+	const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
+	const [hasVersionConflict, setHasVersionConflict] = useState(false);
+	const [isRefreshingDetails, setIsRefreshingDetails] = useState(false);
 	const [graduationPayload, setGraduationPayload] = useState<
 		CreateStudentInput | UpdateStudentInput | null
 	>(null);
 	useEffect(() => {
-		if (detailQuery.data) setValues(toStudentForm(detailQuery.data));
-	}, [detailQuery.data]);
+		if (!hasInitializedDraft && detailQuery.data) {
+			setValues(toStudentForm(detailQuery.data));
+			setExpectedUpdatedAt(detailQuery.data.updatedAt);
+			setHasInitializedDraft(true);
+		}
+	}, [detailQuery.data, hasInitializedDraft]);
 	const createMutation = useMutation(
 		orpc.training.students.create.mutationOptions({
 			onSuccess: () => {
@@ -544,15 +554,26 @@ function StudentEditor({
 	);
 	const updateMutation = useMutation(
 		orpc.training.students.update.mutationOptions({
-			onSuccess: () => {
+			onSuccess: (updatedStudent) => {
+				queryClient.setQueryData(detailOptions.queryKey, updatedStudent);
 				toast.success("学员档案已更新");
 				void invalidateStudentQueries();
 				onClose();
 			},
-			onError: (error) => toast.error(`保存失败：${error.message}`),
+			onError: (error) => {
+				if (isConflictError(error)) {
+					setHasVersionConflict(true);
+					setFormError(
+						"当前资料已被其他人更新。请刷新最新资料后检查草稿，再次保存。",
+					);
+					return;
+				}
+				toast.error(`保存失败：${error.message}`);
+			},
 		}),
 	);
-	const pending = createMutation.isPending || updateMutation.isPending;
+	const pending =
+		createMutation.isPending || updateMutation.isPending || isRefreshingDetails;
 	const activeCampuses = campuses.filter((campus) => campus.isActive);
 	const availableTags = mergeTags(tags, detailQuery.data?.tags ?? []);
 
@@ -567,8 +588,13 @@ function StudentEditor({
 			})),
 		};
 		if (isEditing) {
+			if (!expectedUpdatedAt) {
+				setFormError("未能获取资料版本，请刷新页面后重试。");
+				return;
+			}
 			const parsed = updateStudentInputSchema.safeParse({
 				id: studentId,
+				expectedUpdatedAt,
 				data: omitCampus(normalized),
 			});
 			if (!parsed.success) {
@@ -599,13 +625,32 @@ function StudentEditor({
 		createMutation.mutate(parsed.data);
 	}
 
+	async function refreshLatestDetails() {
+		setIsRefreshingDetails(true);
+		try {
+			const result = await detailQuery.refetch();
+			if (result.isSuccess && result.data) {
+				setExpectedUpdatedAt(result.data.updatedAt);
+				setHasVersionConflict(false);
+				setFormError(null);
+				toast.success("已刷新最新资料版本，当前草稿未改动。");
+				return;
+			}
+			setFormError("无法刷新最新资料，请稍后重试。");
+		} finally {
+			setIsRefreshingDetails(false);
+		}
+	}
+
 	function confirmGraduation() {
 		if (!graduationPayload) return;
 		if ("id" in graduationPayload) updateMutation.mutate(graduationPayload);
 		else createMutation.mutate(graduationPayload);
 		setGraduationPayload(null);
 	}
-	const detailLoading = isEditing && detailQuery.isPending;
+	const detailLoading =
+		isEditing && detailQuery.isPending && !hasInitializedDraft;
+	const detailError = isEditing && detailQuery.isError && !hasInitializedDraft;
 	return (
 		<>
 			<Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
@@ -623,7 +668,7 @@ function StudentEditor({
 							<Skeleton className="h-10 w-full" />
 							<Skeleton className="h-32 w-full" />
 						</div>
-					) : detailQuery.isError ? (
+					) : detailError ? (
 						<div className="flex flex-col gap-3">
 							<p className="text-destructive text-sm">
 								无法加载学员详情：{detailQuery.error.message}
@@ -740,6 +785,30 @@ function StudentEditor({
 									setValues((current) => ({ ...current, tagIds }))
 								}
 							/>
+							{hasVersionConflict ? (
+								<div
+									className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/50 bg-destructive/5 p-3"
+									role="alert"
+								>
+									<p className="text-destructive text-sm">
+										资料已被其他人更新，当前填写内容已保留。
+									</p>
+									<Button
+										type="button"
+										variant="outline"
+										disabled={pending}
+										onClick={() => void refreshLatestDetails()}
+									>
+										{isRefreshingDetails ? (
+											<LoaderCircleIcon
+												className="animate-spin"
+												data-icon="inline-start"
+											/>
+										) : null}
+										刷新最新资料
+									</Button>
+								</div>
+							) : null}
 							{formError ? <FieldError match>{formError}</FieldError> : null}
 							<DialogFooter className="flex-col-reverse sm:flex-row">
 								<Button
@@ -952,8 +1021,8 @@ function TagSelector({
 	onChange: (ids: string[]) => void;
 }) {
 	return (
-		<Field>
-			<FieldLabel>运营标签</FieldLabel>
+		<fieldset className="m-0 grid min-w-0 gap-1.5 border-0 p-0">
+			<legend className="font-medium text-sm">运营标签</legend>
 			<div className="grid max-h-40 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">
 				{tags.length ? (
 					tags.map((tag) => {
@@ -962,7 +1031,7 @@ function TagSelector({
 							<label
 								key={tag.id}
 								htmlFor={`student-tag-${tag.id}`}
-								className="flex cursor-pointer items-center gap-2 text-sm"
+								className="flex w-fit cursor-pointer items-center gap-2 text-sm"
 							>
 								<Checkbox
 									id={`student-tag-${tag.id}`}
@@ -990,7 +1059,7 @@ function TagSelector({
 			<p className="mt-2 text-muted-foreground text-xs">
 				已停用标签会保留在历史档案中，不能新增分配。
 			</p>
-		</Field>
+		</fieldset>
 	);
 }
 
@@ -1198,6 +1267,19 @@ function mergeTags(tags: StudentTag[], assigned: StudentTag[]) {
 			(assignedTag) => !tags.some((tag) => tag.id === assignedTag.id),
 		),
 	];
+}
+function isConflictError(error: unknown) {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		error.code === "CONFLICT" &&
+		"data" in error &&
+		typeof error.data === "object" &&
+		error.data !== null &&
+		"reason" in error.data &&
+		error.data.reason === "STUDENT_VERSION_CONFLICT"
+	);
 }
 function formatDate(value: string) {
 	return new Intl.DateTimeFormat("zh-CN", {

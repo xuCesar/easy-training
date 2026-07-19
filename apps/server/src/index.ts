@@ -5,7 +5,7 @@ import { auth } from "@easy-training/auth";
 import { env } from "@easy-training/env/server";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
-import { onError } from "@orpc/server";
+import { ORPCError, onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -14,6 +14,11 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
 const app = new Hono();
+
+function logUnexpectedOrpcError(error: unknown) {
+	if (error instanceof ORPCError && error.status < 500) return;
+	console.error(error);
+}
 
 app.use(logger());
 app.use(
@@ -62,7 +67,7 @@ export const apiHandler = new OpenAPIHandler(appRouter, {
 	],
 	interceptors: [
 		onError((error) => {
-			console.error(error);
+			logUnexpectedOrpcError(error);
 		}),
 	],
 });
@@ -70,7 +75,7 @@ export const apiHandler = new OpenAPIHandler(appRouter, {
 export const rpcHandler = new RPCHandler(appRouter, {
 	interceptors: [
 		onError((error) => {
-			console.error(error);
+			logUnexpectedOrpcError(error);
 		}),
 	],
 });

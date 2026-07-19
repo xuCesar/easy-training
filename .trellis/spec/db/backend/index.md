@@ -11,3 +11,4 @@
 - 涉及多校区、成员范围和邀请时，加载 [机构管理契约](organization-management.md)。
 - 涉及课程、教师、班级和课次时，加载 [教务主数据与排课契约](teaching.md)。
 - 涉及续费、转课、退款或欠费跟进时，加载 [报名与财务变更契约](finance-adjustments.md)。
+- 涉及学员档案、联系人、标签或 guardian 兼容字段写入时，加载 [学员档案并发更新契约](student-profile.md)。
