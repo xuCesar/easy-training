@@ -5,3 +5,4 @@
 - 业务契约、权限和数据访问分别留在 `packages/api` 与 `packages/db`；不要在 Hono 入口新增业务 repository 或复制 router 逻辑。
 - 带 Cookie 的写请求必须继续校验 `Origin === env.CORS_ORIGIN`；新增入口时保持请求体限制和凭据 CORS 语义。
 - 服务端错误日志不得包含 Cookie、Token、密码、数据库连接串或完整隐私请求体。
+- 新增健康检查、请求关联或结构化日志时遵循 [可观测性契约](./observability.md)。

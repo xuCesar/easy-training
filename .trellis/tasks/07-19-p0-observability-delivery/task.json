@@ -3,7 +3,7 @@
   "name": "p0-observability-delivery",
   "title": "P0 可观测性与交付保障",
   "description": "建立结构化日志、请求关联、CI、迁移检查和可演练的恢复回滚文档。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",

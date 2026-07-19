@@ -1,19 +1,33 @@
 # P0 可观测性与交付保障
 
-## Goal
+## 目标
 
-建立结构化日志、请求关联、CI、迁移检查和可演练的恢复回滚文档。
+让服务端请求和故障可按请求关联定位，并让干净 checkout 能执行迁移、静态检查、集成测试与构建；同时提供不依赖未提供生产凭据的数据库恢复与应用回滚手册。
 
-## Requirements
+## 已确认事实
 
-- TBD
+- `apps/server/src/app.ts` 当前使用 Hono 文本 logger 与未结构化的 `console.error`，没有请求关联 ID 或 readiness endpoint。
+- 根目录没有 GitHub Actions 工作流；数据库包已提供 `db:migrate`，其 Turbo 任务为 persistent，因此 CI 必须直接调用 package script。
+- `README.md` 的本地初始化仍使用 `db:push`，没有生产迁移、备份、恢复验证或回滚说明。
+- 外部日志/告警平台、备份存储、RPO/RTO、隔离恢复环境、部署凭据和分支保护规则均未配置，不能把它们表述为已交付的保障。
 
-## Acceptance Criteria
+## 需求
 
-- [ ] TBD
+- 服务端为每个请求生成或校验 `X-Request-Id`，在响应回显，并为访问和未预期异常输出不含敏感请求体的 JSON 结构化事件。
+- 新增 `/readyz`：数据库可连接时返回 200，失败时返回 503；保留 `/` 的 liveness 语义。
+- 新增 GitHub Actions CI：冻结安装、迁移、类型检查、Biome、集成测试和构建；迁移步骤不得使用 `db:push`。
+- README 区分本地 schema 初始化与生产迁移，记录发布前置条件、备份、隔离恢复验证和应用回滚的可执行步骤与外部依赖。
+- 不新增日志依赖、不记录请求体、认证信息或其他敏感值，不实际操作外部备份或部署系统。
 
-## Notes
+## 验收标准
 
-- Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
-- Lightweight tasks can remain PRD-only.
-- For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
+- [x] 请求 ID 会生成/回显，合法客户端 ID 可复用，非法 ID 被替换；访问和异常事件可按 ID 关联。
+- [x] `/readyz` 对数据库成功/失败分别返回 200/503，且不改变 `/` 的 liveness 行为。
+- [x] CI 在干净 checkout 以冻结安装、直接迁移、类型、规范、集成测试、构建顺序执行，未使用 `db:push`。
+- [x] README 可指导具备生产环境权限的操作者完成迁移、备份、隔离恢复验证和应用回滚，并显式列出外部前置条件。
+- [x] 服务端测试及全仓 `check`、`check-types`、`test:integration`、`build` 通过。
+
+## 范围外
+
+- 接入第三方日志、告警、备份存储或云部署平台。
+- 声称完成真实生产备份、恢复演练或分支保护配置。
