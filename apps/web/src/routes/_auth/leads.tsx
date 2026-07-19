@@ -2,6 +2,9 @@ import {
 	addLeadFollowUpInputSchema,
 	type CreateLeadInput,
 	createLeadInputSchema,
+	getLeadImportRpcBodyBytes,
+	LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE,
+	LEAD_IMPORT_RPC_BODY_LIMIT_BYTES,
 	type LeadActivityRecord,
 	type LeadListResult,
 	type LeadRecord,
@@ -281,21 +284,49 @@ function LeadsRoute() {
 	}
 
 	function replaceImportFile(content: string) {
+		const nextRequestId = crypto.randomUUID();
+		if (
+			getLeadImportRpcBodyBytes({ content, campusId: importCampusId }) >
+				LEAD_IMPORT_RPC_BODY_LIMIT_BYTES ||
+			getLeadImportRpcBodyBytes({
+				content,
+				campusId: importCampusId,
+				requestId: nextRequestId,
+			}) > LEAD_IMPORT_RPC_BODY_LIMIT_BYTES
+		) {
+			toast.error(LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE);
+			return;
+		}
 		setImportContent(content);
-		setImportRequestId(crypto.randomUUID());
+		setImportRequestId(nextRequestId);
 		setImportPreview(null);
 		previewImportMutation.reset();
 		requestImportPreview(content, importCampusId);
 	}
 
 	function changeImportCampus(nextCampusId: string | null) {
-		setImportCampusId(nextCampusId);
 		if (importContent) {
-			setImportRequestId(crypto.randomUUID());
+			const nextRequestId = crypto.randomUUID();
+			if (
+				getLeadImportRpcBodyBytes({
+					content: importContent,
+					campusId: nextCampusId,
+				}) > LEAD_IMPORT_RPC_BODY_LIMIT_BYTES ||
+				getLeadImportRpcBodyBytes({
+					content: importContent,
+					campusId: nextCampusId,
+					requestId: nextRequestId,
+				}) > LEAD_IMPORT_RPC_BODY_LIMIT_BYTES
+			) {
+				toast.error(LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE);
+				return;
+			}
+			setImportRequestId(nextRequestId);
 			setImportPreview(null);
 			previewImportMutation.reset();
 			requestImportPreview(importContent, nextCampusId);
 		}
+		setImportCampusId(nextCampusId);
 	}
 
 	function requestImportPreview(
@@ -520,10 +551,7 @@ function LeadsRoute() {
 						}
 						onChange={(event) => {
 							const file = event.target.files?.[0];
-							if (!file || file.size > 500_000) {
-								if (file) toast.error("文件不能超过 500KB");
-								return;
-							}
+							if (!file) return;
 							const reader = new FileReader();
 							reader.onload = () => {
 								if (typeof reader.result !== "string") return;

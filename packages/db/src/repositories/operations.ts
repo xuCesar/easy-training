@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import {
@@ -253,13 +254,14 @@ export async function recordLeadExport(input: {
 	);
 }
 
-const MAX_IMPORT_CONTENT_LENGTH = 500_000;
+// 仓储调用可绕过 RPC schema；该内容防线独立于 envelope 上限，且更宽松。
+const MAX_IMPORT_CONTENT_BYTES = 500_000;
 const MAX_IMPORT_ROWS = 1_000;
 
 type CsvRow = { cells: string[]; row: number };
 
 function parseCsv(content: string): CsvRow[] {
-	if (content.length > MAX_IMPORT_CONTENT_LENGTH) {
+	if (Buffer.byteLength(content, "utf8") > MAX_IMPORT_CONTENT_BYTES) {
 		throw new OperationsRepositoryError("IMPORT_LIMIT_EXCEEDED");
 	}
 

@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { and, eq, inArray } from "drizzle-orm";
 import { createRouterClient } from "../../api/node_modules/@orpc/server/dist/index.mjs";
 import type { Context } from "../../api/src/context";
+import {
+	confirmLeadImportInputSchema,
+	getLeadImportRpcBodyBytes,
+	LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE,
+	LEAD_IMPORT_RPC_BODY_LIMIT_BYTES,
+	previewLeadImportInputSchema,
+} from "../../api/src/contracts/training";
 import { appRouter } from "../../api/src/routers";
 import { db } from "../src";
+import {
+	OperationsRepositoryError,
+	previewLeadImport,
+} from "../src/repositories/operations";
 import {
 	campus,
 	course,
@@ -217,6 +229,110 @@ async function seedFixture(ids: FixtureIds) {
 
 const newCsvHeader =
 	"姓名,手机号,意向课程编码,来源,负责人邮箱,跟进状态,备注,校区编码";
+
+function contentAtRpcBodyLimit(input: Record<string, unknown>): string {
+	const emptyContentBytes = getLeadImportRpcBodyBytes({
+		...input,
+		content: "",
+	});
+	return "a".repeat(LEAD_IMPORT_RPC_BODY_LIMIT_BYTES - emptyContentBytes);
+}
+
+function assertLeadImportBodySize(
+	schema:
+		| typeof previewLeadImportInputSchema
+		| typeof confirmLeadImportInputSchema,
+	input: Record<string, unknown>,
+) {
+	const result = schema.safeParse(input);
+	assert.equal(result.success, false);
+	if (result.success) return;
+	assert.deepEqual(result.error.issues, [
+		{
+			code: "custom",
+			path: ["content"],
+			message: LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE,
+		},
+	]);
+}
+
+test("导入契约按 oRPC UTF-8 envelope 字节计算 preview 和 confirm 上限", () => {
+	const previewBase = { defaultCampusId: null };
+	const previewContent = contentAtRpcBodyLimit(previewBase);
+	const previewInput = { ...previewBase, content: previewContent };
+	assert.equal(
+		getLeadImportRpcBodyBytes(previewInput),
+		LEAD_IMPORT_RPC_BODY_LIMIT_BYTES,
+	);
+	assert.equal(
+		previewLeadImportInputSchema.safeParse(previewInput).success,
+		true,
+	);
+	assertLeadImportBodySize(previewLeadImportInputSchema, {
+		...previewBase,
+		content: `${previewContent}a`,
+	});
+
+	const confirmBase = { requestId: randomUUID(), defaultCampusId: null };
+	const confirmContent = contentAtRpcBodyLimit(confirmBase);
+	const confirmInput = { ...confirmBase, content: confirmContent };
+	assert.equal(
+		getLeadImportRpcBodyBytes(confirmInput),
+		LEAD_IMPORT_RPC_BODY_LIMIT_BYTES,
+	);
+	assert.equal(
+		confirmLeadImportInputSchema.safeParse(confirmInput).success,
+		true,
+	);
+	assertLeadImportBodySize(confirmLeadImportInputSchema, {
+		...confirmBase,
+		content: `${confirmContent}a`,
+	});
+
+	const escapedUnicodeInput = {
+		content: '姓名,"中文\\\\路径"\n李雷,13800000001,\\"来源\\"',
+	};
+	assert.equal(
+		getLeadImportRpcBodyBytes(escapedUnicodeInput),
+		Buffer.byteLength(JSON.stringify({ json: escapedUnicodeInput }), "utf8"),
+	);
+	assert.ok(
+		getLeadImportRpcBodyBytes(escapedUnicodeInput) >
+			escapedUnicodeInput.content.length,
+	);
+});
+
+test("仓储 CSV 防线按 UTF-8 字节而非 JavaScript 字符数拒绝超限内容", async () => {
+	const withinByteLimit = `${"中".repeat(166_666)}ab`;
+	assert.equal(Buffer.byteLength(withinByteLimit, "utf8"), 500_000);
+	await assert.rejects(
+		previewLeadImport({
+			organizationId: randomUUID(),
+			userId: randomUUID(),
+			campusAccess: { kind: "all" },
+			defaultCampusId: null,
+			content: withinByteLimit,
+		}),
+		(error: unknown) =>
+			error instanceof OperationsRepositoryError &&
+			error.code === "IMPORT_INVALID_CSV",
+	);
+
+	const exceedsByteLimit = `${"中".repeat(166_666)}abc`;
+	assert.equal(Buffer.byteLength(exceedsByteLimit, "utf8"), 500_001);
+	await assert.rejects(
+		previewLeadImport({
+			organizationId: randomUUID(),
+			userId: randomUUID(),
+			campusAccess: { kind: "all" },
+			defaultCampusId: null,
+			content: exceedsByteLimit,
+		}),
+		(error: unknown) =>
+			error instanceof OperationsRepositoryError &&
+			error.code === "IMPORT_LIMIT_EXCEEDED",
+	);
+});
 
 test("八列 CSV 解析关联项，旧 CSV 使用默认校区并逐行报告无效课程和校区", async () => {
 	const ids = createFixtureIds();

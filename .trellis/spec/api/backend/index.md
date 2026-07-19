@@ -6,3 +6,4 @@
 - router 向 repository 显式传入服务端解析的 `organizationId`、`userId` 和必要角色，不从业务 input 接受租户边界。
 - 修改契约时同步检查 `AppRouterClient`、Web query/mutation、OpenAPI 输出和相关集成测试。
 - 参数错误、未认证、无权限、资源不存在、业务冲突和系统错误保持不同语义，不向客户端泄露内部错误。
+- 涉及 oRPC body limit、上传或大文本输入时，加载 [RPC 请求大小契约](request-size-contracts.md)，按实际 transport envelope 的 UTF-8 字节而不是文件大小或字符数校验。
