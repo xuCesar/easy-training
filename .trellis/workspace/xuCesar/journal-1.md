@@ -211,3 +211,38 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: P0 CSV request contract
+
+**Date**: 2026-07-19
+**Task**: P0 CSV request contract
+**Package**: server
+**Branch**: `codex/p0-csv-request-contract`
+
+### Summary
+
+统一 CSV 导入的 UTF-8 oRPC envelope 边界，补真实 HTTP 413 回归；完成 P0 状态、审计、邀请和交付子任务的规划与只读调研。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2027c2c` | (see git log) |
+| `6f14c1e` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

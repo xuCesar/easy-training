@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-07-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~213 | Active |
+| `journal-1.md` | ~248 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-07-19 | P0 CSV request contract | `2027c2c`, `6f14c1e` | `codex/p0-csv-request-contract` |
 | 6 | 2026-07-19 | 学员档案并发保护收尾 | `9522e34` | `develop` |
 | 5 | 2026-07-19 | Complete P1 operations platform | `5969402` | `develop` |
 | 4 | 2026-07-19 | 完成 P1 报名财务变更能力 | `4bf90ce` | `develop` |
