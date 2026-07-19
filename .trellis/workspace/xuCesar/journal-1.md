@@ -246,3 +246,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: P0 教务状态边界
+
+**Date**: 2026-07-19
+**Task**: P0 教务状态边界
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+收紧班级状态图和 active 报名边界，补齐报名转化容量口径与回归测试。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `73afc74` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
