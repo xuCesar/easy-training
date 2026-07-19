@@ -437,9 +437,35 @@ export const markNotificationsReadResultSchema = z.object({
 	count: z.number().int().nonnegative(),
 });
 
-export const previewLeadImportInputSchema = z.object({
-	content: z.string().max(500_000),
+const leadImportCampusInputSchema = z.object({
+	// campusId 保留给已发布的导入界面；新调用方使用语义更明确的 defaultCampusId。
+	campusId: nullableUuidSchema.optional(),
+	defaultCampusId: nullableUuidSchema.optional(),
 });
+
+function validateLeadImportDefaultCampus(
+	input: z.infer<typeof leadImportCampusInputSchema>,
+	context: z.RefinementCtx,
+) {
+	if (
+		input.campusId !== undefined &&
+		input.defaultCampusId !== undefined &&
+		input.campusId !== input.defaultCampusId
+	) {
+		context.addIssue({
+			code: "custom",
+			path: ["defaultCampusId"],
+			message: "默认校区参数不一致。",
+		});
+	}
+}
+
+export const previewLeadImportInputSchema = z
+	.object({
+		content: z.string().max(500_000),
+	})
+	.merge(leadImportCampusInputSchema)
+	.superRefine(validateLeadImportDefaultCampus);
 export const previewLeadImportResultSchema = z.object({
 	totalRows: z.number().int().nonnegative(),
 	validRows: z.number().int().nonnegative(),
@@ -447,11 +473,13 @@ export const previewLeadImportResultSchema = z.object({
 		z.object({ row: z.number().int().positive(), message: z.string() }),
 	),
 });
-export const confirmLeadImportInputSchema = z.object({
-	requestId: z.uuid(),
-	campusId: z.uuid().nullable(),
-	content: z.string().max(500_000),
-});
+export const confirmLeadImportInputSchema = z
+	.object({
+		requestId: z.uuid(),
+		content: z.string().max(500_000),
+	})
+	.merge(leadImportCampusInputSchema)
+	.superRefine(validateLeadImportDefaultCampus);
 export const confirmLeadImportResultSchema = z.object({
 	batchId: z.uuid(),
 	importedRows: z.number().int().nonnegative(),

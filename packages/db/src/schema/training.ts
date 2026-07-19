@@ -643,6 +643,8 @@ export const leadImportBatch = pgTable(
 			.notNull()
 			.references(() => organization.id, { onDelete: "cascade" }),
 		requestId: uuid("request_id").notNull(),
+		// 旧批次没有输入哈希；新导入用它识别同一 requestId 的内容冲突。
+		inputHash: text("input_hash"),
 		createdByUserId: text("created_by_user_id")
 			.notNull()
 			.references(() => user.id),

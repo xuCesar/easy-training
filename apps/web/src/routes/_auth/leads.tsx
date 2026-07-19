@@ -69,6 +69,7 @@ import {
 	type SetStateAction,
 	useDeferredValue,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { toast } from "sonner";
@@ -96,6 +97,22 @@ type FollowUpValues = {
 };
 type LeadFormErrors = Partial<Record<keyof LeadFormValues, string>>;
 type FollowUpErrors = Partial<Record<keyof FollowUpValues, string>>;
+type LeadImportPreview = {
+	totalRows: number;
+	validRows: number;
+	errors: Array<{ row: number; message: string }>;
+};
+
+const leadImportHeaders = [
+	"姓名",
+	"手机号",
+	"意向课程编码",
+	"来源",
+	"负责人邮箱",
+	"跟进状态",
+	"备注",
+	"校区编码",
+] as const;
 
 const stageOptions: Array<{ value: LeadFilterStage; label: string }> = [
 	{ value: "all", label: "全部阶段" },
@@ -132,12 +149,12 @@ function LeadsRoute() {
 	const [conversionLead, setConversionLead] = useState<LeadRecord | null>(null);
 	const [importOpen, setImportOpen] = useState(false);
 	const [importContent, setImportContent] = useState<string | null>(null);
+	const [importCampusId, setImportCampusId] = useState<string | null>(null);
 	const [importRequestId, setImportRequestId] = useState<string | null>(null);
-	const [importPreview, setImportPreview] = useState<{
-		totalRows: number;
-		validRows: number;
-		errors: Array<{ row: number; message: string }>;
-	} | null>(null);
+	const [importPreview, setImportPreview] = useState<LeadImportPreview | null>(
+		null,
+	);
+	const importPreviewVersion = useRef(0);
 	const deferredSearch = useDeferredValue(search.trim());
 	const filterOptions = useQuery({
 		...orpc.training.leads.filterOptions.queryOptions(),
@@ -185,19 +202,26 @@ function LeadsRoute() {
 		}),
 	);
 	const previewImportMutation = useMutation(
-		orpc.training.leads.import.preview.mutationOptions({
-			onSuccess: setImportPreview,
-			onError: () => toast.error("无法解析 CSV，请确认模板格式。"),
-		}),
+		orpc.training.leads.import.preview.mutationOptions(),
 	);
 	const confirmImportMutation = useMutation(
 		orpc.training.leads.import.confirm.mutationOptions({
 			onSuccess: async (result) => {
-				toast.success(`已导入 ${result.importedRows} 条线索`);
-				setImportOpen(false);
-				setImportContent(null);
-				setImportRequestId(null);
-				setImportPreview(null);
+				if (result.errorRows > 0) {
+					setImportPreview((current) => ({
+						totalRows:
+							current?.totalRows ?? result.importedRows + result.errorRows,
+						validRows: result.importedRows,
+						errors: result.errors,
+					}));
+					setImportRequestId(null);
+					toast.error(
+						`已导入 ${result.importedRows} 条线索，${result.errorRows} 行未导入。`,
+					);
+				} else {
+					toast.success(`已导入 ${result.importedRows} 条线索`);
+					resetImport();
+				}
 				await queryClient.invalidateQueries({
 					queryKey: ["training-leads", organization.id],
 				});
@@ -230,8 +254,7 @@ function LeadsRoute() {
 	}
 
 	function downloadImportTemplate() {
-		const csv =
-			'\uFEFF"姓名","手机号","来源","跟进状态","备注"\n"张同学","13800138000","线上咨询","new","可选备注"';
+		const csv = `\uFEFF${leadImportHeaders.map((header) => `"${header}"`).join(",")}\n`;
 		const url = URL.createObjectURL(
 			new Blob([csv], { type: "text/csv;charset=utf-8" }),
 		);
@@ -240,6 +263,62 @@ function LeadsRoute() {
 		anchor.download = "招生线索导入模板.csv";
 		anchor.click();
 		URL.revokeObjectURL(url);
+	}
+
+	function resetImport() {
+		importPreviewVersion.current += 1;
+		setImportOpen(false);
+		setImportContent(null);
+		setImportCampusId(null);
+		setImportRequestId(null);
+		setImportPreview(null);
+		previewImportMutation.reset();
+	}
+
+	function openImportDialog() {
+		setImportCampusId(campusId ?? filterOptions.data?.campuses[0]?.id ?? null);
+		setImportOpen(true);
+	}
+
+	function replaceImportFile(content: string) {
+		setImportContent(content);
+		setImportRequestId(crypto.randomUUID());
+		setImportPreview(null);
+		previewImportMutation.reset();
+		requestImportPreview(content, importCampusId);
+	}
+
+	function changeImportCampus(nextCampusId: string | null) {
+		setImportCampusId(nextCampusId);
+		if (importContent) {
+			setImportRequestId(crypto.randomUUID());
+			setImportPreview(null);
+			previewImportMutation.reset();
+			requestImportPreview(importContent, nextCampusId);
+		}
+	}
+
+	function requestImportPreview(
+		content: string,
+		selectedCampusId: string | null,
+	) {
+		const version = importPreviewVersion.current + 1;
+		importPreviewVersion.current = version;
+		previewImportMutation.mutate(
+			{ content, campusId: selectedCampusId },
+			{
+				onSuccess: (preview) => {
+					if (importPreviewVersion.current === version) {
+						setImportPreview(preview);
+					}
+				},
+				onError: () => {
+					if (importPreviewVersion.current === version) {
+						toast.error("无法解析 CSV，请确认模板格式。");
+					}
+				},
+			},
+		);
 	}
 
 	return (
@@ -257,7 +336,7 @@ function LeadsRoute() {
 						<DownloadIcon data-icon="inline-start" />
 						下载模板
 					</Button>
-					<Button variant="outline" onClick={() => setImportOpen(true)}>
+					<Button variant="outline" onClick={openImportDialog}>
 						<UploadIcon data-icon="inline-start" />
 						导入
 					</Button>
@@ -386,21 +465,53 @@ function LeadsRoute() {
 			<Dialog
 				open={importOpen}
 				onOpenChange={(open) => {
-					setImportOpen(open);
-					if (!open) {
-						setImportContent(null);
-						setImportRequestId(null);
-						setImportPreview(null);
-					}
+					if (!open) resetImport();
+					else setImportOpen(true);
 				}}
 			>
 				<DialogContent>
 					<DialogHeader>
 						<DialogTitle>导入招生线索</DialogTitle>
 						<DialogDescription>
-							CSV 首行需包含：姓名、手机号、来源；可选：跟进状态、备注。
+							CSV
+							首行至少包含姓名、手机号、来源。模板另提供意向课程编码、负责人邮箱、
+							跟进状态、备注和校区编码；跟进状态使用 new、contacted 或
+							trialBooked。
 						</DialogDescription>
 					</DialogHeader>
+					<Field name="import-campus">
+						<FieldLabel htmlFor="import-campus">默认校区</FieldLabel>
+						<Select
+							value={importCampusId ?? "none"}
+							onValueChange={(value) =>
+								changeImportCampus(value === "none" ? null : value)
+							}
+							disabled={confirmImportMutation.isPending}
+						>
+							<SelectTrigger id="import-campus">
+								<SelectValue>
+									{() =>
+										filterOptions.data?.campuses.find(
+											(campus) => campus.id === importCampusId,
+										)?.name ?? "不设置默认校区"
+									}
+								</SelectValue>
+							</SelectTrigger>
+							<SelectContent>
+								<SelectGroup>
+									<SelectItem value="none">不设置默认校区</SelectItem>
+									{(filterOptions.data?.campuses ?? []).map((campus) => (
+										<SelectItem key={campus.id} value={campus.id}>
+											{campus.name}
+										</SelectItem>
+									))}
+								</SelectGroup>
+							</SelectContent>
+						</Select>
+						<p className="text-muted-foreground text-xs">
+							行内“校区编码”优先；该字段为空时使用此默认校区。更改默认校区会重新预览。
+						</p>
+					</Field>
 					<Input
 						type="file"
 						accept=".csv,text/csv"
@@ -416,24 +527,36 @@ function LeadsRoute() {
 							const reader = new FileReader();
 							reader.onload = () => {
 								if (typeof reader.result !== "string") return;
-								setImportContent(reader.result);
-								setImportRequestId(crypto.randomUUID());
-								previewImportMutation.mutate({ content: reader.result });
+								replaceImportFile(reader.result);
 							};
 							reader.readAsText(file);
 						}}
 					/>
 					{importPreview ? (
-						<p className="text-sm">
-							共 {importPreview.totalRows} 行，其中 {importPreview.validRows}{" "}
-							行可导入。
-							{importPreview.errors.length
-								? ` ${importPreview.errors.length} 行校验失败。`
-								: ""}
-						</p>
+						<div className="flex flex-col gap-2 text-sm">
+							<p>
+								共 {importPreview.totalRows} 行，其中 {importPreview.validRows}{" "}
+								行可导入。
+								{importPreview.errors.length
+									? ` ${importPreview.errors.length} 行校验失败。`
+									: ""}
+							</p>
+							{importPreview.errors.length ? (
+								<ul
+									className="max-h-40 overflow-y-auto rounded-md border p-3 text-destructive text-xs"
+									aria-live="polite"
+								>
+									{importPreview.errors.map((error) => (
+										<li key={`${error.row}-${error.message}`}>
+											第 {error.row} 行：{error.message}
+										</li>
+									))}
+								</ul>
+							) : null}
+						</div>
 					) : null}
 					<DialogFooter>
-						<Button variant="outline" onClick={() => setImportOpen(false)}>
+						<Button variant="outline" onClick={resetImport}>
 							取消
 						</Button>
 						<Button
@@ -448,7 +571,7 @@ function LeadsRoute() {
 								importRequestId &&
 								confirmImportMutation.mutate({
 									content: importContent,
-									campusId,
+									campusId: importCampusId,
 									requestId: importRequestId,
 								})
 							}

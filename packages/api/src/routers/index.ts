@@ -773,7 +773,16 @@ export const appRouter = {
 				preview: leadProcedure
 					.input(previewLeadImportInputSchema)
 					.output(previewLeadImportResultSchema)
-					.handler(({ input }) => previewLeadImport(input)),
+					.handler(({ context, input }) =>
+						previewLeadImport(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
 				confirm: leadProcedure
 					.input(confirmLeadImportInputSchema)
 					.output(confirmLeadImportResultSchema)

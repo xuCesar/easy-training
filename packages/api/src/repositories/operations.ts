@@ -39,6 +39,20 @@ function throwOperationsError(error: unknown): never {
 				});
 			case "IMPORT_INVALID_CSV":
 				throw new ORPCError("BAD_REQUEST", { message: "CSV 模板或内容无效。" });
+			case "IMPORT_LIMIT_EXCEEDED":
+				throw new ORPCError("BAD_REQUEST", {
+					message: "CSV 文件或行数超过导入限制。",
+				});
+			case "IMPORT_DEFAULT_CAMPUS_INVALID":
+				throw new ORPCError("BAD_REQUEST", { message: "默认校区不可用。" });
+			case "IMPORT_IDEMPOTENCY_CONFLICT":
+				throw new ORPCError("CONFLICT", {
+					message: "该请求 ID 已用于不同的导入内容。",
+				});
+			case "MEMBER_FORBIDDEN":
+				throw new ORPCError("FORBIDDEN", {
+					message: "当前账号无权导入招生线索。",
+				});
 			case "AUDIT_FORBIDDEN":
 				throw new ORPCError("FORBIDDEN", {
 					message: "当前账号无权查看操作审计。",
@@ -129,10 +143,17 @@ export async function readAllNotifications(scope: OperationsScope) {
 }
 
 export async function previewLeadImport(
+	scope: OperationsScope,
 	input: PreviewLeadImportInput,
 ): Promise<PreviewLeadImportResult> {
 	try {
-		const result = previewLeadImportRecord(input.content);
+		const result = await previewLeadImportRecord({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			campusAccess: scope.campusAccess,
+			defaultCampusId: input.defaultCampusId ?? input.campusId ?? null,
+			content: input.content,
+		});
 		return {
 			totalRows: result.rows.length + result.errors.length,
 			validRows: result.rows.length,
@@ -148,7 +169,12 @@ export async function confirmLeadImport(
 	input: ConfirmLeadImportInput,
 ): Promise<ConfirmLeadImportResult> {
 	try {
-		return await confirmLeadImportRecord({ ...scope, ...input });
+		return await confirmLeadImportRecord({
+			...scope,
+			requestId: input.requestId,
+			defaultCampusId: input.defaultCampusId ?? input.campusId ?? null,
+			content: input.content,
+		});
 	} catch (error) {
 		return throwOperationsError(error);
 	}

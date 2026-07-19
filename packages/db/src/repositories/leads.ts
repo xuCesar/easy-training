@@ -82,6 +82,8 @@ export type LeadActivityRow = {
 export type CreateLeadRecordInput = {
 	organizationId: string;
 	ownerUserId: string;
+	/** 未指定时保持旧接口语义：负责人同时是活动操作者。 */
+	operatorUserId?: string;
 	campusAccess: CampusAccess;
 	requestId: string;
 	name: string;
@@ -475,78 +477,86 @@ export async function courseExistsInOrganization(input: {
 	return Boolean(row);
 }
 
+export async function createLeadRecordInTransaction(
+	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+	input: CreateLeadRecordInput,
+): Promise<{ id: string; replayed: boolean }> {
+	await assertWritableCampus(tx, input);
+	const [existing] = await tx
+		.select({
+			id: lead.id,
+			name: lead.name,
+			phone: lead.phone,
+			source: lead.source,
+			stage: lead.stage,
+			campusId: lead.campusId,
+			interestedCourseId: lead.interestedCourseId,
+			nextFollowAt: lead.nextFollowAt,
+			note: lead.note,
+		})
+		.from(lead)
+		.where(
+			and(
+				eq(lead.organizationId, input.organizationId),
+				eq(lead.requestId, input.requestId),
+			),
+		)
+		.limit(1);
+
+	if (existing) {
+		if (!leadPayloadMatches(existing, input)) {
+			throw new LeadRepositoryError("IDEMPOTENCY_CONFLICT");
+		}
+		return { id: existing.id, replayed: true };
+	}
+
+	const operatorUserId = input.operatorUserId ?? input.ownerUserId;
+	const [operator] = await tx
+		.select({ name: user.name })
+		.from(user)
+		.where(eq(user.id, operatorUserId))
+		.limit(1);
+	if (!operator) throw new Error("Lead operator was not found.");
+
+	const [created] = await tx
+		.insert(lead)
+		.values({
+			organizationId: input.organizationId,
+			campusId: input.campusId,
+			interestedCourseId: input.interestedCourseId,
+			ownerUserId: input.ownerUserId,
+			name: input.name,
+			phone: input.phone,
+			source: input.source,
+			stage: stageToDatabase[input.stage],
+			nextFollowAt: input.nextFollowAt,
+			note: input.note,
+			requestId: input.requestId,
+		})
+		.returning({ id: lead.id });
+	if (!created) throw new Error("Lead creation did not return a record.");
+
+	await tx.insert(leadActivity).values({
+		organizationId: input.organizationId,
+		leadId: created.id,
+		type: "created",
+		content: input.note || "创建线索",
+		stage: stageToDatabase[input.stage],
+		nextFollowAt: input.nextFollowAt,
+		operatorUserId,
+		operatorName: operator.name,
+	});
+
+	return { id: created.id, replayed: false };
+}
+
 export async function createLeadRecord(
 	input: CreateLeadRecordInput,
 ): Promise<{ lead: LeadRecordRow; replayed: boolean }> {
 	try {
-		const result = await db.transaction(async (tx) => {
-			await assertWritableCampus(tx, input);
-			const [existing] = await tx
-				.select({
-					id: lead.id,
-					name: lead.name,
-					phone: lead.phone,
-					source: lead.source,
-					stage: lead.stage,
-					campusId: lead.campusId,
-					interestedCourseId: lead.interestedCourseId,
-					nextFollowAt: lead.nextFollowAt,
-					note: lead.note,
-				})
-				.from(lead)
-				.where(
-					and(
-						eq(lead.organizationId, input.organizationId),
-						eq(lead.requestId, input.requestId),
-					),
-				)
-				.limit(1);
-
-			if (existing) {
-				if (!leadPayloadMatches(existing, input)) {
-					throw new LeadRepositoryError("IDEMPOTENCY_CONFLICT");
-				}
-				return { id: existing.id, replayed: true };
-			}
-
-			const [operator] = await tx
-				.select({ name: user.name })
-				.from(user)
-				.where(eq(user.id, input.ownerUserId))
-				.limit(1);
-			if (!operator) throw new Error("Lead creator was not found.");
-
-			const [created] = await tx
-				.insert(lead)
-				.values({
-					organizationId: input.organizationId,
-					campusId: input.campusId,
-					interestedCourseId: input.interestedCourseId,
-					ownerUserId: input.ownerUserId,
-					name: input.name,
-					phone: input.phone,
-					source: input.source,
-					stage: stageToDatabase[input.stage],
-					nextFollowAt: input.nextFollowAt,
-					note: input.note,
-					requestId: input.requestId,
-				})
-				.returning({ id: lead.id });
-			if (!created) throw new Error("Lead creation did not return a record.");
-
-			await tx.insert(leadActivity).values({
-				organizationId: input.organizationId,
-				leadId: created.id,
-				type: "created",
-				content: input.note || "创建线索",
-				stage: stageToDatabase[input.stage],
-				nextFollowAt: input.nextFollowAt,
-				operatorUserId: input.ownerUserId,
-				operatorName: operator.name,
-			});
-
-			return { id: created.id, replayed: false };
-		});
+		const result = await db.transaction((tx) =>
+			createLeadRecordInTransaction(tx, input),
+		);
 
 		const created = await getLeadRecord({
 			organizationId: input.organizationId,

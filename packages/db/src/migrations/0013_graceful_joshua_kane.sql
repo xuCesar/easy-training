@@ -1,0 +1,1 @@
+ALTER TABLE "lead_import_batch" ADD COLUMN "input_hash" text;
