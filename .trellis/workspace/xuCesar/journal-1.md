@@ -280,3 +280,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: P0 关键业务审计追溯
+
+**Date**: 2026-07-19
+**Task**: P0 关键业务审计追溯
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+为收款、退款、续费、转课和课次结课补齐事务内审计，完善审计契约、迁移与关键回归。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3c5c372` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
