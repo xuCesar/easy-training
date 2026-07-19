@@ -1,0 +1,32 @@
+{
+  "id": "p0-production-safety",
+  "name": "p0-production-safety",
+  "title": "P0 生产安全与状态边界",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "server",
+  "priority": "P0",
+  "creator": "xuCesar",
+  "assignee": "xuCesar",
+  "createdAt": "2026-07-19",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "develop",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-19-p0-request-state-boundaries",
+    "07-19-p0-critical-business-audit",
+    "07-19-p0-invitation-email-control",
+    "07-19-p0-observability-delivery",
+    "07-19-p0-csv-request-contract"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
