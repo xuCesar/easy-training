@@ -24,7 +24,8 @@
     "07-19-p0-invitation-email-control",
     "07-19-p0-observability-delivery",
     "07-19-p0-csv-request-contract",
-    "07-19-invitation-resend-ux"
+    "07-19-invitation-resend-ux",
+    "07-20-p0-production-readiness-closeout"
   ],
   "parent": null,
   "relatedFiles": [],
