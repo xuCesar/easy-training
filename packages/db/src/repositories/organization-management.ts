@@ -6,7 +6,6 @@ import { db } from "../index";
 import {
 	campus,
 	organization,
-	organizationAuditEvent,
 	organizationInvitation,
 	organizationInvitationCampus,
 	organizationMember,
@@ -14,6 +13,7 @@ import {
 	session,
 	user,
 } from "../schema";
+import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
 
 export type OrganizationManagementErrorCode =
@@ -225,27 +225,6 @@ async function replaceMemberCampusAccess(
 	}
 }
 
-async function writeAuditEvent(
-	tx: Transaction,
-	input: {
-		organizationId: string;
-		action: (typeof organizationAuditEvent.$inferInsert)["action"];
-		entityType: string;
-		entityId: string;
-		actorUserId: string;
-		targetUserId?: string | null;
-		before?: Record<string, unknown> | null;
-		after?: Record<string, unknown> | null;
-	},
-) {
-	await tx.insert(organizationAuditEvent).values({
-		...input,
-		targetUserId: input.targetUserId ?? null,
-		before: input.before ?? null,
-		after: input.after ?? null,
-	});
-}
-
 function toCampusRecord(row: typeof campus.$inferSelect): CampusRecord {
 	return {
 		id: row.id,
@@ -322,7 +301,7 @@ export async function createCampusRecord(input: {
 			})
 			.returning();
 		if (!created) throw new Error("Campus creation did not return a record.");
-		await writeAuditEvent(tx, {
+		await writeOrganizationAuditEvent(tx, {
 			organizationId: input.organizationId,
 			action: "campus_created",
 			entityType: "campus",
@@ -369,7 +348,7 @@ export async function updateCampusRecord(input: {
 			.where(eq(campus.id, current.id))
 			.returning();
 		if (!updated) throw new Error("Campus update did not return a record.");
-		await writeAuditEvent(tx, {
+		await writeOrganizationAuditEvent(tx, {
 			organizationId: input.organizationId,
 			action: "campus_updated",
 			entityType: "campus",
@@ -413,7 +392,7 @@ export async function setCampusActiveRecord(input: {
 			.returning();
 		if (!updated)
 			throw new Error("Campus state update did not return a record.");
-		await writeAuditEvent(tx, {
+		await writeOrganizationAuditEvent(tx, {
 			organizationId: input.organizationId,
 			action: input.isActive ? "campus_activated" : "campus_deactivated",
 			entityType: "campus",
@@ -526,7 +505,10 @@ export async function updateMemberRecord(input: {
 		};
 		await tx
 			.update(organizationMember)
-			.set({ role: input.role })
+			.set({
+				role: input.role,
+				campusAccessMode: nextCampusAccessMode,
+			})
 			.where(eq(organizationMember.id, target.id));
 		await replaceMemberCampusAccess(tx, {
 			organizationMemberId: target.id,
@@ -535,7 +517,7 @@ export async function updateMemberRecord(input: {
 			campusAccessMode: nextCampusAccessMode,
 			campusIds: nextCampusIds,
 		});
-		await writeAuditEvent(tx, {
+		await writeOrganizationAuditEvent(tx, {
 			organizationId: input.organizationId,
 			action:
 				target.role === input.role
@@ -611,7 +593,7 @@ export async function removeMemberRecord(input: {
 					eq(session.activeOrganizationId, input.organizationId),
 				),
 			);
-		await writeAuditEvent(tx, {
+		await writeOrganizationAuditEvent(tx, {
 			organizationId: input.organizationId,
 			action: "member_removed",
 			entityType: "organization_member",
@@ -717,7 +699,7 @@ async function insertInvitation(
 			})),
 		);
 	}
-	await writeAuditEvent(tx, {
+	await writeOrganizationAuditEvent(tx, {
 		organizationId: input.organizationId,
 		action: "invitation_created",
 		entityType: "organization_invitation",
@@ -846,7 +828,7 @@ export async function revokeInvitationRecord(input: {
 				.update(organizationInvitation)
 				.set({ revokedAt: new Date() })
 				.where(eq(organizationInvitation.id, invitation.id));
-			await writeAuditEvent(tx, {
+			await writeOrganizationAuditEvent(tx, {
 				organizationId: input.organizationId,
 				action: "invitation_revoked",
 				entityType: "organization_invitation",
@@ -986,7 +968,7 @@ export async function claimInvitationRecord(input: {
 			.where(
 				and(eq(session.id, input.sessionId), eq(session.userId, input.userId)),
 			);
-		await writeAuditEvent(tx, {
+		await writeOrganizationAuditEvent(tx, {
 			organizationId: invitation.organizationId,
 			action: "invitation_claimed",
 			entityType: "organization_invitation",

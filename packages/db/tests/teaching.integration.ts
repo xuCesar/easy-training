@@ -27,6 +27,7 @@ import {
 	lesson,
 	lessonConsumption,
 	organization,
+	organizationAuditEvent,
 	organizationMember,
 	organizationMemberCampus,
 	student,
@@ -51,6 +52,9 @@ function createFixtureIds() {
 type FixtureIds = ReturnType<typeof createFixtureIds>;
 
 async function cleanup(ids: FixtureIds) {
+	await db
+		.delete(organizationAuditEvent)
+		.where(eq(organizationAuditEvent.organizationId, ids.organizationId));
 	await db
 		.delete(lessonConsumption)
 		.where(eq(lessonConsumption.organizationId, ids.organizationId));
@@ -881,6 +885,36 @@ test("结课原子写入考勤和消课，重复或并发结课不会重复扣�
 			.where(eq(lessonConsumption.lessonId, lessonOne.id));
 		assert.equal(attendanceRows.length, 4);
 		assert.equal(consumptionRows.length, 2);
+		const completionAuditsForFirstLesson = await db
+			.select({
+				organizationId: organizationAuditEvent.organizationId,
+				actorUserId: organizationAuditEvent.actorUserId,
+				entityType: organizationAuditEvent.entityType,
+				entityId: organizationAuditEvent.entityId,
+				campusId: organizationAuditEvent.campusId,
+				after: organizationAuditEvent.after,
+			})
+			.from(organizationAuditEvent)
+			.where(
+				and(
+					eq(organizationAuditEvent.organizationId, ids.organizationId),
+					eq(organizationAuditEvent.action, "lesson_completed"),
+					eq(organizationAuditEvent.entityId, lessonOne.id),
+				),
+			);
+		assert.equal(completionAuditsForFirstLesson.length, 1);
+		const [completionAudit] = completionAuditsForFirstLesson;
+		assert.deepEqual(completionAudit, {
+			organizationId: ids.organizationId,
+			actorUserId: ids.managerId,
+			entityType: "lesson",
+			entityId: lessonOne.id,
+			campusId: ids.campusA,
+			after: {
+				classGroupId: group.id,
+				activeEnrollmentCount: 4,
+			},
+		});
 		const balances = await db
 			.select({
 				id: enrollment.id,
@@ -943,6 +977,19 @@ test("结课原子写入考勤和消课，重复或并发结课不会重复扣�
 			.from(attendance)
 			.where(eq(attendance.lessonId, lessonTwo.id));
 		assert.equal(secondLessonAttendance.length, 4);
+		const completionAudits = await db
+			.select({ entityId: organizationAuditEvent.entityId })
+			.from(organizationAuditEvent)
+			.where(
+				and(
+					eq(organizationAuditEvent.organizationId, ids.organizationId),
+					eq(organizationAuditEvent.action, "lesson_completed"),
+				),
+			);
+		assert.deepEqual(
+			completionAudits.map((item) => item.entityId).sort(),
+			[lessonOne.id, lessonTwo.id].sort(),
+		);
 	} finally {
 		await cleanup(ids);
 	}
@@ -994,6 +1041,17 @@ test("课时不足时结课整体回滚，不保留考勤或消课流水", async
 			.from(attendance)
 			.where(eq(attendance.lessonId, scheduled.id));
 		assert.equal(rows.length, 0);
+		const completionAudits = await db
+			.select({ id: organizationAuditEvent.id })
+			.from(organizationAuditEvent)
+			.where(
+				and(
+					eq(organizationAuditEvent.organizationId, ids.organizationId),
+					eq(organizationAuditEvent.action, "lesson_completed"),
+					eq(organizationAuditEvent.entityId, scheduled.id),
+				),
+			);
+		assert.equal(completionAudits.length, 0);
 	} finally {
 		await cleanup(ids);
 	}

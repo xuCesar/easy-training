@@ -24,11 +24,14 @@ import {
 	organizationNotification,
 	user,
 } from "../schema";
+import {
+	type OrganizationAuditAction,
+	writeOrganizationAuditEvent,
+} from "./audit";
 import { createLeadRecordInTransaction, type WritableLeadStage } from "./leads";
 import type { CampusAccess } from "./organization";
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-type AuditAction = (typeof organizationAuditEvent.$inferInsert)["action"];
 type NotificationType = (typeof organizationNotification.$inferInsert)["type"];
 
 export class OperationsRepositoryError extends Error {
@@ -50,27 +53,6 @@ export class OperationsRepositoryError extends Error {
 
 export type ImportRowError = { row: number; message: string };
 
-export async function writeOrganizationAuditEvent(
-	tx: Transaction,
-	input: {
-		organizationId: string;
-		action: AuditAction;
-		entityType: string;
-		entityId: string;
-		actorUserId: string | null;
-		campusId?: string | null;
-		before?: Record<string, unknown> | null;
-		after?: Record<string, unknown> | null;
-	},
-): Promise<void> {
-	await tx.insert(organizationAuditEvent).values({
-		...input,
-		campusId: input.campusId ?? null,
-		before: input.before ?? null,
-		after: input.after ?? null,
-	});
-}
-
 function auditCampusScope(campusAccess: CampusAccess) {
 	if (campusAccess.kind === "all") return sql`true`;
 	if (campusAccess.kind === "selected") {
@@ -82,7 +64,7 @@ function auditCampusScope(campusAccess: CampusAccess) {
 export async function listOrganizationAuditEvents(input: {
 	organizationId: string;
 	campusAccess: CampusAccess;
-	action?: AuditAction;
+	action?: OrganizationAuditAction;
 	actorUserId?: string;
 	createdAtFrom?: Date;
 	createdAtTo?: Date;

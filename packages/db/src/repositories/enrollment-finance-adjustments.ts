@@ -15,6 +15,7 @@ import {
 	student,
 	user,
 } from "../schema";
+import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
 
 export type EnrollmentFinanceAdjustmentErrorCode =
@@ -325,16 +326,21 @@ export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 				.returning({ id: invoice.id });
 			if (!createdInvoice)
 				throw new EnrollmentFinanceAdjustmentError("RESOURCE_UNAVAILABLE");
-			await tx.insert(enrollmentRenewal).values({
-				organizationId: input.organizationId,
-				enrollmentId: source.id,
-				invoiceId: createdInvoice.id,
-				addedLessons: input.addedLessons,
-				amountInCents: input.amountInCents,
-				dueDate: input.dueDate,
-				operatorUserId: input.operatorUserId,
-				requestId: input.requestId,
-			});
+			const [createdRenewal] = await tx
+				.insert(enrollmentRenewal)
+				.values({
+					organizationId: input.organizationId,
+					enrollmentId: source.id,
+					invoiceId: createdInvoice.id,
+					addedLessons: input.addedLessons,
+					amountInCents: input.amountInCents,
+					dueDate: input.dueDate,
+					operatorUserId: input.operatorUserId,
+					requestId: input.requestId,
+				})
+				.returning({ id: enrollmentRenewal.id });
+			if (!createdRenewal)
+				throw new EnrollmentFinanceAdjustmentError("RESOURCE_UNAVAILABLE");
 			await tx
 				.update(enrollment)
 				.set({
@@ -342,6 +348,22 @@ export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 					remainingLessons: sql`${enrollment.remainingLessons} + ${input.addedLessons}`,
 				})
 				.where(eq(enrollment.id, source.id));
+			await writeOrganizationAuditEvent(tx, {
+				organizationId: input.organizationId,
+				action: "enrollment_renewed",
+				entityType: "enrollment_renewal",
+				entityId: createdRenewal.id,
+				actorUserId: input.operatorUserId,
+				campusId: source.campusId,
+				after: {
+					enrollmentId: source.id,
+					invoiceId: createdInvoice.id,
+					addedLessons: input.addedLessons,
+					amountInCents: input.amountInCents,
+					dueDate: input.dueDate,
+					requestId: input.requestId,
+				},
+			});
 			return {
 				enrollmentId: source.id,
 				invoiceId: createdInvoice.id,
@@ -476,19 +498,39 @@ export async function transferEnrollmentRecord(input: {
 				.returning({ id: enrollment.id });
 			if (!target)
 				throw new EnrollmentFinanceAdjustmentError("RESOURCE_UNAVAILABLE");
-			await tx.insert(enrollmentTransfer).values({
-				organizationId: input.organizationId,
-				sourceEnrollmentId: source.id,
-				targetEnrollmentId: target.id,
-				targetCourseId: targetCourse.id,
-				transferredLessons: source.remainingLessons,
-				operatorUserId: input.operatorUserId,
-				requestId: input.requestId,
-			});
+			const [createdTransfer] = await tx
+				.insert(enrollmentTransfer)
+				.values({
+					organizationId: input.organizationId,
+					sourceEnrollmentId: source.id,
+					targetEnrollmentId: target.id,
+					targetCourseId: targetCourse.id,
+					transferredLessons: source.remainingLessons,
+					operatorUserId: input.operatorUserId,
+					requestId: input.requestId,
+				})
+				.returning({ id: enrollmentTransfer.id });
+			if (!createdTransfer)
+				throw new EnrollmentFinanceAdjustmentError("RESOURCE_UNAVAILABLE");
 			await tx
 				.update(enrollment)
 				.set({ status: "transferred", remainingLessons: 0, classGroupId: null })
 				.where(eq(enrollment.id, source.id));
+			await writeOrganizationAuditEvent(tx, {
+				organizationId: input.organizationId,
+				action: "enrollment_transferred",
+				entityType: "enrollment_transfer",
+				entityId: createdTransfer.id,
+				actorUserId: input.operatorUserId,
+				campusId: source.campusId,
+				after: {
+					sourceEnrollmentId: source.id,
+					targetEnrollmentId: target.id,
+					targetCourseId: targetCourse.id,
+					transferredLessons: source.remainingLessons,
+					requestId: input.requestId,
+				},
+			});
 			return {
 				sourceEnrollmentId: source.id,
 				targetEnrollmentId: target.id,
@@ -524,6 +566,11 @@ const refundSelection = {
 	operatorName: refund.operatorName,
 	requestId: refund.requestId,
 	createdAt: refund.createdAt,
+};
+
+const refundIdempotencySelection = {
+	...refundSelection,
+	invoiceId: refund.invoiceId,
 };
 
 async function updateEnrollmentPaidAmount(
@@ -635,7 +682,7 @@ export async function createRefundRecord(input: {
 				campusAccess: access,
 			});
 			const [existing] = await tx
-				.select(refundSelection)
+				.select(refundIdempotencySelection)
 				.from(refund)
 				.where(
 					and(
@@ -646,7 +693,9 @@ export async function createRefundRecord(input: {
 				.limit(1);
 			if (existing) {
 				if (
+					existing.invoiceId !== input.invoiceId ||
 					existing.amountInCents !== input.amountInCents ||
+					existing.refundedAt.getTime() !== input.refundedAt.getTime() ||
 					existing.method !== input.method ||
 					existing.reason !== input.reason.trim()
 				)
@@ -702,6 +751,22 @@ export async function createRefundRecord(input: {
 					input.organizationId,
 					invoiceRecord.enrollmentId,
 				);
+			await writeOrganizationAuditEvent(tx, {
+				organizationId: input.organizationId,
+				action: "refund_created",
+				entityType: "refund",
+				entityId: created.id,
+				actorUserId: input.operatorUserId,
+				campusId: invoiceRecord.campusId,
+				after: {
+					invoiceId: invoiceRecord.id,
+					enrollmentId: invoiceRecord.enrollmentId,
+					amountInCents: input.amountInCents,
+					method: input.method,
+					refundedAt: input.refundedAt.toISOString(),
+					requestId: input.requestId,
+				},
+			});
 			return created.id;
 		});
 		const [created] = await db

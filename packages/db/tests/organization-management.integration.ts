@@ -13,6 +13,7 @@ import {
 	listCampusRecords,
 	listInvitationRecords,
 	OrganizationManagementError,
+	removeMemberRecord,
 	resendInvitationRecord,
 	revokeInvitationRecord,
 	setCampusActiveRecord,
@@ -22,6 +23,7 @@ import {
 	campus,
 	lead,
 	organization,
+	organizationAuditEvent,
 	organizationMember,
 	session,
 	user,
@@ -349,6 +351,154 @@ test("并发降级两位 owner 时，事务仍保留最后一位 owner", async (
 				),
 			);
 		assert.equal(remainingOwners.length, 1);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("成员角色、校区范围和移除均保留事务内审计", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seedFixture(ids);
+		const [ownerBMember, ownerCMember] = await Promise.all([
+			db
+				.select({ id: organizationMember.id })
+				.from(organizationMember)
+				.where(
+					and(
+						eq(organizationMember.organizationId, ids.organizationA),
+						eq(organizationMember.userId, ids.ownerB),
+					),
+				)
+				.then(([member]) => member),
+			db
+				.select({ id: organizationMember.id })
+				.from(organizationMember)
+				.where(
+					and(
+						eq(organizationMember.organizationId, ids.organizationA),
+						eq(organizationMember.userId, ids.ownerC),
+					),
+				)
+				.then(([member]) => member),
+		]);
+		assert.ok(ownerBMember);
+		assert.ok(ownerCMember);
+
+		await updateMemberRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			memberId: ownerBMember.id,
+			role: "teacher",
+			campusAccessMode: "selected",
+			campusIds: [ids.campusA],
+		});
+		await updateMemberRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			memberId: ownerBMember.id,
+			role: "teacher",
+			campusAccessMode: "selected",
+			campusIds: [ids.campusAOther],
+		});
+		await removeMemberRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			memberId: ownerBMember.id,
+		});
+
+		const events = await db
+			.select({
+				action: organizationAuditEvent.action,
+				entityId: organizationAuditEvent.entityId,
+				actorUserId: organizationAuditEvent.actorUserId,
+				targetUserId: organizationAuditEvent.targetUserId,
+				before: organizationAuditEvent.before,
+				after: organizationAuditEvent.after,
+			})
+			.from(organizationAuditEvent)
+			.where(
+				and(
+					eq(organizationAuditEvent.organizationId, ids.organizationA),
+					eq(organizationAuditEvent.entityId, ownerBMember.id),
+				),
+			);
+		assert.deepEqual(events, [
+			{
+				action: "member_role_changed",
+				entityId: ownerBMember.id,
+				actorUserId: ids.owner,
+				targetUserId: ids.ownerB,
+				before: { role: "owner", campusAccessMode: "all", campusIds: [] },
+				after: {
+					role: "teacher",
+					campusAccessMode: "selected",
+					campusIds: [ids.campusA],
+				},
+			},
+			{
+				action: "member_access_changed",
+				entityId: ownerBMember.id,
+				actorUserId: ids.owner,
+				targetUserId: ids.ownerB,
+				before: {
+					role: "teacher",
+					campusAccessMode: "selected",
+					campusIds: [ids.campusA],
+				},
+				after: {
+					role: "teacher",
+					campusAccessMode: "selected",
+					campusIds: [ids.campusAOther],
+				},
+			},
+			{
+				action: "member_removed",
+				entityId: ownerBMember.id,
+				actorUserId: ids.owner,
+				targetUserId: ids.ownerB,
+				before: {
+					role: "teacher",
+					campusAccessMode: "selected",
+					campusIds: [ids.campusAOther],
+				},
+				after: null,
+			},
+		]);
+
+		await removeMemberRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			memberId: ownerCMember.id,
+		});
+		const [remainingOwner] = await db
+			.select({ id: organizationMember.id })
+			.from(organizationMember)
+			.where(
+				and(
+					eq(organizationMember.organizationId, ids.organizationA),
+					eq(organizationMember.userId, ids.owner),
+				),
+			);
+		assert.ok(remainingOwner);
+		await expectManagementError(
+			removeMemberRecord({
+				organizationId: ids.organizationA,
+				actorUserId: ids.owner,
+				memberId: remainingOwner.id,
+			}),
+			"LAST_OWNER",
+		);
+		const failedActionCount = await db
+			.select({ id: organizationAuditEvent.id })
+			.from(organizationAuditEvent)
+			.where(
+				and(
+					eq(organizationAuditEvent.organizationId, ids.organizationA),
+					eq(organizationAuditEvent.action, "member_removed"),
+				),
+			);
+		assert.equal(failedActionCount.length, 2);
 	} finally {
 		await cleanupFixture(ids);
 	}

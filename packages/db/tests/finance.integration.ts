@@ -25,6 +25,7 @@ import {
 import { getTrainingDashboardSnapshot } from "../../api/src/repositories/training-dashboard";
 import { appRouter } from "../../api/src/routers";
 import { db } from "../src";
+import { listOrganizationAuditEvents } from "../src/repositories/operations";
 import {
 	campus,
 	course,
@@ -34,6 +35,7 @@ import {
 	invoice,
 	invoiceFollowUp,
 	organization,
+	organizationAuditEvent,
 	organizationMember,
 	payment,
 	refund,
@@ -101,6 +103,9 @@ async function cleanupFixture(ids: FixtureIds) {
 	await db
 		.delete(invoiceFollowUp)
 		.where(inArray(invoiceFollowUp.organizationId, organizationIds));
+	await db
+		.delete(organizationAuditEvent)
+		.where(inArray(organizationAuditEvent.organizationId, organizationIds));
 	await db
 		.delete(refund)
 		.where(inArray(refund.organizationId, organizationIds));
@@ -551,6 +556,49 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 		assert.equal(firstPaymentRows.length, 1);
 		assert.equal(firstPaymentRows[0]?.operatorUserId, ids.finance);
 		assert.equal(firstPaymentRows[0]?.method, "bank_transfer");
+		const firstPaymentAuditEvents = await db
+			.select({
+				action: organizationAuditEvent.action,
+				entityType: organizationAuditEvent.entityType,
+				entityId: organizationAuditEvent.entityId,
+				actorUserId: organizationAuditEvent.actorUserId,
+				campusId: organizationAuditEvent.campusId,
+				after: organizationAuditEvent.after,
+			})
+			.from(organizationAuditEvent)
+			.where(
+				and(
+					eq(organizationAuditEvent.organizationId, ids.organizationA),
+					eq(organizationAuditEvent.entityId, firstResult.payment.id),
+				),
+			);
+		assert.deepEqual(firstPaymentAuditEvents, [
+			{
+				action: "payment_created",
+				entityType: "payment",
+				entityId: firstResult.payment.id,
+				actorUserId: ids.finance,
+				campusId: ids.campusA,
+				after: {
+					invoiceId: ids.invoiceMain,
+					enrollmentId: ids.enrollmentMain,
+					amountInCents: 4_000,
+					method: "bank_transfer",
+					paidAt: new Date(firstInput.receivedAt).toISOString(),
+					requestId: firstRequestId,
+				},
+			},
+		]);
+		const paymentAuditForCampus = await listOrganizationAuditEvents({
+			organizationId: ids.organizationA,
+			campusAccess: { kind: "selected", campusIds: [ids.campusA] },
+			action: "payment_created",
+			pageSize: 10,
+		});
+		assert.deepEqual(
+			paymentAuditForCampus.items.map((item) => item.entityId),
+			[firstResult.payment.id],
+		);
 
 		await expectOrpcError(
 			createPayment(financeScope, { ...firstInput, amountInCents: 3_999 }),
@@ -772,6 +820,39 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 			.from(invoice)
 			.where(eq(invoice.id, renewal.invoiceId));
 		assert.equal(renewalInvoices.length, 1);
+		const [renewalRecord] = await db
+			.select({ id: enrollmentRenewal.id })
+			.from(enrollmentRenewal)
+			.where(eq(enrollmentRenewal.requestId, renewalRequestId));
+		assert.ok(renewalRecord);
+		const renewalAuditEvents = await db
+			.select({
+				action: organizationAuditEvent.action,
+				entityType: organizationAuditEvent.entityType,
+				entityId: organizationAuditEvent.entityId,
+				actorUserId: organizationAuditEvent.actorUserId,
+				campusId: organizationAuditEvent.campusId,
+				after: organizationAuditEvent.after,
+			})
+			.from(organizationAuditEvent)
+			.where(eq(organizationAuditEvent.entityId, renewalRecord.id));
+		assert.deepEqual(renewalAuditEvents, [
+			{
+				action: "enrollment_renewed",
+				entityType: "enrollment_renewal",
+				entityId: renewalRecord.id,
+				actorUserId: ids.finance,
+				campusId: ids.campusA,
+				after: {
+					enrollmentId: ids.enrollmentIdempotent,
+					invoiceId: renewal.invoiceId,
+					addedLessons: 2,
+					amountInCents: 2_000,
+					dueDate: "2099-02-01",
+					requestId: renewalRequestId,
+				},
+			},
+		]);
 		await expectOrpcError(
 			transferEnrollment(financeScope, {
 				sourceEnrollmentId: ids.enrollmentConcurrent,
@@ -790,12 +871,21 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 			note: null,
 			requestId: randomUUID(),
 		});
+		const transferRequestId = randomUUID();
 		const transfer = await transferEnrollment(financeScope, {
 			sourceEnrollmentId: ids.enrollmentMain,
 			targetCourseId: ids.courseTransfer,
-			requestId: randomUUID(),
+			requestId: transferRequestId,
 		});
 		assert.equal(transfer.transferredLessons, 10);
+		assert.deepEqual(
+			await transferEnrollment(financeScope, {
+				sourceEnrollmentId: ids.enrollmentMain,
+				targetCourseId: ids.courseTransfer,
+				requestId: transferRequestId,
+			}),
+			transfer,
+		);
 		const [sourceEnrollment, targetEnrollment] = await Promise.all([
 			db.select().from(enrollment).where(eq(enrollment.id, ids.enrollmentMain)),
 			db
@@ -807,16 +897,99 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 		assert.equal(sourceEnrollment[0]?.remainingLessons, 0);
 		assert.equal(targetEnrollment[0]?.courseId, ids.courseTransfer);
 		assert.equal(targetEnrollment[0]?.remainingLessons, 10);
+		const [transferRecord] = await db
+			.select({ id: enrollmentTransfer.id })
+			.from(enrollmentTransfer)
+			.where(
+				eq(enrollmentTransfer.targetEnrollmentId, transfer.targetEnrollmentId),
+			);
+		assert.ok(transferRecord);
+		const transferAuditEvents = await db
+			.select({
+				action: organizationAuditEvent.action,
+				entityType: organizationAuditEvent.entityType,
+				entityId: organizationAuditEvent.entityId,
+				actorUserId: organizationAuditEvent.actorUserId,
+				campusId: organizationAuditEvent.campusId,
+				after: organizationAuditEvent.after,
+			})
+			.from(organizationAuditEvent)
+			.where(eq(organizationAuditEvent.entityId, transferRecord.id));
+		assert.deepEqual(transferAuditEvents, [
+			{
+				action: "enrollment_transferred",
+				entityType: "enrollment_transfer",
+				entityId: transferRecord.id,
+				actorUserId: ids.finance,
+				campusId: ids.campusA,
+				after: {
+					sourceEnrollmentId: ids.enrollmentMain,
+					targetEnrollmentId: transfer.targetEnrollmentId,
+					targetCourseId: ids.courseTransfer,
+					transferredLessons: 10,
+					requestId: transferRequestId,
+				},
+			},
+		]);
 
-		const firstRefund = await createRefund(financeScope, {
+		const refundRequestId = randomUUID();
+		const refundedAt = minutesAgo(20);
+		const refundInput = {
 			invoiceId: ids.invoiceMain,
 			amountInCents: 4_000,
-			refundedAt: minutesAgo(20),
-			method: "wechat",
+			refundedAt,
+			method: "wechat" as const,
 			reason: "转课后退回差额",
-			requestId: randomUUID(),
-		});
+			requestId: refundRequestId,
+		};
+		const firstRefund = await createRefund(financeScope, refundInput);
 		assert.equal(firstRefund.refund.amountInCents, 4_000);
+		assert.deepEqual(
+			await createRefund(financeScope, refundInput),
+			firstRefund,
+		);
+		await expectOrpcError(
+			createRefund(financeScope, {
+				...refundInput,
+				invoiceId: ids.invoiceHistoricalStatusPaid,
+			}),
+			"CONFLICT",
+		);
+		await expectOrpcError(
+			createRefund(financeScope, {
+				...refundInput,
+				refundedAt: minutesAgo(19),
+			}),
+			"CONFLICT",
+		);
+		const refundAuditEvents = await db
+			.select({
+				action: organizationAuditEvent.action,
+				entityType: organizationAuditEvent.entityType,
+				entityId: organizationAuditEvent.entityId,
+				actorUserId: organizationAuditEvent.actorUserId,
+				campusId: organizationAuditEvent.campusId,
+				after: organizationAuditEvent.after,
+			})
+			.from(organizationAuditEvent)
+			.where(eq(organizationAuditEvent.entityId, firstRefund.refund.id));
+		assert.deepEqual(refundAuditEvents, [
+			{
+				action: "refund_created",
+				entityType: "refund",
+				entityId: firstRefund.refund.id,
+				actorUserId: ids.finance,
+				campusId: ids.campusA,
+				after: {
+					invoiceId: ids.invoiceMain,
+					enrollmentId: ids.enrollmentMain,
+					amountInCents: 4_000,
+					method: "wechat",
+					refundedAt: new Date(refundedAt).toISOString(),
+					requestId: refundRequestId,
+				},
+			},
+		]);
 		await expectOrpcError(
 			createRefund(financeScope, {
 				invoiceId: ids.invoiceMain,

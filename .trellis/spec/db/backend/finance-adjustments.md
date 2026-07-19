@@ -20,6 +20,7 @@
 - 转课仅转出来源报名的全部剩余课时，来源报名变为 `transferred`、剩余课时归零且解除班级归属；目标报名金额/已收均为零。本期不自动结算课程差价。
 - 退款仅针对已结清账单。退款金额通过 `refund` 流水累计；全额退款才将账单标记为 `refunded`，部分退款仍保留已结清状态。
 - 欠费定义为非 `refunded` 且 `amountInCents > paidAmountInCents` 的账单；跟进是追加记录，列表投影最新一条。
+- 续费、转课和退款成功时，在相同事务内分别写入 `enrollment_renewed`、`enrollment_transferred`、`refund_created`；审计实体使用对应不可变流水 UUID，且 after 不得包含退款原因等自由文本。
 
 ## 4. Validation & Error Matrix
 
@@ -43,6 +44,7 @@
 - PostgreSQL 集成测试覆盖续费重放/并发、来源欠费阻断转课、课时守恒、跨机构/角色/校区拒绝。
 - 覆盖部分与全额退款、退款上限、全额退款后拒绝收款，以及欠费列表的最近跟进投影。
 - API 契约测试应断言时间为 ISO 带时区字符串、金额为整数分、错误映射不泄露内部错误。
+- 断言成功、幂等重放和冲突路径的审计数量分别为一、一、零；退款重放比较还必须覆盖 invoiceId 与 refundedAt。
 
 ## 7. Wrong vs Correct
 

@@ -26,6 +26,7 @@
 - 入班只允许 `enrollment.status = active`、同机构、同课程、学员同校区且 `recruiting/running` 的未满班级；移出班级传 `classGroupId: null`，不改动金额、购买课次或剩余课时。同一学员不得在同一班级保留两条 active 报名。
 - 成员列表、容量、报名转化班级候选/入班校验、点名名单和结课消课均只使用 active 报名；这同时保护历史遗留的 `transferred` 记录，即使其错误保留了 `classGroupId` 也不得占用席位、阻止同学员重新报名或参与考勤、扣课。
 - 结课只允许 `scheduled -> completed`。提交名单必须与锁定班级后的当前 active 报名全集完全一致；`present/late` 各扣 1 课时，`absent/leave` 不扣。`lessonConsumption` 以 `(enrollmentId, lessonId)` 唯一账本记录扣减前后余额、考勤状态与操作人。
+- 成功结课在同一事务写入 `lesson_completed` 审计，实体为 lesson UUID，必须携带 lesson 的 campusId；after 仅记录 classGroupId 与 activeEnrollmentCount，不能写入名单或备注。
 - 结课与入班都先锁定目标班级，再锁定报名，防止与报名转化并发时遗漏成员或形成锁顺序死锁。余额不足、名单变化或任一写入失败时整笔事务回滚。
 
 ## 4. Validation & Error Matrix
@@ -59,6 +60,7 @@
 - 覆盖同教师与同校区教室冲突、相邻时间、取消后重排、重复取消及并发创建。
 - 覆盖权限在读取快照后被撤销时，事务内重新校验仍会拒绝写入。
 - 覆盖班级状态图、完成前处理待上课次，以及入班的课程/校区/容量/重复学员限制与移出班级；已转课或历史非 active 报名不得出现在成员/点名/消课路径。结课需断言考勤、余额和账本同事务写入，余额不足全回滚，重复/并发请求最多一方成功。
+- 结课测试还需断言成功/并发重放至多产生一条 `lesson_completed`，余额不足或名单非法时不写审计。
 - 有 `lessonConsumption` 时，测试清理先删流水，再删报名与课次；生产删除策略应显式评估账本保留需求。
 
 ## 7. Wrong vs Correct

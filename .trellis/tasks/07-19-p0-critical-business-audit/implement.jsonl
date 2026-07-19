@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/db/backend/index.md", "reason": "数据库事务、迁移与机构隔离约束"}
+{"file": ".trellis/spec/db/backend/teaching.md", "reason": "课次结课事务、校区和消课契约"}
+{"file": ".trellis/tasks/07-19-p0-critical-business-audit/research/current-audit-boundaries.md", "reason": "现有审计入口与跨层边界调研"}

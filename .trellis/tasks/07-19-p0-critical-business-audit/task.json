@@ -3,7 +3,7 @@
   "name": "p0-critical-business-audit",
   "title": "P0 关键业务审计追溯",
   "description": "为资金、课时和权限关键写入补齐事务内审计与回归测试。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",

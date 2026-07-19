@@ -29,6 +29,7 @@ import {
 	teacher,
 	teacherCampus,
 } from "../schema";
+import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
 
 export type TeachingRepositoryErrorCode =
@@ -1480,6 +1481,18 @@ export async function completeLessonRecord(input: {
 			.update(lesson)
 			.set({ status: "completed" })
 			.where(eq(lesson.id, lessonRecord.id));
+		await writeOrganizationAuditEvent(tx, {
+			organizationId: input.organizationId,
+			action: "lesson_completed",
+			entityType: "lesson",
+			entityId: lessonRecord.id,
+			actorUserId: input.userId,
+			campusId: lessonRecord.campusId,
+			after: {
+				classGroupId: lessonRecord.classGroupId,
+				activeEnrollmentCount: memberships.length,
+			},
+		});
 		return lessonRecord.id;
 	});
 	const record = (

@@ -21,6 +21,7 @@ import {
 	student,
 	user,
 } from "../schema";
+import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
 
 export type FinanceErrorCode =
@@ -536,6 +537,23 @@ export async function createPaymentRecord(
 						),
 					);
 			}
+
+			await writeOrganizationAuditEvent(tx, {
+				organizationId: input.organizationId,
+				action: "payment_created",
+				entityType: "payment",
+				entityId: createdPayment.id,
+				actorUserId: input.operatorUserId,
+				campusId: studentRecord.campusId,
+				after: {
+					invoiceId: invoiceRecord.id,
+					enrollmentId: invoiceRecord.enrollmentId,
+					amountInCents: input.amountInCents,
+					method: input.method,
+					paidAt: input.receivedAt.toISOString(),
+					requestId: input.requestId,
+				},
+			});
 
 			return createdPayment.id;
 		});
