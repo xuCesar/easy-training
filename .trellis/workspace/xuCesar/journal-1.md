@@ -383,3 +383,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: 完成 P0 生产保障收尾
+
+**Date**: 2026-07-20
+**Task**: 完成 P0 生产保障收尾
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+修正 README 能力边界，补充告警接入与恢复演练证据模板，并在 Issue #6/#23 明确仓库内闭环与外部验证边界。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `86cec96` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
