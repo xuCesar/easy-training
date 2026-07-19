@@ -113,16 +113,25 @@ function InvitationClaimRoute() {
 		<ClaimState
 			icon={<MailCheckIcon />}
 			title="确认加入机构"
-			description={claimError ?? `将以 ${session.user.email} 加入受邀机构。`}
+			description={
+				claimError ??
+				(session.user.emailVerified
+					? `将以 ${session.user.email} 加入受邀机构。`
+					: `请先验证 ${session.user.email} 的邮箱控制权，再领取邀请。`)
+			}
 			action={
 				<Button
-					disabled={claimMutation.isPending}
+					disabled={claimMutation.isPending || !session.user.emailVerified}
 					onClick={() => {
 						setClaimError(null);
 						claimMutation.mutate({ token });
 					}}
 				>
-					{claimMutation.isPending ? "正在加入" : "确认加入"}
+					{claimMutation.isPending
+						? "正在加入"
+						: session.user.emailVerified
+							? "确认加入"
+							: "请先验证邮箱"}
 				</Button>
 			}
 		/>

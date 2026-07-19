@@ -376,6 +376,7 @@ export const appRouter = {
 					claimInvitation(input, {
 						userId: context.session.user.id,
 						email: context.session.user.email,
+						emailVerified: context.session.user.emailVerified,
 						sessionId: context.session.session.id,
 					}),
 				),

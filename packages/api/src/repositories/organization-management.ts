@@ -71,6 +71,10 @@ function toOrganizationError(error: OrganizationManagementError): never {
 			throw new ORPCError("FORBIDDEN", {
 				message: "当前登录邮箱与邀请目标不一致。",
 			});
+		case "INVITATION_EMAIL_UNVERIFIED":
+			throw new ORPCError("FORBIDDEN", {
+				message: "请先验证当前登录的受邀邮箱后再领取邀请。",
+			});
 		case "INVITATION_ALREADY_MEMBER":
 			throw new ORPCError("CONFLICT", {
 				message: "该账号已经是当前机构成员。",
@@ -309,13 +313,19 @@ export async function resendInvitation(
 
 export async function claimInvitation(
 	input: ClaimInvitationInput,
-	session: { userId: string; email: string; sessionId: string },
+	session: {
+		userId: string;
+		email: string;
+		emailVerified: boolean;
+		sessionId: string;
+	},
 ): Promise<ClaimInvitationResult> {
 	try {
 		return await claimInvitationRecord({
 			token: input.token,
 			userId: session.userId,
 			userEmail: session.email,
+			userEmailVerified: session.emailVerified,
 			sessionId: session.sessionId,
 		});
 	} catch (error) {

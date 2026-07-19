@@ -25,6 +25,7 @@ export type OrganizationManagementErrorCode =
 	| "INVITATION_NOT_FOUND"
 	| "INVITATION_INVALID"
 	| "INVITATION_EMAIL_MISMATCH"
+	| "INVITATION_EMAIL_UNVERIFIED"
 	| "INVITATION_ALREADY_MEMBER"
 	| "INVITATION_REQUEST_REPLAY"
 	| "INVALID_SCOPE";
@@ -885,6 +886,7 @@ export async function claimInvitationRecord(input: {
 	token: string;
 	userId: string;
 	userEmail: string;
+	userEmailVerified: boolean;
 	sessionId: string;
 }): Promise<{ organizationId: string }> {
 	return db.transaction(async (tx) => {
@@ -914,6 +916,9 @@ export async function claimInvitationRecord(input: {
 			invitation.expiresAt <= now
 		) {
 			throw new OrganizationManagementError("INVITATION_INVALID");
+		}
+		if (!input.userEmailVerified) {
+			throw new OrganizationManagementError("INVITATION_EMAIL_UNVERIFIED");
 		}
 		if (normalizeEmail(input.userEmail) !== invitation.emailNormalized) {
 			throw new OrganizationManagementError("INVITATION_EMAIL_MISMATCH");

@@ -3,7 +3,7 @@
   "name": "p0-invitation-email-control",
   "title": "P0 邀请邮箱控制权验证",
   "description": "设计并实现可用的受邀邮箱控制权验证，明确认证与邮件服务前置条件。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",

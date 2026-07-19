@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/project-conventions.md", "reason": "跨层安全与验证基线"}
+{"file": ".trellis/spec/db/backend/organization-management.md", "reason": "邀请安全、事务与测试要求"}
