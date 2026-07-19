@@ -314,3 +314,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: 优化邀请重发入口
+
+**Date**: 2026-07-19
+**Task**: 优化邀请重发入口
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+限制邀请列表的重发与撤销操作仅面向当前未领取、未撤销且未过期的邀请；创建并完成 Issue #22。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c1ef216` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
