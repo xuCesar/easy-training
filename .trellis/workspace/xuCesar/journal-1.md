@@ -348,3 +348,38 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: 交付 P0 可观测性与恢复保障
+
+**Date**: 2026-07-20
+**Task**: 交付 P0 可观测性与恢复保障
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+新增请求关联 ID、结构化日志与数据库 readiness；建立 GitHub CI、生产迁移与恢复 runbook，并完成 Issue #21 的全仓验证。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `685ba2f` | (see git log) |
+| `2914289` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
