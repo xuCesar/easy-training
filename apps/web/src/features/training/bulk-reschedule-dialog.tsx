@@ -1,4 +1,8 @@
-import type { Lesson, Teacher } from "@easy-training/api/contracts/training";
+import type {
+	Classroom,
+	Lesson,
+	Teacher,
+} from "@easy-training/api/contracts/training";
 import { Badge } from "@easy-training/ui/components/badge";
 import { Button } from "@easy-training/ui/components/button";
 import {
@@ -35,6 +39,7 @@ type DraftItem = {
 	startsAt: string;
 	teacherId: string;
 	room: string;
+	roomId: string | null;
 	conflicts: Array<"teacher" | "room" | "time">;
 	isConflictChecked: boolean;
 };
@@ -42,11 +47,13 @@ type DraftItem = {
 export function BulkRescheduleDialog({
 	lessons,
 	teachers,
+	classrooms,
 	onClose,
 	onSaved,
 }: {
 	lessons: Lesson[];
 	teachers: Teacher[];
+	classrooms: Classroom[];
 	onClose: () => void;
 	onSaved: () => Promise<unknown>;
 }) {
@@ -57,12 +64,19 @@ export function BulkRescheduleDialog({
 			startsAt: lesson.startsAt,
 			teacherId: lesson.teacherId,
 			room: lesson.room,
+			roomId: lesson.roomId,
 			conflicts: [],
 			isConflictChecked: false,
 		})),
 	);
 	const [offsetMinutes, setOffsetMinutes] = useState(0);
 	const [bulkTeacherId, setBulkTeacherId] = useState("");
+	const [bulkRoomId, setBulkRoomId] = useState("");
+	const commonCampusId = lessons.every(
+		(lesson) => lesson.campusId === lessons[0]?.campusId,
+	)
+		? lessons[0]?.campusId
+		: undefined;
 	const previewMutation = useMutation(
 		orpc.training.teaching.lessons.previewBulkUpdate.mutationOptions(),
 	);
@@ -85,8 +99,15 @@ export function BulkRescheduleDialog({
 	}
 
 	function preview() {
+		let requestItems: ReturnType<typeof stripConflicts>;
+		try {
+			requestItems = stripConflicts(items);
+		} catch {
+			toast.error("调课必须为每节课选择启用中的教室资源");
+			return;
+		}
 		void previewMutation
-			.mutateAsync({ items: stripConflicts(items) })
+			.mutateAsync({ items: requestItems })
 			.then((result) => {
 				setItems(
 					result.items.map((item) => ({
@@ -95,6 +116,7 @@ export function BulkRescheduleDialog({
 						startsAt: item.proposed.startsAt,
 						teacherId: item.proposed.teacherId,
 						room: item.proposed.room,
+						roomId: item.proposed.roomId,
 						conflicts: item.conflicts,
 						isConflictChecked: true,
 					})),
@@ -114,6 +136,13 @@ export function BulkRescheduleDialog({
 	}
 
 	function submit() {
+		let requestItems: ReturnType<typeof stripConflicts>;
+		try {
+			requestItems = stripConflicts(items);
+		} catch {
+			toast.error("调课必须为每节课选择启用中的教室资源");
+			return;
+		}
 		if (items.some((item) => !item.isConflictChecked)) {
 			toast.error("修改后请先检测冲突");
 			return;
@@ -125,7 +154,7 @@ export function BulkRescheduleDialog({
 		void updateMutation
 			.mutateAsync({
 				requestId: crypto.randomUUID(),
-				items: stripConflicts(items),
+				items: requestItems,
 			})
 			.then(async (result) => {
 				toast.success(`已调整 ${result.lessonIds.length} 节未来课次`);
@@ -136,7 +165,15 @@ export function BulkRescheduleDialog({
 	}
 
 	return (
-		<Dialog open onOpenChange={(open) => !open && onClose()}>
+		<Dialog
+			open
+			onOpenChange={(open) =>
+				!open &&
+				!previewMutation.isPending &&
+				!updateMutation.isPending &&
+				onClose()
+			}
+		>
 			<DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
 				<DialogHeader>
 					<DialogTitle>批量调整未来课次</DialogTitle>
@@ -173,23 +210,45 @@ export function BulkRescheduleDialog({
 					/>
 					<div className="grid gap-1 text-sm">
 						<span>统一教室</span>
-						<Input
-							placeholder="输入后回车"
-							onKeyDown={(event) => {
-								if (event.key !== "Enter") return;
-								event.preventDefault();
-								const room = event.currentTarget.value.trim();
-								if (room)
-									setItems((current) =>
-										current.map((item) => ({
-											...item,
-											room,
-											conflicts: [],
-											isConflictChecked: false,
-										})),
-									);
+						<Select
+							value={bulkRoomId}
+							disabled={!commonCampusId}
+							onValueChange={(roomId) => {
+								if (!roomId) return;
+								const room = classrooms.find((item) => item.id === roomId);
+								if (!room) return;
+								setBulkRoomId(roomId);
+								setItems((current) =>
+									current.map((item) => ({
+										...item,
+										room: room.name,
+										roomId,
+										conflicts: [],
+										isConflictChecked: false,
+									})),
+								);
 							}}
-						/>
+						>
+							<SelectTrigger className="min-w-40">
+								<SelectValue placeholder="选择教室" />
+							</SelectTrigger>
+							<SelectContent>
+								{classrooms
+									.filter(
+										(room) => room.isActive && room.campusId === commonCampusId,
+									)
+									.map((room) => (
+										<SelectItem key={room.id} value={room.id}>
+											{room.name}
+										</SelectItem>
+									))}
+							</SelectContent>
+						</Select>
+						{!commonCampusId ? (
+							<span className="text-muted-foreground text-xs">
+								跨校区调课请逐节选择教室
+							</span>
+						) : null}
 					</div>
 				</div>
 				<div className="grid max-h-[48vh] gap-2 overflow-y-auto">
@@ -201,6 +260,9 @@ export function BulkRescheduleDialog({
 						const eligible = teachers.filter(
 							(teacher) =>
 								lesson?.campusId && teacher.campusIds.includes(lesson.campusId),
+						);
+						const eligibleRooms = classrooms.filter(
+							(room) => room.isActive && room.campusId === lesson?.campusId,
 						);
 						return (
 							<div
@@ -260,16 +322,35 @@ export function BulkRescheduleDialog({
 								</div>
 								<div className="grid gap-1 text-xs">
 									<span>教室</span>
-									<Input
-										value={item.room}
-										aria-invalid={hasRoomConflict}
-										onChange={(event) =>
-											updateItem(setItems, index, {
-												room: event.target.value,
-												conflicts: [],
-											})
-										}
-									/>
+									<Select
+										value={item.roomId ?? undefined}
+										onValueChange={(roomId) => {
+											const room = eligibleRooms.find(
+												(value) => value.id === roomId,
+											);
+											if (room)
+												updateItem(setItems, index, {
+													room: room.name,
+													roomId,
+													conflicts: [],
+												});
+										}}
+									>
+										<SelectTrigger aria-invalid={hasRoomConflict}>
+											<SelectValue
+												placeholder={
+													item.roomId ? "选择教室" : `历史教室：${item.room}`
+												}
+											/>
+										</SelectTrigger>
+										<SelectContent>
+											{eligibleRooms.map((room) => (
+												<SelectItem key={room.id} value={room.id}>
+													{room.name} · {room.capacity} 人
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
 								</div>
 								<div className="flex gap-1">
 									{!item.isConflictChecked ? (
@@ -321,6 +402,7 @@ export function BulkRescheduleDialog({
 						disabled={
 							updateMutation.isPending ||
 							previewMutation.isPending ||
+							items.some((item) => !item.roomId) ||
 							items.some((item) => !item.isConflictChecked) ||
 							items.some((item) => item.conflicts.length > 0)
 						}
@@ -372,7 +454,10 @@ function stripConflicts(items: DraftItem[]) {
 			conflicts: _conflicts,
 			isConflictChecked: _isConflictChecked,
 			...item
-		}) => item,
+		}) => {
+			if (!item.roomId) throw new Error("ROOM_REQUIRED");
+			return { ...item, roomId: item.roomId };
+		},
 	);
 }
 

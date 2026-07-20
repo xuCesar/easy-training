@@ -11,7 +11,13 @@ import { z } from "zod";
 import { AcademicWorkspace } from "@/features/training/academic-workspace";
 import { useOrganization } from "@/features/training/organization-context";
 
-const academicTabs = ["classes", "lessons", "courses", "teachers"] as const;
+const academicTabs = [
+	"classes",
+	"lessons",
+	"rooms",
+	"courses",
+	"teachers",
+] as const;
 
 export const Route = createFileRoute("/_auth/academic")({
 	validateSearch: z.object({ tab: z.enum(academicTabs).optional() }),

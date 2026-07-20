@@ -451,3 +451,41 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: 完成 Issue #24 实现与检查，暂缓提交
+
+**Date**: 2026-07-21
+**Task**: P1 补课、班级停复课与教室资源管理
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+完成补课、班级专用停复课、校区教室资源及排课容量联动；修复审查发现的自由文本教室绕过、并发锁顺序、补课重复名单和未来课次容量保护问题，并沉淀跨层业务契约。
+
+### Main Changes
+
+- 新增教室资源 CRUD、启停、校区权限、同名唯一、容量保护与审计。
+- 单次排课、周期规则、规则生成/同步和批量调课统一校验 `roomId`，历史 `room` 文本保持兼容。
+- 新增班级停课/复课专用事务、原因、未来课次 keep/cancel 策略、幂等与审计；暂停班级冻结规则、调课、点名和结课。
+- 新增补课来源资格、目标课次、名单合并、课消、取消/重排、并发幂等与审计，保持原班级归属和来源事实不变。
+- Web 新增教室维护、停复课和补课交互，并将排课入口切换为教室资源选择。
+- 更新 `teaching.md` 与 `audit.md`，记录 roomId、容量口径、锁顺序、暂停冻结和补课历史保护契约。
+
+### Testing
+
+- `pnpm check-types`：通过。
+- `pnpm check`：通过，141 files checked。
+- `pnpm build`：通过。
+- `pnpm exec tsc -p packages/db/tests/tsconfig.json --noEmit`：通过。
+- `pnpm test:integration`：通过，45 tests / 45 passed。
+- `git diff --check`：通过。
+
+### Status
+
+[IN PROGRESS] 实现和自动化检查已完成；按用户要求本轮不提交、不推送、不更新或关闭 GitHub Issue，也不进入下一个 Task。
+
+### Next Steps
+
+- 用户允许后再执行提交、推送与 Issue #24 状态同步。

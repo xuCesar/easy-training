@@ -2,10 +2,12 @@ import {
 	assignEnrollmentClassRecord,
 	bulkUpdateLessonsRecord,
 	cancelLessonRecord,
+	cancelMakeupLessonRecord,
 	completeLessonRecord,
 	createClassGroupRecord,
 	createCourseRecord,
 	createLessonRecord,
+	createMakeupLessonRecord,
 	createScheduleRuleRecord,
 	createTeacherRecord,
 	deactivateScheduleRuleRecord,
@@ -19,12 +21,15 @@ import {
 	listClassGroupRecords,
 	listCourseRecords,
 	listLessonRecords,
+	listMakeupLessonRecords,
 	listScheduleRuleRecords,
 	listTeacherRecords,
+	pauseClassGroupRecord,
 	previewBulkLessonUpdateRecord,
 	previewScheduleGenerationRecord,
 	previewScheduleRuleDeactivationRecord,
 	previewScheduleRuleUpdateRecord,
+	resumeClassGroupRecord,
 	saveLessonAttendanceDraftRecord,
 	setCourseActiveRecord,
 	TeachingRepositoryError,
@@ -39,6 +44,7 @@ import type {
 	AssignEnrollmentClassInput,
 	BulkUpdateLessonsInput,
 	CancelLessonInput,
+	CancelMakeupLessonInput,
 	ClassEnrollmentListInput,
 	ClassGroup,
 	ClassGroupListInput,
@@ -48,6 +54,7 @@ import type {
 	CreateClassGroupInput,
 	CreateCourseInput,
 	CreateLessonInput,
+	CreateMakeupLessonInput,
 	CreateScheduleRuleInput,
 	CreateTeacherInput,
 	DeactivateScheduleRuleInput,
@@ -56,10 +63,14 @@ import type {
 	Lesson,
 	LessonAttendanceInput,
 	LessonListInput,
+	MakeupLesson,
+	MakeupLessonListInput,
+	PauseClassGroupInput,
 	PreviewBulkLessonUpdateInput,
 	PreviewScheduleGenerationInput,
 	PreviewScheduleRuleDeactivationInput,
 	PreviewScheduleRuleUpdateInput,
+	ResumeClassGroupInput,
 	SaveLessonAttendanceDraftInput,
 	ScheduleRule,
 	ScheduleRuleListInput,
@@ -125,6 +136,17 @@ function toScheduleRule(
 		intervalWeeks: 1,
 		timezone: "Asia/Shanghai",
 		hasGeneratedLessons: record.hasGeneratedLessons ?? false,
+		createdAt: record.createdAt.toISOString(),
+		updatedAt: record.updatedAt.toISOString(),
+	};
+}
+
+function toMakeupLesson(
+	record: Awaited<ReturnType<typeof listMakeupLessonRecords>>[number],
+): MakeupLesson {
+	return {
+		...record,
+		targetStartsAt: record.targetStartsAt.toISOString(),
 		createdAt: record.createdAt.toISOString(),
 		updatedAt: record.updatedAt.toISOString(),
 	};
@@ -206,6 +228,24 @@ function throwTeachingError(error: unknown): never {
 		case "CLASS_NOT_SCHEDULABLE":
 			throw new ORPCError("CONFLICT", {
 				message: "当前班级状态不能新增课次。",
+			});
+		case "CLASS_NOT_PAUSABLE":
+			throw new ORPCError("CONFLICT", {
+				message: "只有进行中的班级可以停课。",
+			});
+		case "CLASS_NOT_RESUMABLE":
+			throw new ORPCError("CONFLICT", { message: "只有已暂停班级可以复课。" });
+		case "CLASS_ATTENDANCE_LOCKED":
+			throw new ORPCError("CONFLICT", {
+				message: "班级已暂停，不能点名或结课。",
+			});
+		case "MAKEUP_LESSON_INVALID":
+			throw new ORPCError("CONFLICT", {
+				message: "该缺勤记录或目标课次不符合补课条件。",
+			});
+		case "MAKEUP_LESSON_DUPLICATE":
+			throw new ORPCError("CONFLICT", {
+				message: "该学员已有生效中的补课安排。",
 			});
 		case "LESSON_DURATION_INVALID":
 			throw new ORPCError("CONFLICT", {
@@ -656,6 +696,36 @@ export async function updateClassGroup(
 		return throwTeachingError(error);
 	}
 }
+export async function pauseClassGroup(
+	scope: TeachingScope,
+	input: PauseClassGroupInput,
+) {
+	try {
+		const result = await pauseClassGroupRecord({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			...input,
+		});
+		return { ...result, classGroup: toClassGroup(result.classGroup) };
+	} catch (error) {
+		return throwTeachingError(error);
+	}
+}
+export async function resumeClassGroup(
+	scope: TeachingScope,
+	input: ResumeClassGroupInput,
+) {
+	try {
+		const result = await resumeClassGroupRecord({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			...input,
+		});
+		return { ...result, classGroup: toClassGroup(result.classGroup) };
+	} catch (error) {
+		return throwTeachingError(error);
+	}
+}
 export async function listClassEnrollments(
 	scope: TeachingScope,
 	input: ClassEnrollmentListInput,
@@ -714,11 +784,63 @@ export async function createLesson(
 				organizationId: scope.organizationId,
 				userId: scope.userId,
 				classGroupId: input.classGroupId,
+				roomId: input.roomId,
 				room: input.room,
 				startsAt: new Date(input.startsAt),
 				endsAt: new Date(input.endsAt),
 			}),
 		);
+	} catch (error) {
+		return throwTeachingError(error);
+	}
+}
+
+export async function listMakeupLessons(
+	scope: TeachingScope,
+	input: MakeupLessonListInput,
+) {
+	try {
+		return {
+			items: (
+				await listMakeupLessonRecords({
+					organizationId: scope.organizationId,
+					campusAccess: scope.campusAccess,
+					...input,
+				})
+			).map(toMakeupLesson),
+		};
+	} catch (error) {
+		return throwTeachingError(error);
+	}
+}
+
+export async function createMakeupLesson(
+	scope: TeachingScope,
+	input: CreateMakeupLessonInput,
+) {
+	try {
+		const result = await createMakeupLessonRecord({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			...input,
+		});
+		return { ...result, makeupLesson: toMakeupLesson(result.makeupLesson) };
+	} catch (error) {
+		return throwTeachingError(error);
+	}
+}
+
+export async function cancelMakeupLesson(
+	scope: TeachingScope,
+	input: CancelMakeupLessonInput,
+) {
+	try {
+		const result = await cancelMakeupLessonRecord({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			...input,
+		});
+		return { ...result, makeupLesson: toMakeupLesson(result.makeupLesson) };
 	} catch (error) {
 		return throwTeachingError(error);
 	}

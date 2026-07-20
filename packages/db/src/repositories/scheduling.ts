@@ -9,6 +9,7 @@ import {
 	lesson,
 	lessonScheduleBatch,
 	lessonScheduleRule,
+	makeupLesson,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
@@ -18,7 +19,9 @@ import {
 	assertTeacherForCampus,
 	assertWritableCampus,
 	getCurrentWriteCampusAccess,
+	markMakeupLessonsNeedsReschedule,
 	normalizeRoom,
+	resolveActiveClassroom,
 	TeachingRepositoryError,
 	type Transaction,
 } from "./teaching";
@@ -39,6 +42,7 @@ export type ScheduleRuleData = {
 	weekdays: number[];
 	startMinuteOfDay: number;
 	room: string;
+	roomId: string;
 	validFrom: string;
 	validUntil: string;
 };
@@ -60,6 +64,7 @@ export type ScheduleCandidate = {
 	startsAt: Date;
 	endsAt: Date;
 	room: string;
+	roomId: string | null;
 	conflicts: ScheduleConflict[];
 };
 
@@ -67,6 +72,7 @@ export type ScheduleCandidateOverride = {
 	occurrenceDate: string;
 	startsAt: Date;
 	room: string;
+	roomId: string;
 };
 
 type ScheduleContext = {
@@ -85,6 +91,7 @@ function normalizeRuleData(input: ScheduleRuleData): ScheduleRuleData {
 		!Number.isInteger(input.startMinuteOfDay) ||
 		input.startMinuteOfDay < 0 ||
 		input.startMinuteOfDay >= 1440 ||
+		!input.roomId ||
 		!isIsoDate(input.validFrom) ||
 		!isIsoDate(input.validUntil) ||
 		input.validFrom > input.validUntil
@@ -269,6 +276,28 @@ function fingerprint(value: unknown): string {
 	return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+async function getScheduledMakeupCountByLessonId(
+	tx: Transaction,
+	input: { organizationId: string; lessonIds: string[] },
+): Promise<Map<string, number>> {
+	if (input.lessonIds.length === 0) return new Map();
+	const rows = await tx
+		.select({
+			lessonId: makeupLesson.targetLessonId,
+			value: sql<number>`count(*)::int`,
+		})
+		.from(makeupLesson)
+		.where(
+			and(
+				eq(makeupLesson.organizationId, input.organizationId),
+				eq(makeupLesson.status, "scheduled"),
+				inArray(makeupLesson.targetLessonId, input.lessonIds),
+			),
+		)
+		.groupBy(makeupLesson.targetLessonId);
+	return new Map(rows.map((item) => [item.lessonId, item.value]));
+}
+
 async function loadRuleContext(
 	tx: Transaction,
 	input: { organizationId: string; userId: string; ruleId: string },
@@ -329,12 +358,20 @@ async function loadRuleContext(
 function expandCandidates(
 	rule: Pick<
 		typeof lessonScheduleRule.$inferSelect,
-		"weekdays" | "startMinuteOfDay" | "room" | "validFrom" | "validUntil"
+		| "weekdays"
+		| "startMinuteOfDay"
+		| "room"
+		| "roomId"
+		| "validFrom"
+		| "validUntil"
 	>,
 	durationMinutes: number,
 	range: { from: string; to: string },
 	overrides: ScheduleCandidateOverride[],
 ): ScheduleCandidate[] {
+	if (overrides.some((item) => !item.roomId)) {
+		throw new TeachingRepositoryError("SCHEDULE_CANDIDATE_INVALID");
+	}
 	const from = range.from > rule.validFrom ? range.from : rule.validFrom;
 	const to = range.to < rule.validUntil ? range.to : rule.validUntil;
 	if (!isIsoDate(from) || !isIsoDate(to) || from > to) return [];
@@ -354,6 +391,7 @@ function expandCandidates(
 			startsAt,
 			endsAt: new Date(startsAt.getTime() + durationMinutes * 60_000),
 			room,
+			roomId: override?.roomId ?? rule.roomId,
 			conflicts: [],
 		});
 		if (result.length > MAX_SCHEDULE_CANDIDATES) {
@@ -367,6 +405,34 @@ function expandCandidates(
 		throw new TeachingRepositoryError("SCHEDULE_CANDIDATE_INVALID");
 	}
 	return result;
+}
+
+async function resolveCandidateClassrooms(
+	tx: Transaction,
+	context: ScheduleContext,
+	candidates: ScheduleCandidate[],
+): Promise<void> {
+	const resolved = new Map<
+		string,
+		Awaited<ReturnType<typeof resolveActiveClassroom>>
+	>();
+	for (const candidate of candidates) {
+		if (!candidate.roomId) {
+			throw new TeachingRepositoryError("SCHEDULE_CANDIDATE_INVALID");
+		}
+		let roomRecord = resolved.get(candidate.roomId);
+		if (!roomRecord) {
+			roomRecord = await resolveActiveClassroom(tx, {
+				organizationId: context.rule.organizationId,
+				campusId: context.group.campusId,
+				roomId: candidate.roomId,
+				classGroupId: context.group.id,
+			});
+			resolved.set(candidate.roomId, roomRecord);
+		}
+		candidate.room = roomRecord.name;
+		candidate.roomId = roomRecord.id;
+	}
 }
 
 async function markConflicts(
@@ -405,6 +471,7 @@ async function markConflicts(
 			teacherId: lesson.teacherId,
 			campusId: lesson.campusId,
 			room: lesson.room,
+			roomId: lesson.roomId,
 			startsAt: lesson.startsAt,
 			endsAt: lesson.endsAt,
 		})
@@ -428,7 +495,8 @@ async function markConflicts(
 				conflicts.add("teacher");
 			if (
 				record.campusId === context.group.campusId &&
-				normalizeRoom(record.room) === candidate.room
+				((record.roomId && record.roomId === candidate.roomId) ||
+					normalizeRoom(record.room) === normalizeRoom(candidate.room))
 			) {
 				conflicts.add("room");
 			}
@@ -438,7 +506,11 @@ async function markConflicts(
 			const other = candidates[otherIndex];
 			if (!other || !overlaps(candidate, other)) continue;
 			conflicts.add("teacher");
-			if (candidate.room === other.room) conflicts.add("room");
+			if (
+				(candidate.roomId && candidate.roomId === other.roomId) ||
+				normalizeRoom(candidate.room) === normalizeRoom(other.room)
+			)
+				conflicts.add("room");
 		}
 		candidate.conflicts = [...conflicts];
 	}
@@ -543,6 +615,14 @@ export async function createScheduleRuleRecord(input: {
 			teacherId: group.teacherId,
 			campusId: group.campusId,
 		});
+		const roomRecord = await resolveActiveClassroom(tx, {
+			organizationId: input.organizationId,
+			campusId: group.campusId,
+			roomId: data.roomId,
+			classGroupId: group.id,
+		});
+		data.room = roomRecord.name;
+		data.roomId = roomRecord.id;
 		const [duplicate] = await tx
 			.select({ id: lessonScheduleRule.id })
 			.from(lessonScheduleRule)
@@ -624,7 +704,9 @@ export async function previewScheduleGenerationRecord(input: {
 	overrides: ScheduleCandidateOverride[];
 }): Promise<{ rule: ScheduleRuleRecord; candidates: ScheduleCandidate[] }> {
 	return db.transaction(async (tx) => {
-		const context = await loadRuleContext(tx, input);
+		const context = await loadRuleContext(tx, input, {
+			requireSchedulable: true,
+		});
 		if (!context.rule.isActive)
 			throw new TeachingRepositoryError("SCHEDULE_RULE_INACTIVE");
 		const candidates = expandCandidates(
@@ -633,6 +715,7 @@ export async function previewScheduleGenerationRecord(input: {
 			input,
 			input.overrides,
 		);
+		await resolveCandidateClassrooms(tx, context, candidates);
 		await markConflicts(tx, context, candidates);
 		return {
 			rule: {
@@ -685,7 +768,9 @@ export async function generateScheduleLessonsRecord(input: {
 				throw new TeachingRepositoryError("IDEMPOTENCY_CONFLICT");
 			return { lessonIds: existingBatch.affectedLessonIds, replayed: true };
 		}
-		const context = await loadRuleContext(tx, input);
+		const context = await loadRuleContext(tx, input, {
+			requireSchedulable: true,
+		});
 		if (!context.rule.isActive)
 			throw new TeachingRepositoryError("SCHEDULE_RULE_INACTIVE");
 		if (context.rule.revision !== input.expectedRevision)
@@ -696,6 +781,7 @@ export async function generateScheduleLessonsRecord(input: {
 			input,
 			input.candidates,
 		);
+		await resolveCandidateClassrooms(tx, context, candidates);
 		const submittedOccurrenceDates = new Set(
 			input.candidates.map((item) => item.occurrenceDate),
 		);
@@ -723,6 +809,7 @@ export async function generateScheduleLessonsRecord(input: {
 					teacherId: context.group.teacherId,
 					campusId: context.group.campusId,
 					room: candidate.room,
+					roomId: candidate.roomId,
 					startsAt: candidate.startsAt,
 					endsAt: candidate.endsAt,
 					scheduleRuleId: context.rule.id,
@@ -769,7 +856,9 @@ export async function previewScheduleRuleDeactivationRecord(input: {
 	ruleId: string;
 }): Promise<{ ruleId: string; revision: number; futureLessonIds: string[] }> {
 	return db.transaction(async (tx) => {
-		const context = await loadRuleContext(tx, input);
+		const context = await loadRuleContext(tx, input, {
+			requireSchedulable: true,
+		});
 		const rows = await tx
 			.select({ id: lesson.id })
 			.from(lesson)
@@ -825,7 +914,9 @@ export async function deactivateScheduleRuleRecord(input: {
 				throw new TeachingRepositoryError("IDEMPOTENCY_CONFLICT");
 			return { cancelledLessonIds: existingBatch.affectedLessonIds };
 		}
-		const context = await loadRuleContext(tx, input);
+		const context = await loadRuleContext(tx, input, {
+			requireSchedulable: true,
+		});
 		if (!context.rule.isActive)
 			throw new TeachingRepositoryError("SCHEDULE_RULE_INACTIVE");
 		if (context.rule.revision !== input.expectedRevision)
@@ -858,6 +949,14 @@ export async function deactivateScheduleRuleRecord(input: {
 					version: sql`${lesson.version} + 1`,
 				})
 				.where(inArray(lesson.id, cancelledLessonIds));
+			await markMakeupLessonsNeedsReschedule(tx, {
+				organizationId: input.organizationId,
+				actorUserId: input.userId,
+				campusId: context.group.campusId,
+				targetLessonIds: cancelledLessonIds,
+				reason: "schedule_rule_deactivated",
+				occurredAt: now,
+			});
 		}
 		await tx
 			.update(lessonScheduleRule)
@@ -917,7 +1016,7 @@ export async function deleteScheduleRuleRecord(input: {
 }): Promise<{ deletedRuleId: string }> {
 	return db.transaction(async (tx) => {
 		const context = await loadRuleContext(tx, input, {
-			requireSchedulable: false,
+			requireSchedulable: true,
 		});
 		const [generatedLesson] = await tx
 			.select({ id: lesson.id })
@@ -977,8 +1076,18 @@ export type ScheduleRuleUpdateItem = {
 	occurrenceDate: string;
 	isOverride: boolean;
 	preserved: boolean;
-	current: { startsAt: Date; endsAt: Date; room: string };
-	proposed: { startsAt: Date; endsAt: Date; room: string };
+	current: {
+		startsAt: Date;
+		endsAt: Date;
+		room: string;
+		roomId: string | null;
+	};
+	proposed: {
+		startsAt: Date;
+		endsAt: Date;
+		room: string;
+		roomId: string | null;
+	};
 	conflicts: ScheduleConflict[];
 };
 
@@ -1011,6 +1120,14 @@ async function buildRuleUpdatePreview(
 		)
 		.orderBy(asc(lesson.startsAt), asc(lesson.id))
 		.for("update");
+	const roomRecord = await resolveActiveClassroom(tx, {
+		organizationId: context.rule.organizationId,
+		campusId: context.group.campusId,
+		roomId: data.roomId,
+		classGroupId: context.group.id,
+	});
+	data.room = roomRecord.name;
+	data.roomId = roomRecord.id;
 	const reapply = new Set(input.reapplyOverrideLessonIds);
 	if (
 		reapply.size !== input.reapplyOverrideLessonIds.length ||
@@ -1045,6 +1162,7 @@ async function buildRuleUpdatePreview(
 				startsAt: record.startsAt,
 				endsAt: record.endsAt,
 				room: record.room,
+				roomId: record.roomId,
 			},
 			proposed: {
 				startsAt,
@@ -1054,10 +1172,29 @@ async function buildRuleUpdatePreview(
 							startsAt.getTime() + context.course.durationMinutes * 60_000,
 						),
 				room: preserved ? record.room : data.room,
+				roomId: preserved ? record.roomId : data.roomId,
 			},
 			conflicts: [],
 		};
 	});
+	const changedLessonIds = items
+		.filter((item) => !item.preserved)
+		.map((item) => item.lessonId);
+	const makeupCountByLessonId = await getScheduledMakeupCountByLessonId(tx, {
+		organizationId: context.rule.organizationId,
+		lessonIds: changedLessonIds,
+	});
+	for (const lessonId of changedLessonIds) {
+		const extraAttendeeCount = makeupCountByLessonId.get(lessonId) ?? 0;
+		if (extraAttendeeCount === 0) continue;
+		await resolveActiveClassroom(tx, {
+			organizationId: context.rule.organizationId,
+			campusId: context.group.campusId,
+			roomId: data.roomId,
+			classGroupId: context.group.id,
+			extraAttendeeCount,
+		});
+	}
 	const candidates: ScheduleCandidate[] = items
 		.filter((item) => !item.preserved)
 		.map((item) => ({
@@ -1066,6 +1203,7 @@ async function buildRuleUpdatePreview(
 			startsAt: item.proposed.startsAt,
 			endsAt: item.proposed.endsAt,
 			room: normalizeRoom(item.proposed.room),
+			roomId: item.proposed.roomId,
 			conflicts: [],
 		}));
 	await markConflicts(tx, context, candidates, {
@@ -1095,7 +1233,9 @@ export async function previewScheduleRuleUpdateRecord(input: {
 	items: ScheduleRuleUpdateItem[];
 }> {
 	return db.transaction(async (tx) => {
-		const context = await loadRuleContext(tx, input);
+		const context = await loadRuleContext(tx, input, {
+			requireSchedulable: true,
+		});
 		if (!context.rule.isActive)
 			throw new TeachingRepositoryError("SCHEDULE_RULE_INACTIVE");
 		if (context.rule.revision !== input.expectedRevision)
@@ -1157,7 +1297,9 @@ export async function updateScheduleRuleRecord(input: {
 				replayed: true,
 			};
 		}
-		const context = await loadRuleContext(tx, input);
+		const context = await loadRuleContext(tx, input, {
+			requireSchedulable: true,
+		});
 		if (!context.rule.isActive)
 			throw new TeachingRepositoryError("SCHEDULE_RULE_INACTIVE");
 		if (context.rule.revision !== input.expectedRevision)
@@ -1184,7 +1326,8 @@ export async function updateScheduleRuleRecord(input: {
 				.set({
 					startsAt: item.proposed.startsAt,
 					endsAt: item.proposed.endsAt,
-					room: normalizeRoom(item.proposed.room),
+					room: item.proposed.room,
+					roomId: item.proposed.roomId,
 					scheduleRuleRevision: context.rule.revision + 1,
 					isScheduleOverride: false,
 					version: sql`${lesson.version} + 1`,
@@ -1268,6 +1411,7 @@ export type BulkLessonUpdateInput = {
 	startsAt: Date;
 	teacherId: string;
 	room: string;
+	roomId: string;
 };
 
 export type BulkLessonUpdateItem = {
@@ -1275,8 +1419,20 @@ export type BulkLessonUpdateItem = {
 	expectedVersion: number;
 	classGroupId: string;
 	campusId: string;
-	current: { startsAt: Date; endsAt: Date; teacherId: string; room: string };
-	proposed: { startsAt: Date; endsAt: Date; teacherId: string; room: string };
+	current: {
+		startsAt: Date;
+		endsAt: Date;
+		teacherId: string;
+		room: string;
+		roomId: string | null;
+	};
+	proposed: {
+		startsAt: Date;
+		endsAt: Date;
+		teacherId: string;
+		room: string;
+		roomId: string | null;
+	};
 	conflicts: Array<"teacher" | "room" | "time">;
 };
 
@@ -1292,7 +1448,8 @@ async function buildBulkLessonUpdatePreview(
 	if (
 		input.items.length === 0 ||
 		input.items.length > MAX_SCHEDULE_CANDIDATES ||
-		new Set(input.items.map((item) => item.id)).size !== input.items.length
+		new Set(input.items.map((item) => item.id)).size !== input.items.length ||
+		input.items.some((item) => !item.roomId)
 	) {
 		throw new TeachingRepositoryError("SCHEDULE_CANDIDATE_INVALID");
 	}
@@ -1336,6 +1493,10 @@ async function buildBulkLessonUpdatePreview(
 		.for("update");
 	if (records.length !== input.items.length)
 		throw new TeachingRepositoryError("LESSON_NOT_FOUND");
+	const makeupCountByLessonId = await getScheduledMakeupCountByLessonId(tx, {
+		organizationId: input.organizationId,
+		lessonIds: records.map((record) => record.lesson.id),
+	});
 	const now = input.transactionNow ?? new Date();
 	const result: BulkLessonUpdateItem[] = [];
 	for (const record of records) {
@@ -1350,6 +1511,23 @@ async function buildBulkLessonUpdatePreview(
 		) {
 			throw new TeachingRepositoryError("LESSON_BULK_UPDATE_INVALID");
 		}
+		const [groupStatus] = await tx
+			.select({ status: classGroup.status })
+			.from(classGroup)
+			.where(
+				and(
+					eq(classGroup.id, record.lesson.classGroupId),
+					eq(classGroup.organizationId, input.organizationId),
+				),
+			)
+			.limit(1)
+			.for("update");
+		if (
+			!groupStatus ||
+			groupStatus.status === "paused" ||
+			groupStatus.status === "completed"
+		)
+			throw new TeachingRepositoryError("CLASS_NOT_SCHEDULABLE");
 		await assertWritableCampus(tx, {
 			organizationId: input.organizationId,
 			campusAccess: access,
@@ -1361,7 +1539,13 @@ async function buildBulkLessonUpdatePreview(
 			teacherId: requestedItem.teacherId,
 			campusId: record.lesson.campusId,
 		});
-		const room = normalizeRoom(requestedItem.room);
+		const roomRecord = await resolveActiveClassroom(tx, {
+			organizationId: input.organizationId,
+			campusId: record.lesson.campusId,
+			roomId: requestedItem.roomId,
+			classGroupId: record.lesson.classGroupId,
+			extraAttendeeCount: makeupCountByLessonId.get(record.lesson.id) ?? 0,
+		});
 		result.push({
 			id: record.lesson.id,
 			expectedVersion: record.lesson.version,
@@ -1372,6 +1556,7 @@ async function buildBulkLessonUpdatePreview(
 				endsAt: record.lesson.endsAt,
 				teacherId: record.lesson.teacherId,
 				room: record.lesson.room,
+				roomId: record.lesson.roomId,
 			},
 			proposed: {
 				startsAt: requestedItem.startsAt,
@@ -1379,7 +1564,8 @@ async function buildBulkLessonUpdatePreview(
 					requestedItem.startsAt.getTime() + record.durationMinutes * 60_000,
 				),
 				teacherId: requestedItem.teacherId,
-				room,
+				room: roomRecord.name,
+				roomId: roomRecord.id,
 			},
 			conflicts: [],
 		});
@@ -1397,6 +1583,7 @@ async function buildBulkLessonUpdatePreview(
 			teacherId: lesson.teacherId,
 			campusId: lesson.campusId,
 			room: lesson.room,
+			roomId: lesson.roomId,
 			startsAt: lesson.startsAt,
 			endsAt: lesson.endsAt,
 		})
@@ -1418,7 +1605,8 @@ async function buildBulkLessonUpdatePreview(
 				conflicts.add("teacher");
 			if (
 				record.campusId === item.campusId &&
-				normalizeRoom(record.room) === item.proposed.room
+				((record.roomId && record.roomId === item.proposed.roomId) ||
+					normalizeRoom(record.room) === normalizeRoom(item.proposed.room))
 			)
 				conflicts.add("room");
 		}
@@ -1429,7 +1617,10 @@ async function buildBulkLessonUpdatePreview(
 			if (
 				other.proposed.teacherId === item.proposed.teacherId ||
 				(other.campusId === item.campusId &&
-					other.proposed.room === item.proposed.room)
+					((other.proposed.roomId &&
+						other.proposed.roomId === item.proposed.roomId) ||
+						normalizeRoom(other.proposed.room) ===
+							normalizeRoom(item.proposed.room)))
 			) {
 				// 同一批次的候选课次互相重叠，调整时间即可解除，归类为时间冲突。
 				conflicts.add("time");
@@ -1494,11 +1685,14 @@ export async function bulkUpdateLessonsRecord(input: {
 					endsAt: item.proposed.endsAt,
 					teacherId: item.proposed.teacherId,
 					room: item.proposed.room,
+					roomId: item.proposed.roomId,
 					isScheduleOverride:
 						item.current.startsAt.getTime() !==
 							item.proposed.startsAt.getTime() ||
 						item.current.teacherId !== item.proposed.teacherId ||
-						normalizeRoom(item.current.room) !== item.proposed.room
+						item.current.roomId !== item.proposed.roomId ||
+						normalizeRoom(item.current.room) !==
+							normalizeRoom(item.proposed.room)
 							? true
 							: undefined,
 					version: sql`${lesson.version} + 1`,

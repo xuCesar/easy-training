@@ -2,6 +2,7 @@ import type {
 	BindableTeacherMember,
 	ClassEnrollment,
 	ClassGroup,
+	Classroom,
 	Course,
 	Lesson,
 	LessonAttendance,
@@ -51,10 +52,13 @@ import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { orpc, queryClient } from "@/utils/orpc";
 import { BulkRescheduleDialog } from "./bulk-reschedule-dialog";
+import { ClassPauseDialog } from "./class-pause-dialog";
 import { formatCentsToCurrency, formatDateTime } from "./format";
+import { MakeupLessonDialog } from "./makeup-lesson-dialog";
+import { RoomsPanel } from "./rooms-panel";
 import { ScheduleRulesDialog } from "./schedule-rules-dialog";
 
-type AcademicTab = "classes" | "lessons" | "courses" | "teachers";
+type AcademicTab = "classes" | "lessons" | "rooms" | "courses" | "teachers";
 type Editor =
 	| { kind: "course"; value: Course | null }
 	| { kind: "teacher"; value: Teacher | null }
@@ -65,6 +69,7 @@ type Editor =
 const tabs: Array<{ id: AcademicTab; label: string }> = [
 	{ id: "classes", label: "班级" },
 	{ id: "lessons", label: "课次" },
+	{ id: "rooms", label: "教室" },
 	{ id: "courses", label: "课程" },
 	{ id: "teachers", label: "教师" },
 ];
@@ -85,11 +90,18 @@ export function AcademicWorkspace({
 	const [classMembersTarget, setClassMembersTarget] =
 		useState<ClassGroup | null>(null);
 	const [attendanceTarget, setAttendanceTarget] = useState<Lesson | null>(null);
+	const [makeupSourceLesson, setMakeupSourceLesson] = useState<Lesson | null>(
+		null,
+	);
 	const [scheduleRulesTarget, setScheduleRulesTarget] =
 		useState<ClassGroup | null>(null);
 	const [bulkRescheduleTarget, setBulkRescheduleTarget] = useState<
 		Lesson[] | null
 	>(null);
+	const [classStatusTarget, setClassStatusTarget] = useState<{
+		classGroup: ClassGroup;
+		action: "pause" | "resume";
+	} | null>(null);
 	const [campusId, setCampusId] = useState<string | undefined>();
 	const [classStatus, setClassStatus] = useState<string>("all");
 	const canManageCatalog = role === "owner" || role === "admin";
@@ -101,6 +113,11 @@ export function AcademicWorkspace({
 		input: { includeInactive: true },
 	});
 	const teachersOptions = orpc.training.teaching.teachers.list.queryOptions();
+	const classroomsOptions = orpc.training.teaching.classrooms.list.queryOptions(
+		{
+			input: { includeInactive: true },
+		},
+	);
 	const bindableTeacherMembersOptions =
 		orpc.training.teaching.teachers.bindableMembers.queryOptions();
 	const classesInput = {
@@ -128,6 +145,10 @@ export function AcademicWorkspace({
 		...teachersOptions,
 		queryKey: [...teachersOptions.queryKey, context],
 	});
+	const classroomsQuery = useQuery({
+		...classroomsOptions,
+		queryKey: [...classroomsOptions.queryKey, context],
+	});
 	const bindableTeacherMembersQuery = useQuery({
 		...bindableTeacherMembersOptions,
 		queryKey: [...bindableTeacherMembersOptions.queryKey, context],
@@ -151,20 +172,22 @@ export function AcademicWorkspace({
 					label: "新增课次",
 					onClick: () => setEditor({ kind: "lesson", value: null }),
 				}
-			: initialTab === "courses" && canManageCatalog
-				? {
-						label: "新建课程",
-						onClick: () => setEditor({ kind: "course", value: null }),
-					}
-				: initialTab === "teachers" && canManageCatalog
+			: initialTab === "rooms"
+				? null
+				: initialTab === "courses" && canManageCatalog
 					? {
-							label: "新建教师",
-							onClick: () => setEditor({ kind: "teacher", value: null }),
+							label: "新建课程",
+							onClick: () => setEditor({ kind: "course", value: null }),
 						}
-					: {
-							label: "新建班级",
-							onClick: () => setEditor({ kind: "class", value: null }),
-						};
+					: initialTab === "teachers" && canManageCatalog
+						? {
+								label: "新建教师",
+								onClick: () => setEditor({ kind: "teacher", value: null }),
+							}
+						: {
+								label: "新建班级",
+								onClick: () => setEditor({ kind: "class", value: null }),
+							};
 
 	return (
 		<div className="flex min-w-0 flex-col gap-5">
@@ -176,9 +199,11 @@ export function AcademicWorkspace({
 						课次时间统一按中国标准时间处理
 					</p>
 				</div>
-				<Button onClick={createAction.onClick}>
-					<PlusIcon data-icon="inline-start" /> {createAction.label}
-				</Button>
+				{createAction ? (
+					<Button onClick={createAction.onClick}>
+						<PlusIcon data-icon="inline-start" /> {createAction.label}
+					</Button>
+				) : null}
 			</section>
 			<nav
 				className="flex max-w-full gap-1 overflow-x-auto border-b"
@@ -216,8 +241,21 @@ export function AcademicWorkspace({
 					onEdit={(value) => setEditor({ kind: "class", value })}
 					onSchedule={(value) => setEditor({ kind: "lesson", value })}
 					onManageMembers={setClassMembersTarget}
+					onChangeStatus={(classGroup, action) =>
+						setClassStatusTarget({ classGroup, action })
+					}
 					onCreate={() => setEditor({ kind: "class", value: null })}
 					onRetry={() => void classesQuery.refetch()}
+				/>
+			) : null}
+			{initialTab === "rooms" ? (
+				<RoomsPanel
+					campuses={campusesQuery.data?.items ?? []}
+					rooms={classroomsQuery.data?.items ?? []}
+					isPending={classroomsQuery.isPending}
+					isError={classroomsQuery.isError}
+					onRetry={() => void classroomsQuery.refetch()}
+					onSaved={refresh}
 				/>
 			) : null}
 			{initialTab === "lessons" ? (
@@ -232,6 +270,7 @@ export function AcademicWorkspace({
 					onCancel={setCancelTarget}
 					onTakeAttendance={setAttendanceTarget}
 					onBulkReschedule={setBulkRescheduleTarget}
+					onArrangeMakeup={setMakeupSourceLesson}
 					onRetry={() => void lessonsQuery.refetch()}
 				/>
 			) : null}
@@ -288,6 +327,7 @@ export function AcademicWorkspace({
 				<LessonEditor
 					defaultClass={editor.value}
 					classes={classesQuery.data?.items ?? []}
+					classrooms={classroomsQuery.data?.items ?? []}
 					onClose={() => setEditor(null)}
 					onSaved={refresh}
 					onStartRecurring={(classGroup) => {
@@ -317,9 +357,18 @@ export function AcademicWorkspace({
 					onSaved={refresh}
 				/>
 			) : null}
+			{makeupSourceLesson ? (
+				<MakeupLessonDialog
+					sourceLesson={makeupSourceLesson}
+					lessons={lessonsQuery.data?.items ?? []}
+					onClose={() => setMakeupSourceLesson(null)}
+					onSaved={refresh}
+				/>
+			) : null}
 			{scheduleRulesTarget ? (
 				<ScheduleRulesDialog
 					classGroup={scheduleRulesTarget}
+					classrooms={classroomsQuery.data?.items ?? []}
 					onClose={() => setScheduleRulesTarget(null)}
 					onSaved={refresh}
 				/>
@@ -328,7 +377,16 @@ export function AcademicWorkspace({
 				<BulkRescheduleDialog
 					lessons={bulkRescheduleTarget}
 					teachers={teachersQuery.data?.items ?? []}
+					classrooms={classroomsQuery.data?.items ?? []}
 					onClose={() => setBulkRescheduleTarget(null)}
+					onSaved={refresh}
+				/>
+			) : null}
+			{classStatusTarget ? (
+				<ClassPauseDialog
+					classGroup={classStatusTarget.classGroup}
+					action={classStatusTarget.action}
+					onClose={() => setClassStatusTarget(null)}
 					onSaved={refresh}
 				/>
 			) : null}
@@ -356,6 +414,12 @@ function invalidateAcademicQueries() {
 		queryClient.invalidateQueries({
 			queryKey: orpc.training.teaching.lessons.attendance.key(),
 		}),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.teaching.classrooms.list.key(),
+		}),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.teaching.makeups.list.key(),
+		}),
 	]);
 }
 
@@ -373,6 +437,7 @@ function ClassesPanel({
 	onEdit,
 	onSchedule,
 	onManageMembers,
+	onChangeStatus,
 	onCreate,
 	onRetry,
 }: {
@@ -389,6 +454,7 @@ function ClassesPanel({
 	onEdit: (item: ClassGroup) => void;
 	onSchedule: (item: ClassGroup) => void;
 	onManageMembers: (item: ClassGroup) => void;
+	onChangeStatus: (item: ClassGroup, action: "pause" | "resume") => void;
 	onCreate: () => void;
 	onRetry: () => void;
 }) {
@@ -509,6 +575,23 @@ function ClassesPanel({
 										<CalendarClockIcon data-icon="inline-start" />
 										排课
 									</Button>
+									{item.status === "running" || item.status === "paused" ? (
+										<Button
+											size="sm"
+											variant={
+												item.status === "running" ? "destructive" : "outline"
+											}
+											onClick={() =>
+												onChangeStatus(
+													item,
+													item.status === "running" ? "pause" : "resume",
+												)
+											}
+										>
+											<PowerIcon />{" "}
+											{item.status === "running" ? "停课" : "复课"}
+										</Button>
+									) : null}
 								</div>
 								{isExpanded ? (
 									<div
@@ -564,6 +647,7 @@ function LessonsPanel({
 	onCancel,
 	onTakeAttendance,
 	onBulkReschedule,
+	onArrangeMakeup,
 	onRetry,
 }: {
 	campuses: Array<{ id: string; name: string }>;
@@ -576,11 +660,13 @@ function LessonsPanel({
 	onCancel: (item: Lesson) => void;
 	onTakeAttendance: (item: Lesson) => void;
 	onBulkReschedule: (items: Lesson[]) => void;
+	onArrangeMakeup: (item: Lesson) => void;
 	onRetry: () => void;
 }) {
 	const scheduled = lessons.filter((item) => item.status === "scheduled");
 	const future = scheduled.filter(
-		(item) => new Date(item.startsAt) > new Date(),
+		(item) =>
+			new Date(item.startsAt) > new Date() && item.classStatus !== "paused",
 	);
 	const [selectedIds, setSelectedIds] = useState<string[]>([]);
 	const selected = future.filter((item) => selectedIds.includes(item.id));
@@ -658,6 +744,13 @@ function LessonsPanel({
 							/>
 							<div>
 								<StatusBadge status={item.status} />
+								{item.classStatus === "paused" ? (
+									<p className="mt-1 text-amber-700 text-xs dark:text-amber-400">
+										{item.pausedOverdue
+											? "班级暂停中，该课次已过期，需恢复后重新安排"
+											: "班级暂停中，课次操作已冻结"}
+									</p>
+								) : null}
 								{item.cancellationReason ? (
 									<p className="mt-1 line-clamp-2 text-muted-foreground text-xs">
 										{item.cancellationReason}
@@ -666,7 +759,8 @@ function LessonsPanel({
 							</div>
 							<div className="hidden md:block" />
 							<div className="flex flex-wrap gap-1">
-								{item.status === "scheduled" ? (
+								{item.status === "scheduled" &&
+								item.classStatus !== "paused" ? (
 									<Button
 										size="sm"
 										variant="outline"
@@ -674,6 +768,15 @@ function LessonsPanel({
 									>
 										<ClipboardCheckIcon data-icon="inline-start" />
 										点名结课
+									</Button>
+								) : null}
+								{item.status === "completed" ? (
+									<Button
+										size="sm"
+										variant="outline"
+										onClick={() => onArrangeMakeup(item)}
+									>
+										安排补课
 									</Button>
 								) : null}
 								{item.status === "scheduled" ? (
@@ -1321,12 +1424,17 @@ function ClassEditor({
 					required
 				/>
 				{value ? (
-					<SelectField
-						label="班级状态"
-						name="status"
-						defaultValue={value.status}
-						items={getEditableClassStatuses(value.status)}
-					/>
+					<div className="grid gap-1">
+						<SelectField
+							label="班级状态"
+							name="status"
+							defaultValue={value.status}
+							items={getEditableClassStatuses(value.status)}
+						/>
+						<p className="text-muted-foreground text-xs">
+							停课与复课请从班级列表使用专用操作。
+						</p>
+					</div>
 				) : null}
 				<SelectField
 					label="校区"
@@ -1395,12 +1503,14 @@ function ClassEditor({
 function LessonEditor({
 	defaultClass,
 	classes,
+	classrooms,
 	onClose,
 	onSaved,
 	onStartRecurring,
 }: {
 	defaultClass: ClassGroup | null;
 	classes: ClassGroup[];
+	classrooms: Classroom[];
 	onClose: () => void;
 	onSaved: () => Promise<unknown>;
 	onStartRecurring: (classGroup: ClassGroup) => void;
@@ -1419,19 +1529,29 @@ function LessonEditor({
 		"single",
 	);
 	const selected = classes.find((item) => item.id === classId);
+	const eligibleRooms = classrooms.filter(
+		(item) => item.isActive && item.campusId === selected?.campusId,
+	);
 	function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		const data = new FormData(event.currentTarget);
 		const startsAt = toShanghaiIso(text(data, "startsAt"));
 		const endsAt = toShanghaiIso(text(data, "endsAt"));
+		const roomId = text(data, "roomId");
+		const room = eligibleRooms.find((item) => item.id === roomId);
 		if (!startsAt || !endsAt) {
 			toast.error("请填写有效的课次时间");
+			return;
+		}
+		if (!room) {
+			toast.error("请选择启用中的教室");
 			return;
 		}
 		void mutation
 			.mutateAsync({
 				classGroupId: classId,
-				room: text(data, "room"),
+				room: room.name,
+				roomId: room.id,
 				startsAt,
 				endsAt,
 			})
@@ -1510,17 +1630,31 @@ function LessonEditor({
 							required
 						/>
 					</div>
-					<TextField
+					<SelectField
+						key={selected?.campusId ?? "no-campus"}
 						label="教室"
-						name="room"
-						placeholder="例如 A201"
-						required
+						name="roomId"
+						defaultValue={eligibleRooms[0]?.id ?? ""}
+						items={eligibleRooms.map((item) => ({
+							value: item.id,
+							label: `${item.name} · ${item.capacity} 人`,
+						}))}
 					/>
+					{selected && eligibleRooms.length === 0 ? (
+						<p className="text-destructive text-xs">
+							所选校区没有启用中的教室，请先维护教室资源。
+						</p>
+					) : null}
 					<DialogFooter>
 						<Button type="button" variant="outline" onClick={onClose}>
 							取消
 						</Button>
-						<Button type="submit" disabled={mutation.isPending || !selected}>
+						<Button
+							type="submit"
+							disabled={
+								mutation.isPending || !selected || eligibleRooms.length === 0
+							}
+						>
 							创建课次
 						</Button>
 					</DialogFooter>
@@ -2080,8 +2214,8 @@ function getEditableClassStatuses(
 	const allowedStatuses: Record<ClassGroup["status"], ClassGroup["status"][]> =
 		{
 			recruiting: ["recruiting", "running"],
-			running: ["running", "paused", "completed"],
-			paused: ["paused", "running", "completed"],
+			running: ["running", "completed"],
+			paused: ["paused", "completed"],
 			completed: ["completed"],
 		};
 	return classStatuses.filter(
@@ -2089,6 +2223,7 @@ function getEditableClassStatuses(
 			item.value !== "all" && allowedStatuses[status].includes(item.value),
 	);
 }
+
 const statusLabels: Record<string, string> = {
 	recruiting: "招生中",
 	running: "进行中",

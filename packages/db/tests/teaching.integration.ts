@@ -5,25 +5,40 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import { db } from "../src";
 import {
-	createScheduleRuleRecord,
+	ClassroomRepositoryError,
+	createClassroomRecord,
+	listClassroomRecords,
+	setClassroomActiveRecord,
+	updateClassroomRecord,
+} from "../src/repositories/classrooms";
+import {
+	createScheduleRuleRecord as createScheduleRuleRepositoryRecord,
 	deactivateScheduleRuleRecord,
 	deleteScheduleRuleRecord,
 	generateScheduleLessonsRecord,
 	previewBulkLessonUpdateRecord,
 	previewScheduleGenerationRecord,
+	previewScheduleRuleDeactivationRecord,
 	previewScheduleRuleUpdateRecord,
 	updateScheduleRuleRecord,
 } from "../src/repositories/scheduling";
 import {
 	assignEnrollmentClassRecord,
 	cancelLessonRecord,
+	cancelMakeupLessonRecord,
 	completeLessonRecord,
 	createClassGroupRecord,
 	createCourseRecord,
-	createLessonRecord,
+	createLessonRecord as createLessonRepositoryRecord,
+	createMakeupLessonRecord,
 	createTeacherRecord,
 	getLessonAttendanceRecord,
 	listClassEnrollmentRecords,
+	listMakeupLessonRecords,
+	normalizeRoom,
+	pauseClassGroupRecord,
+	resumeClassGroupRecord,
+	saveLessonAttendanceDraftRecord,
 	TeachingRepositoryError,
 	updateClassGroupRecord,
 	updateCourseRecord,
@@ -32,12 +47,15 @@ import {
 	attendance,
 	campus,
 	classGroup,
+	classroom,
+	classStatusEvent,
 	course,
 	enrollment,
 	lesson,
 	lessonConsumption,
 	lessonScheduleBatch,
 	lessonScheduleRule,
+	makeupLesson,
 	organization,
 	organizationAuditEvent,
 	organizationMember,
@@ -71,6 +89,9 @@ async function cleanup(ids: FixtureIds) {
 		.delete(lessonConsumption)
 		.where(eq(lessonConsumption.organizationId, ids.organizationId));
 	await db
+		.delete(makeupLesson)
+		.where(eq(makeupLesson.organizationId, ids.organizationId));
+	await db
 		.delete(lessonScheduleBatch)
 		.where(eq(lessonScheduleBatch.organizationId, ids.organizationId));
 	const lessonIds = (
@@ -90,8 +111,14 @@ async function cleanup(ids: FixtureIds) {
 		.delete(lessonScheduleRule)
 		.where(eq(lessonScheduleRule.organizationId, ids.organizationId));
 	await db
+		.delete(classStatusEvent)
+		.where(eq(classStatusEvent.organizationId, ids.organizationId));
+	await db
 		.delete(classGroup)
 		.where(eq(classGroup.organizationId, ids.organizationId));
+	await db
+		.delete(classroom)
+		.where(eq(classroom.organizationId, ids.organizationId));
 	await db
 		.delete(student)
 		.where(eq(student.organizationId, ids.organizationId));
@@ -179,6 +206,17 @@ async function expectError(
 	});
 }
 
+async function expectClassroomError(
+	promise: Promise<unknown>,
+	code: ClassroomRepositoryError["code"],
+) {
+	await assert.rejects(promise, (error: unknown) => {
+		assert.ok(error instanceof ClassroomRepositoryError);
+		assert.equal(error.code, code);
+		return true;
+	});
+}
+
 function courseUpdateData(
 	record: {
 		code: string;
@@ -232,7 +270,14 @@ async function createClassFixture(
 		capacity: input?.capacity ?? 10,
 		startDate: "2026-08-01",
 	});
-	return { course: trainingCourse, group };
+	const room = await createClassroomRecord({
+		organizationId: ids.organizationId,
+		userId: ids.adminId,
+		campusId,
+		name: `教室-${randomUUID().slice(0, 6)}`,
+		capacity: input?.capacity ?? 10,
+	});
+	return { course: trainingCourse, group, room };
 }
 
 async function createEnrollmentFixture(input: {
@@ -282,6 +327,123 @@ function classUpdateData(
 		startDate: record.startDate,
 	};
 }
+
+async function resolveResourceClassroom(input: {
+	organizationId: string;
+	userId: string;
+	campusId: string;
+	name: string;
+}) {
+	const nameNormalized = normalizeRoom(input.name);
+	const findExisting = async () => {
+		const [existing] = await db
+			.select()
+			.from(classroom)
+			.where(
+				and(
+					eq(classroom.organizationId, input.organizationId),
+					eq(classroom.campusId, input.campusId),
+					eq(classroom.nameNormalized, nameNormalized),
+				),
+			)
+			.limit(1);
+		return existing;
+	};
+	const existing = await findExisting();
+	if (existing) return existing;
+	try {
+		return await createClassroomRecord({
+			organizationId: input.organizationId,
+			userId: input.userId,
+			campusId: input.campusId,
+			name: input.name.trim(),
+			capacity: 10_000,
+		});
+	} catch (error) {
+		if (
+			!(error instanceof ClassroomRepositoryError) ||
+			error.code !== "CLASSROOM_DUPLICATE"
+		) {
+			throw error;
+		}
+		const concurrent = await findExisting();
+		if (concurrent) return concurrent;
+		throw error;
+	}
+}
+
+async function createResourceLessonRecord(
+	input: Omit<Parameters<typeof createLessonRepositoryRecord>[0], "roomId"> & {
+		roomId?: string;
+	},
+) {
+	if (input.roomId)
+		return createLessonRepositoryRecord({ ...input, roomId: input.roomId });
+	const [group] = await db
+		.select({ campusId: classGroup.campusId })
+		.from(classGroup)
+		.where(
+			and(
+				eq(classGroup.id, input.classGroupId),
+				eq(classGroup.organizationId, input.organizationId),
+			),
+		)
+		.limit(1);
+	if (!group) throw new Error("Expected class group for lesson fixture.");
+	const room = await resolveResourceClassroom({
+		organizationId: input.organizationId,
+		userId: input.userId,
+		campusId: group.campusId,
+		name: input.room,
+	});
+	return createLessonRepositoryRecord({ ...input, roomId: room.id });
+}
+
+async function createResourceScheduleRuleRecord(
+	input: Omit<
+		Parameters<typeof createScheduleRuleRepositoryRecord>[0],
+		"data"
+	> & {
+		data: Omit<
+			Parameters<typeof createScheduleRuleRepositoryRecord>[0]["data"],
+			"roomId"
+		> & {
+			roomId?: string;
+		};
+	},
+) {
+	if (input.data.roomId) {
+		return createScheduleRuleRepositoryRecord({
+			...input,
+			data: { ...input.data, roomId: input.data.roomId },
+		});
+	}
+	const [group] = await db
+		.select({ campusId: classGroup.campusId })
+		.from(classGroup)
+		.where(
+			and(
+				eq(classGroup.id, input.classGroupId),
+				eq(classGroup.organizationId, input.organizationId),
+			),
+		)
+		.limit(1);
+	if (!group)
+		throw new Error("Expected class group for schedule rule fixture.");
+	const room = await resolveResourceClassroom({
+		organizationId: input.organizationId,
+		userId: input.userId,
+		campusId: group.campusId,
+		name: input.data.room,
+	});
+	return createScheduleRuleRepositoryRecord({
+		...input,
+		data: { ...input.data, roomId: room.id },
+	});
+}
+
+const createScheduleRuleRecord = createResourceScheduleRuleRecord;
+const createLessonRecord = createResourceLessonRecord;
 
 test("校区负责人只能在授权校区开班，课次冲突和取消状态保持一致", async () => {
 	const ids = createFixtureIds();
@@ -341,7 +503,7 @@ test("校区负责人只能在授权校区开班，课次冲突和取消状态�
 			startsAt: new Date("2026-08-01T02:00:00.000Z"),
 			endsAt: new Date("2026-08-01T03:00:00.000Z"),
 		});
-		assert.equal(first.room, "a201");
+		assert.equal(first.room, "A201");
 		await expectError(
 			createLessonRecord({
 				organizationId: ids.organizationId,
@@ -873,11 +1035,1012 @@ test("批量调整中候选课次互相重叠时标记为时间冲突", async ()
 				startsAt: new Date("2026-08-21T01:30:00.000Z"),
 				teacherId: group.teacherId,
 				room: "A102",
+				roomId: second.roomId ?? "",
 			})),
 		});
 
 		assert.ok(preview.items.every((item) => item.conflicts[0] === "time"));
 		assert.ok(preview.items.every((item) => item.conflicts.length === 1));
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("教室资源遵守校区权限、名称唯一、未来课次停用保护和容量边界", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const room = await createClassroomRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			campusId: ids.campusA,
+			name: " A 101 ",
+			capacity: 3,
+		});
+		assert.equal(room.name, "A 101");
+		assert.equal(room.nameNormalized, "a 101");
+		await expectClassroomError(
+			createClassroomRecord({
+				organizationId: ids.organizationId,
+				userId: ids.managerId,
+				campusId: ids.campusB,
+				name: "B101",
+				capacity: 8,
+			}),
+			"CAMPUS_OUT_OF_SCOPE",
+		);
+		await expectClassroomError(
+			createClassroomRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				campusId: ids.campusA,
+				name: "Ａ 101",
+				capacity: 8,
+			}),
+			"CLASSROOM_DUPLICATE",
+		);
+		const updatedRoom = await updateClassroomRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			id: room.id,
+			name: "A101 主教室",
+			capacity: 3,
+		});
+		assert.equal(updatedRoom.name, "A101 主教室");
+		const roomB = await createClassroomRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			campusId: ids.campusB,
+			name: "B101",
+			capacity: 8,
+		});
+		const managerRooms = await listClassroomRecords({
+			organizationId: ids.organizationId,
+			campusAccess: { kind: "selected", campusIds: [ids.campusA] },
+			includeInactive: true,
+		});
+		assert.deepEqual(
+			managerRooms.map((item) => item.id),
+			[room.id],
+		);
+		assert.ok(!managerRooms.some((item) => item.id === roomB.id));
+
+		const { course: trainingCourse, group } = await createClassFixture(ids);
+		if (!trainingCourse)
+			throw new Error("Expected a generated course fixture.");
+		const missingRoomInput = {
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "仅有旧文本",
+			startsAt: new Date("2031-07-31T02:00:00.000Z"),
+			endsAt: new Date("2031-07-31T03:00:00.000Z"),
+		};
+		await expectError(
+			createLessonRepositoryRecord({
+				...missingRoomInput,
+				roomId: "",
+			}),
+			"INVALID_INPUT",
+		);
+		const firstEnrollment = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: group.id,
+		});
+		await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: group.id,
+		});
+		await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: group.id,
+		});
+		const scheduled = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "客户端旧快照不应被采用",
+			roomId: room.id,
+			startsAt: new Date("2031-08-01T02:00:00.000Z"),
+			endsAt: new Date("2031-08-01T03:00:00.000Z"),
+		});
+		assert.equal(scheduled.roomId, room.id);
+		assert.equal(scheduled.room, updatedRoom.name);
+		await expectClassroomError(
+			updateClassroomRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: room.id,
+				name: updatedRoom.name,
+				capacity: 2,
+			}),
+			"INVALID_INPUT",
+		);
+		await expectClassroomError(
+			setClassroomActiveRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: room.id,
+				isActive: false,
+			}),
+			"CLASSROOM_HAS_FUTURE_LESSONS",
+		);
+
+		const waitingEnrollment = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: null,
+		});
+		await expectError(
+			assignEnrollmentClassRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				enrollmentId: waitingEnrollment.enrollmentId,
+				classGroupId: group.id,
+			}),
+			"CLASS_FULL",
+		);
+		const [unchangedEnrollment] = await db
+			.select({ classGroupId: enrollment.classGroupId })
+			.from(enrollment)
+			.where(eq(enrollment.id, waitingEnrollment.enrollmentId));
+		assert.equal(unchangedEnrollment?.classGroupId, null);
+		assert.notEqual(
+			firstEnrollment.enrollmentId,
+			waitingEnrollment.enrollmentId,
+		);
+
+		await cancelLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: scheduled.id,
+			reason: "释放教室",
+		});
+		const inactiveRoom = await setClassroomActiveRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			id: room.id,
+			isActive: false,
+		});
+		assert.equal(inactiveRoom.isActive, false);
+		await expectError(
+			createLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				classGroupId: group.id,
+				room: "A101 主教室",
+				roomId: room.id,
+				startsAt: new Date("2031-08-02T02:00:00.000Z"),
+				endsAt: new Date("2031-08-02T03:00:00.000Z"),
+			}),
+			"CLASS_NOT_SCHEDULABLE",
+		);
+		const historicalTextLessonId = randomUUID();
+		await db.insert(lesson).values({
+			id: historicalTextLessonId,
+			organizationId: ids.organizationId,
+			classGroupId: group.id,
+			teacherId: group.teacherId,
+			campusId: group.campusId,
+			room: "旧址 201",
+			roomId: null,
+			startsAt: new Date("2020-08-02T02:00:00.000Z"),
+			endsAt: new Date("2020-08-02T03:00:00.000Z"),
+		});
+		const [historicalTextLesson] = await db
+			.select({ room: lesson.room, roomId: lesson.roomId })
+			.from(lesson)
+			.where(eq(lesson.id, historicalTextLessonId));
+		assert.ok(historicalTextLesson);
+		assert.equal(historicalTextLesson.roomId, null);
+		assert.equal(historicalTextLesson.room, "旧址 201");
+
+		const roomAudits = await db
+			.select({ action: organizationAuditEvent.action })
+			.from(organizationAuditEvent)
+			.where(
+				and(
+					eq(organizationAuditEvent.organizationId, ids.organizationId),
+					eq(organizationAuditEvent.entityId, room.id),
+				),
+			);
+		assert.deepEqual(
+			roomAudits.map((item) => item.action).sort(),
+			[
+				"classroom_created",
+				"classroom_deactivated",
+				"classroom_updated",
+			].sort(),
+		);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("班级停复课按策略冻结历史、幂等写审计并阻止暂停态教学写入", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { group } = await createClassFixture(ids);
+		const runningGroup = await updateClassGroupRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: group.id,
+			...classUpdateData(group, "running"),
+		});
+		const started = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "历史教室",
+			startsAt: new Date("2020-08-01T02:00:00.000Z"),
+			endsAt: new Date("2020-08-01T03:00:00.000Z"),
+		});
+		const keptFuture = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "未来教室",
+			startsAt: new Date("2031-09-01T02:00:00.000Z"),
+			endsAt: new Date("2031-09-01T03:00:00.000Z"),
+		});
+		const keepRequestId = randomUUID();
+		const paused = await pauseClassGroupRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			id: runningGroup.id,
+			reason: "教师短期请假",
+			futureLessonPolicy: "keep",
+			requestId: keepRequestId,
+		});
+		assert.equal(paused.classGroup.status, "paused");
+		assert.deepEqual(paused.affectedLessonIds, [keptFuture.id]);
+		assert.equal(paused.replayed, false);
+		const replayedPause = await pauseClassGroupRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			id: runningGroup.id,
+			reason: "教师短期请假",
+			futureLessonPolicy: "keep",
+			requestId: keepRequestId,
+		});
+		assert.equal(replayedPause.replayed, true);
+		await expectError(
+			pauseClassGroupRecord({
+				organizationId: ids.organizationId,
+				userId: ids.managerId,
+				id: runningGroup.id,
+				reason: "不同载荷",
+				futureLessonPolicy: "keep",
+				requestId: keepRequestId,
+			}),
+			"IDEMPOTENCY_CONFLICT",
+		);
+		const preservedLessons = await db
+			.select({ id: lesson.id, status: lesson.status })
+			.from(lesson)
+			.where(inArray(lesson.id, [started.id, keptFuture.id]));
+		assert.ok(preservedLessons.every((item) => item.status === "scheduled"));
+
+		await expectError(
+			createLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				classGroupId: group.id,
+				room: "暂停后新课次",
+				startsAt: new Date("2031-09-02T02:00:00.000Z"),
+				endsAt: new Date("2031-09-02T03:00:00.000Z"),
+			}),
+			"CLASS_NOT_SCHEDULABLE",
+		);
+		await expectError(
+			createScheduleRuleRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				classGroupId: group.id,
+				data: {
+					weekdays: [1],
+					startMinuteOfDay: 9 * 60,
+					room: "暂停规则教室",
+					validFrom: "2031-09-01",
+					validUntil: "2031-09-30",
+				},
+			}),
+			"CLASS_NOT_SCHEDULABLE",
+		);
+		const pausedRule = await db
+			.insert(lessonScheduleRule)
+			.values({
+				organizationId: ids.organizationId,
+				classGroupId: group.id,
+				weekdays: [1],
+				startMinuteOfDay: 9 * 60,
+				room: keptFuture.room,
+				roomId: keptFuture.roomId,
+				validFrom: "2031-09-01",
+				validUntil: "2031-09-30",
+				createdByUserId: ids.adminId,
+				updatedByUserId: ids.adminId,
+			})
+			.returning();
+		const pausedRuleRecord = pausedRule[0];
+		if (!pausedRuleRecord) throw new Error("Expected paused rule fixture.");
+		await expectError(
+			previewScheduleRuleDeactivationRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				ruleId: pausedRuleRecord.id,
+			}),
+			"CLASS_NOT_SCHEDULABLE",
+		);
+		await expectError(
+			deactivateScheduleRuleRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				ruleId: pausedRuleRecord.id,
+				expectedRevision: pausedRuleRecord.revision,
+				cancelFuture: false,
+				reason: null,
+				requestId: randomUUID(),
+			}),
+			"CLASS_NOT_SCHEDULABLE",
+		);
+		await expectError(
+			deleteScheduleRuleRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				ruleId: pausedRuleRecord.id,
+			}),
+			"CLASS_NOT_SCHEDULABLE",
+		);
+		await expectError(
+			previewBulkLessonUpdateRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				items: [
+					{
+						id: keptFuture.id,
+						expectedVersion: keptFuture.version,
+						startsAt: new Date("2031-09-03T02:00:00.000Z"),
+						teacherId: group.teacherId,
+						room: keptFuture.room,
+						roomId: keptFuture.roomId ?? "",
+					},
+				],
+			}),
+			"CLASS_NOT_SCHEDULABLE",
+		);
+		await expectError(
+			saveLessonAttendanceDraftRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: started.id,
+				attendance: [],
+			}),
+			"CLASS_ATTENDANCE_LOCKED",
+		);
+		await expectError(
+			completeLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: started.id,
+				attendance: [],
+			}),
+			"CLASS_ATTENDANCE_LOCKED",
+		);
+
+		const resumeRequestId = randomUUID();
+		const resumed = await resumeClassGroupRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			id: group.id,
+			reason: "教师已返岗",
+			requestId: resumeRequestId,
+		});
+		assert.equal(resumed.classGroup.status, "running");
+		assert.equal(resumed.replayed, false);
+		assert.equal(
+			(
+				await resumeClassGroupRecord({
+					organizationId: ids.organizationId,
+					userId: ids.managerId,
+					id: group.id,
+					reason: "教师已返岗",
+					requestId: resumeRequestId,
+				})
+			).replayed,
+			true,
+		);
+		await expectError(
+			resumeClassGroupRecord({
+				organizationId: ids.organizationId,
+				userId: ids.managerId,
+				id: group.id,
+				reason: "不同复课原因",
+				requestId: resumeRequestId,
+			}),
+			"IDEMPOTENCY_CONFLICT",
+		);
+
+		const cancelledFuture = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "取消策略教室",
+			startsAt: new Date("2031-10-01T02:00:00.000Z"),
+			endsAt: new Date("2031-10-01T03:00:00.000Z"),
+		});
+		const cancelledBeforePause = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "既有取消课次",
+			startsAt: new Date("2031-10-02T02:00:00.000Z"),
+			endsAt: new Date("2031-10-02T03:00:00.000Z"),
+		});
+		await cancelLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: cancelledBeforePause.id,
+			reason: "原取消原因",
+		});
+		const cancelPause = await pauseClassGroupRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: group.id,
+			reason: "机构统一停课",
+			futureLessonPolicy: "cancel",
+			requestId: randomUUID(),
+		});
+		assert.ok(cancelPause.affectedLessonIds.includes(keptFuture.id));
+		assert.ok(cancelPause.affectedLessonIds.includes(cancelledFuture.id));
+		assert.ok(!cancelPause.affectedLessonIds.includes(started.id));
+		assert.ok(!cancelPause.affectedLessonIds.includes(cancelledBeforePause.id));
+		const finalLessons = await db
+			.select({
+				id: lesson.id,
+				status: lesson.status,
+				reason: lesson.cancellationReason,
+			})
+			.from(lesson)
+			.where(
+				inArray(lesson.id, [
+					started.id,
+					keptFuture.id,
+					cancelledFuture.id,
+					cancelledBeforePause.id,
+				]),
+			);
+		assert.deepEqual(
+			finalLessons.find((item) => item.id === started.id),
+			{ id: started.id, status: "scheduled", reason: null },
+		);
+		assert.deepEqual(
+			finalLessons.find((item) => item.id === cancelledBeforePause.id),
+			{
+				id: cancelledBeforePause.id,
+				status: "cancelled",
+				reason: "原取消原因",
+			},
+		);
+		assert.ok(
+			finalLessons
+				.filter(
+					(item) => item.id === keptFuture.id || item.id === cancelledFuture.id,
+				)
+				.every(
+					(item) =>
+						item.status === "cancelled" && item.reason === "机构统一停课",
+				),
+		);
+
+		const statusAudits = await db
+			.select({ action: organizationAuditEvent.action })
+			.from(organizationAuditEvent)
+			.where(
+				and(
+					eq(organizationAuditEvent.organizationId, ids.organizationId),
+					eq(organizationAuditEvent.entityId, group.id),
+				),
+			);
+		assert.equal(
+			statusAudits.filter((item) => item.action === "class_paused").length,
+			2,
+		);
+		assert.equal(
+			statusAudits.filter((item) => item.action === "class_resumed").length,
+			1,
+		);
+		const events = await db
+			.select({ kind: classStatusEvent.kind })
+			.from(classStatusEvent)
+			.where(eq(classStatusEvent.classGroupId, group.id));
+		assert.equal(events.filter((item) => item.kind === "paused").length, 2);
+		assert.equal(events.filter((item) => item.kind === "resumed").length, 1);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("补课校验来源资格、合并点名名单并按考勤结果恰好一次课消或待重排", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course: trainingCourse, group: sourceGroup } =
+			await createClassFixture(ids, { capacity: 4 });
+		if (!trainingCourse)
+			throw new Error("Expected a generated course fixture.");
+		const { group: targetGroup } = await createClassFixture(ids, {
+			capacity: 4,
+			courseId: trainingCourse.id,
+		});
+		const sourceEnrollment = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: sourceGroup.id,
+			studentName: "补课学员",
+			remainingLessons: 3,
+		});
+		const targetEnrollment = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: targetGroup.id,
+			studentName: "目标班学员",
+			remainingLessons: 3,
+		});
+		const room = await createClassroomRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			campusId: ids.campusA,
+			name: "补课教室",
+			capacity: 3,
+		});
+		const sourceLessonId = randomUUID();
+		await db.insert(lesson).values({
+			id: sourceLessonId,
+			organizationId: ids.organizationId,
+			classGroupId: sourceGroup.id,
+			teacherId: sourceGroup.teacherId,
+			campusId: ids.campusA,
+			room: "历史来源教室",
+			startsAt: new Date("2029-01-01T02:00:00.000Z"),
+			endsAt: new Date("2029-01-01T03:00:00.000Z"),
+			status: "completed",
+			completedAt: new Date("2029-01-01T03:00:00.000Z"),
+			completedByUserId: ids.adminId,
+		});
+		await db.insert(attendance).values({
+			lessonId: sourceLessonId,
+			studentId: sourceEnrollment.studentId,
+			status: "absent",
+			recordedByUserId: ids.adminId,
+		});
+		const invalidSourceLesson = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: sourceGroup.id,
+			room: "未完成来源",
+			startsAt: new Date("2032-01-01T02:00:00.000Z"),
+			endsAt: new Date("2032-01-01T03:00:00.000Z"),
+		});
+		const targetLesson = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: targetGroup.id,
+			room: room.name,
+			roomId: room.id,
+			startsAt: new Date("2032-01-02T02:00:00.000Z"),
+			endsAt: new Date("2032-01-02T03:00:00.000Z"),
+		});
+		await expectError(
+			createMakeupLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				sourceLessonId: invalidSourceLesson.id,
+				sourceEnrollmentId: sourceEnrollment.enrollmentId,
+				targetLessonId: targetLesson.id,
+				requestId: randomUUID(),
+			}),
+			"MAKEUP_LESSON_INVALID",
+		);
+
+		const requestId = randomUUID();
+		const created = await createMakeupLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			sourceLessonId,
+			sourceEnrollmentId: sourceEnrollment.enrollmentId,
+			targetLessonId: targetLesson.id,
+			requestId,
+		});
+		assert.equal(created.replayed, false);
+		assert.equal(created.makeupLesson.status, "scheduled");
+		const waitingSameStudentEnrollmentId = randomUUID();
+		await db.insert(enrollment).values({
+			id: waitingSameStudentEnrollmentId,
+			organizationId: ids.organizationId,
+			studentId: sourceEnrollment.studentId,
+			courseId: trainingCourse.id,
+			classGroupId: null,
+			purchasedLessons: 3,
+			remainingLessons: 3,
+		});
+		await expectError(
+			assignEnrollmentClassRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				enrollmentId: waitingSameStudentEnrollmentId,
+				classGroupId: targetGroup.id,
+			}),
+			"CLASS_STUDENT_DUPLICATE",
+		);
+		assert.equal(
+			(
+				await createMakeupLessonRecord({
+					organizationId: ids.organizationId,
+					userId: ids.adminId,
+					sourceLessonId,
+					sourceEnrollmentId: sourceEnrollment.enrollmentId,
+					targetLessonId: targetLesson.id,
+					requestId,
+				})
+			).replayed,
+			true,
+		);
+		await expectError(
+			createMakeupLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				sourceLessonId,
+				sourceEnrollmentId: sourceEnrollment.enrollmentId,
+				targetLessonId: invalidSourceLesson.id,
+				requestId,
+			}),
+			"IDEMPOTENCY_CONFLICT",
+		);
+		await expectError(
+			createMakeupLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				sourceLessonId,
+				sourceEnrollmentId: sourceEnrollment.enrollmentId,
+				targetLessonId: targetLesson.id,
+				requestId: randomUUID(),
+			}),
+			"MAKEUP_LESSON_DUPLICATE",
+		);
+		const attendanceRecord = await getLessonAttendanceRecord({
+			organizationId: ids.organizationId,
+			campusAccess: { kind: "all" },
+			id: targetLesson.id,
+		});
+		assert.equal(attendanceRecord.members.length, 2);
+		assert.deepEqual(
+			attendanceRecord.members
+				.map((item) => ({
+					enrollmentId: item.enrollmentId,
+					makeupLessonId: item.makeupLessonId,
+				}))
+				.sort((left, right) =>
+					left.enrollmentId.localeCompare(right.enrollmentId),
+				),
+			[
+				{
+					enrollmentId: sourceEnrollment.enrollmentId,
+					makeupLessonId: created.makeupLesson.id,
+				},
+				{
+					enrollmentId: targetEnrollment.enrollmentId,
+					makeupLessonId: null,
+				},
+			].sort((left, right) =>
+				left.enrollmentId.localeCompare(right.enrollmentId),
+			),
+		);
+		const [sourceBeforeCompletion] = await db
+			.select({ status: lesson.status })
+			.from(lesson)
+			.where(eq(lesson.id, sourceLessonId));
+		assert.equal(sourceBeforeCompletion?.status, "completed");
+
+		await db
+			.update(lesson)
+			.set({
+				startsAt: new Date("2020-02-01T02:00:00.000Z"),
+				endsAt: new Date("2020-02-01T03:00:00.000Z"),
+			})
+			.where(eq(lesson.id, targetLesson.id));
+		await completeLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: targetLesson.id,
+			attendance: [
+				{
+					enrollmentId: targetEnrollment.enrollmentId,
+					status: "present",
+					note: null,
+				},
+				{
+					enrollmentId: sourceEnrollment.enrollmentId,
+					status: "late",
+					note: null,
+				},
+			],
+		});
+		const [fulfilled, sourceAfterCompletion, sourceConsumptions] =
+			await Promise.all([
+				listMakeupLessonRecords({
+					organizationId: ids.organizationId,
+					campusAccess: { kind: "all" },
+					sourceEnrollmentId: sourceEnrollment.enrollmentId,
+				}),
+				db
+					.select({ remainingLessons: enrollment.remainingLessons })
+					.from(enrollment)
+					.where(eq(enrollment.id, sourceEnrollment.enrollmentId)),
+				db
+					.select({ id: lessonConsumption.id })
+					.from(lessonConsumption)
+					.where(
+						and(
+							eq(lessonConsumption.lessonId, targetLesson.id),
+							eq(lessonConsumption.enrollmentId, sourceEnrollment.enrollmentId),
+						),
+					),
+			]);
+		assert.equal(fulfilled[0]?.status, "fulfilled");
+		assert.equal(sourceAfterCompletion[0]?.remainingLessons, 2);
+		assert.equal(sourceConsumptions.length, 1);
+		const duplicateFulfilledTarget = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: targetGroup.id,
+			room: room.name,
+			roomId: room.id,
+			startsAt: new Date("2032-01-03T02:00:00.000Z"),
+			endsAt: new Date("2032-01-03T03:00:00.000Z"),
+		});
+		await expectError(
+			createMakeupLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				sourceLessonId,
+				sourceEnrollmentId: sourceEnrollment.enrollmentId,
+				targetLessonId: duplicateFulfilledTarget.id,
+				requestId: randomUUID(),
+			}),
+			"MAKEUP_LESSON_DUPLICATE",
+		);
+		await expectError(
+			completeLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: targetLesson.id,
+				attendance: [],
+			}),
+			"LESSON_COMPLETION_INVALID",
+		);
+		assert.equal(
+			(
+				await db
+					.select({ id: lessonConsumption.id })
+					.from(lessonConsumption)
+					.where(
+						and(
+							eq(lessonConsumption.lessonId, targetLesson.id),
+							eq(lessonConsumption.enrollmentId, sourceEnrollment.enrollmentId),
+						),
+					)
+			).length,
+			1,
+		);
+
+		const leaveSourceLessonId = randomUUID();
+		await db.insert(lesson).values({
+			id: leaveSourceLessonId,
+			organizationId: ids.organizationId,
+			classGroupId: sourceGroup.id,
+			teacherId: sourceGroup.teacherId,
+			campusId: ids.campusA,
+			room: "请假来源教室",
+			startsAt: new Date("2029-03-01T02:00:00.000Z"),
+			endsAt: new Date("2029-03-01T03:00:00.000Z"),
+			status: "completed",
+			completedAt: new Date("2029-03-01T03:00:00.000Z"),
+			completedByUserId: ids.adminId,
+		});
+		await db.insert(attendance).values({
+			lessonId: leaveSourceLessonId,
+			studentId: sourceEnrollment.studentId,
+			status: "leave",
+			recordedByUserId: ids.adminId,
+		});
+		const leaveTargetLesson = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: targetGroup.id,
+			room: room.name,
+			roomId: room.id,
+			startsAt: new Date("2032-03-02T02:00:00.000Z"),
+			endsAt: new Date("2032-03-02T03:00:00.000Z"),
+		});
+		const leaveMakeup = await createMakeupLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			sourceLessonId: leaveSourceLessonId,
+			sourceEnrollmentId: sourceEnrollment.enrollmentId,
+			targetLessonId: leaveTargetLesson.id,
+			requestId: randomUUID(),
+		});
+		await db
+			.update(lesson)
+			.set({
+				startsAt: new Date("2020-03-02T02:00:00.000Z"),
+				endsAt: new Date("2020-03-02T03:00:00.000Z"),
+			})
+			.where(eq(lesson.id, leaveTargetLesson.id));
+		await completeLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: leaveTargetLesson.id,
+			attendance: [
+				{
+					enrollmentId: targetEnrollment.enrollmentId,
+					status: "present",
+					note: null,
+				},
+				{
+					enrollmentId: sourceEnrollment.enrollmentId,
+					status: "leave",
+					note: null,
+				},
+			],
+		});
+		const [leaveMakeupAfterCompletion, balanceAfterLeave, leaveConsumption] =
+			await Promise.all([
+				listMakeupLessonRecords({
+					organizationId: ids.organizationId,
+					campusAccess: { kind: "all" },
+					sourceEnrollmentId: sourceEnrollment.enrollmentId,
+				}),
+				db
+					.select({ remainingLessons: enrollment.remainingLessons })
+					.from(enrollment)
+					.where(eq(enrollment.id, sourceEnrollment.enrollmentId)),
+				db
+					.select({ id: lessonConsumption.id })
+					.from(lessonConsumption)
+					.where(
+						and(
+							eq(lessonConsumption.lessonId, leaveTargetLesson.id),
+							eq(lessonConsumption.enrollmentId, sourceEnrollment.enrollmentId),
+						),
+					),
+			]);
+		assert.equal(
+			leaveMakeupAfterCompletion.find(
+				(item) => item.id === leaveMakeup.makeupLesson.id,
+			)?.status,
+			"needs_reschedule",
+		);
+		assert.equal(balanceAfterLeave[0]?.remainingLessons, 2);
+		assert.equal(leaveConsumption.length, 0);
+		const replacementLesson = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: targetGroup.id,
+			room: room.name,
+			roomId: room.id,
+			startsAt: new Date("2032-03-03T02:00:00.000Z"),
+			endsAt: new Date("2032-03-03T03:00:00.000Z"),
+		});
+		const replacement = await createMakeupLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			sourceLessonId: leaveSourceLessonId,
+			sourceEnrollmentId: sourceEnrollment.enrollmentId,
+			targetLessonId: replacementLesson.id,
+			requestId: randomUUID(),
+		});
+		const cancelledReplacement = await cancelMakeupLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: replacement.makeupLesson.id,
+		});
+		assert.equal(cancelledReplacement.makeupLesson.status, "cancelled");
+		assert.equal(
+			(
+				await cancelMakeupLessonRecord({
+					organizationId: ids.organizationId,
+					userId: ids.adminId,
+					id: replacement.makeupLesson.id,
+				})
+			).replayed,
+			true,
+		);
+		const cancelledTargetLesson = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: targetGroup.id,
+			room: room.name,
+			roomId: room.id,
+			startsAt: new Date("2032-03-04T02:00:00.000Z"),
+			endsAt: new Date("2032-03-04T03:00:00.000Z"),
+		});
+		const cancelledTargetMakeup = await createMakeupLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			sourceLessonId: leaveSourceLessonId,
+			sourceEnrollmentId: sourceEnrollment.enrollmentId,
+			targetLessonId: cancelledTargetLesson.id,
+			requestId: randomUUID(),
+		});
+		await cancelLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: cancelledTargetLesson.id,
+			reason: "目标课次取消",
+		});
+		assert.equal(
+			(
+				await listMakeupLessonRecords({
+					organizationId: ids.organizationId,
+					campusAccess: { kind: "all" },
+					sourceEnrollmentId: sourceEnrollment.enrollmentId,
+				})
+			).find((item) => item.id === cancelledTargetMakeup.makeupLesson.id)
+				?.status,
+			"needs_reschedule",
+		);
+		const startedTargetLesson = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: targetGroup.id,
+			room: room.name,
+			roomId: room.id,
+			startsAt: new Date("2032-03-05T04:00:00.000Z"),
+			endsAt: new Date("2032-03-05T05:00:00.000Z"),
+		});
+		const startedTargetMakeup = await createMakeupLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			sourceLessonId: leaveSourceLessonId,
+			sourceEnrollmentId: sourceEnrollment.enrollmentId,
+			targetLessonId: startedTargetLesson.id,
+			requestId: randomUUID(),
+		});
+		await db
+			.update(lesson)
+			.set({ startsAt: new Date("2020-03-05T04:00:00.000Z") })
+			.where(eq(lesson.id, startedTargetLesson.id));
+		await expectError(
+			cancelMakeupLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				id: startedTargetMakeup.makeupLesson.id,
+			}),
+			"MAKEUP_LESSON_INVALID",
+		);
+		const [sourceFact, sourceAttendance] = await Promise.all([
+			db
+				.select({ status: lesson.status })
+				.from(lesson)
+				.where(eq(lesson.id, sourceLessonId)),
+			db
+				.select({ status: attendance.status })
+				.from(attendance)
+				.where(
+					and(
+						eq(attendance.lessonId, sourceLessonId),
+						eq(attendance.studentId, sourceEnrollment.studentId),
+					),
+				),
+		]);
+		assert.equal(sourceFact[0]?.status, "completed");
+		assert.equal(sourceAttendance[0]?.status, "absent");
 	} finally {
 		await cleanup(ids);
 	}
@@ -1196,6 +2359,7 @@ test("周期规则预览、原子生成与停用分支只影响未来待上课�
 				occurrenceDate: item.occurrenceDate,
 				startsAt: item.startsAt,
 				room: item.room,
+				roomId: item.roomId ?? "",
 			})),
 		});
 		assert.equal(generated.replayed, false);
@@ -1261,6 +2425,7 @@ test("周期规则预览、原子生成与停用分支只影响未来待上课�
 				occurrenceDate: item.occurrenceDate,
 				startsAt: item.startsAt,
 				room: item.room,
+				roomId: item.roomId ?? "",
 			})),
 		});
 		const cancelled = await deactivateScheduleRuleRecord({
@@ -1307,6 +2472,7 @@ test("周期规则创建和修改会拒绝同班级未来时段重叠", async ()
 					weekdays: [1, 3],
 					startMinuteOfDay: 9 * 60 + 30,
 					room: "A102",
+					roomId: first.roomId ?? "",
 					validFrom: "2030-08-01",
 					validUntil: "2030-08-31",
 				},
@@ -1335,6 +2501,7 @@ test("周期规则创建和修改会拒绝同班级未来时段重叠", async ()
 					weekdays: [1, 3],
 					startMinuteOfDay: 9 * 60 + 30,
 					room: "A102",
+					roomId: second.roomId ?? "",
 					validFrom: "2030-08-01",
 					validUntil: "2030-08-31",
 				},
@@ -1353,6 +2520,7 @@ test("周期规则创建和修改会拒绝同班级未来时段重叠", async ()
 					weekdays: [1, 3],
 					startMinuteOfDay: 9 * 60 + 30,
 					room: "A102",
+					roomId: second.roomId ?? "",
 					validFrom: "2030-08-01",
 					validUntil: "2030-08-31",
 				},
@@ -1454,6 +2622,7 @@ test("未生成课次的周期规则可删除，已生成课次的规则保留�
 				occurrenceDate: item.occurrenceDate,
 				startsAt: item.startsAt,
 				room: item.room,
+				roomId: item.roomId ?? "",
 			})),
 		});
 		await expectError(

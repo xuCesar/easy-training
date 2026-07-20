@@ -1,0 +1,1 @@
+ALTER TABLE "class_status_event" ADD COLUMN "affected_lesson_ids" uuid[] DEFAULT '{}' NOT NULL;

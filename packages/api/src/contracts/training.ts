@@ -158,6 +158,48 @@ export type CampusListResult = z.infer<typeof campusListResultSchema>;
 export type CreateCampusInput = z.infer<typeof createCampusInputSchema>;
 export type UpdateCampusInput = z.infer<typeof updateCampusInputSchema>;
 export type SetCampusActiveInput = z.infer<typeof setCampusActiveInputSchema>;
+
+const classroomSchema = z.object({
+	id: z.uuid(),
+	organizationId: z.uuid(),
+	campusId: z.uuid(),
+	name: z.string(),
+	capacity: z.number().int().positive(),
+	isActive: z.boolean(),
+	createdAt: z.iso.datetime({ offset: true }),
+	updatedAt: z.iso.datetime({ offset: true }),
+});
+export const classroomListInputSchema = z.object({
+	campusId: z.uuid().optional(),
+	includeInactive: z.boolean().default(true),
+});
+export const classroomListResultSchema = z.object({
+	items: z.array(classroomSchema),
+});
+export const createClassroomInputSchema = z.object({
+	campusId: z.uuid(),
+	name: z.string().trim().min(1).max(100),
+	capacity: z.number().int().min(1).max(10_000),
+});
+export const updateClassroomInputSchema = z.object({
+	id: z.uuid(),
+	data: z.object({
+		name: z.string().trim().min(1).max(100),
+		capacity: z.number().int().min(1).max(10_000),
+	}),
+});
+export const setClassroomActiveInputSchema = z.object({
+	id: z.uuid(),
+	isActive: z.boolean(),
+});
+export type Classroom = z.infer<typeof classroomSchema>;
+export type ClassroomListInput = z.infer<typeof classroomListInputSchema>;
+export type ClassroomListResult = z.infer<typeof classroomListResultSchema>;
+export type CreateClassroomInput = z.infer<typeof createClassroomInputSchema>;
+export type UpdateClassroomInput = z.infer<typeof updateClassroomInputSchema>;
+export type SetClassroomActiveInput = z.infer<
+	typeof setClassroomActiveInputSchema
+>;
 export type MemberListResult = z.infer<typeof memberListResultSchema>;
 export type UpdateMemberInput = z.infer<typeof updateMemberInputSchema>;
 export type RemoveMemberInput = z.infer<typeof removeMemberInputSchema>;
@@ -396,6 +438,15 @@ const auditActionSchema = z.enum([
 	"lessons_bulk_rescheduled",
 	"lessons_bulk_cancelled",
 	"teacher_binding_changed",
+	"class_paused",
+	"class_resumed",
+	"classroom_created",
+	"classroom_updated",
+	"classroom_activated",
+	"classroom_deactivated",
+	"makeup_lesson_created",
+	"makeup_lesson_cancelled",
+	"makeup_lesson_needs_reschedule",
 	"lead_imported",
 	"lead_exported",
 	"notification_read",
@@ -1130,6 +1181,26 @@ export const updateClassGroupInputSchema = z.object({
 	id: z.uuid(),
 	data: classGroupDataSchema,
 });
+export const pauseClassGroupInputSchema = z.object({
+	id: z.uuid(),
+	reason: z.string().trim().min(1).max(500),
+	futureLessonPolicy: z.enum(["keep", "cancel"]),
+	requestId: z.uuid(),
+});
+export const pauseClassGroupResultSchema = z.object({
+	classGroup: classGroupSchema,
+	affectedLessonIds: z.array(z.uuid()),
+	replayed: z.boolean(),
+});
+export const resumeClassGroupInputSchema = z.object({
+	id: z.uuid(),
+	reason: z.string().trim().min(1).max(500),
+	requestId: z.uuid(),
+});
+export const resumeClassGroupResultSchema = z.object({
+	classGroup: classGroupSchema,
+	replayed: z.boolean(),
+});
 
 const classEnrollmentSchema = z.object({
 	enrollmentId: z.uuid(),
@@ -1155,12 +1226,16 @@ const lessonSchema = z.object({
 	id: z.uuid(),
 	classGroupId: z.uuid(),
 	className: z.string(),
+	courseId: z.uuid(),
 	courseName: z.string(),
+	classStatus: classStatusSchema,
+	pausedOverdue: z.boolean(),
 	campusId: z.uuid(),
 	campusName: z.string(),
 	teacherId: z.uuid(),
 	teacherName: z.string(),
 	room: z.string(),
+	roomId: z.uuid().nullable(),
 	startsAt: z.iso.datetime({ offset: true }),
 	endsAt: z.iso.datetime({ offset: true }),
 	status: lessonStatusSchema,
@@ -1188,6 +1263,7 @@ export const lessonListResultSchema = z.object({
 export const createLessonInputSchema = z.object({
 	classGroupId: z.uuid(),
 	room: z.string().trim().min(1).max(80),
+	roomId: z.uuid(),
 	startsAt: z.iso.datetime({ offset: true }),
 	endsAt: z.iso.datetime({ offset: true }),
 });
@@ -1224,6 +1300,7 @@ export const saveLessonAttendanceDraftInputSchema = z.object({
 });
 const lessonAttendanceMemberSchema = z.object({
 	enrollmentId: z.uuid(),
+	makeupLessonId: z.uuid().nullable(),
 	studentId: z.uuid(),
 	studentName: z.string(),
 	remainingLessons: z.number().int().nonnegative(),
@@ -1244,14 +1321,63 @@ export const teacherWorkspaceResultSchema = z.object({
 	lessons: z.array(lessonSchema),
 });
 
+const makeupLessonStatusSchema = z.enum([
+	"scheduled",
+	"fulfilled",
+	"needs_reschedule",
+	"cancelled",
+]);
+const makeupLessonSchema = z.object({
+	id: z.uuid(),
+	organizationId: z.uuid(),
+	sourceLessonId: z.uuid(),
+	sourceEnrollmentId: z.uuid(),
+	targetLessonId: z.uuid(),
+	studentId: z.uuid(),
+	studentName: z.string(),
+	courseId: z.uuid(),
+	courseName: z.string(),
+	campusId: z.uuid(),
+	targetClassGroupId: z.uuid(),
+	targetClassName: z.string(),
+	targetStartsAt: z.iso.datetime({ offset: true }),
+	status: makeupLessonStatusSchema,
+	requestId: z.uuid(),
+	createdByUserId: z.string(),
+	createdAt: z.iso.datetime({ offset: true }),
+	updatedAt: z.iso.datetime({ offset: true }),
+});
+export const makeupLessonListInputSchema = z.object({
+	campusId: z.uuid().optional(),
+	sourceEnrollmentId: z.uuid().optional(),
+	targetLessonId: z.uuid().optional(),
+	status: makeupLessonStatusSchema.optional(),
+});
+export const makeupLessonListResultSchema = z.object({
+	items: z.array(makeupLessonSchema),
+});
+export const createMakeupLessonInputSchema = z.object({
+	sourceLessonId: z.uuid(),
+	sourceEnrollmentId: z.uuid(),
+	targetLessonId: z.uuid(),
+	requestId: z.uuid(),
+});
+export const cancelMakeupLessonInputSchema = z.object({ id: z.uuid() });
+export const makeupLessonMutationResultSchema = z.object({
+	makeupLesson: makeupLessonSchema,
+	replayed: z.boolean(),
+});
+
 const scheduleRuleDataSchema = z.object({
 	weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
 	startMinuteOfDay: z.number().int().min(0).max(1439),
 	room: z.string().trim().min(1).max(80),
+	roomId: z.uuid(),
 	validFrom: z.iso.date(),
 	validUntil: z.iso.date(),
 });
 const scheduleRuleSchema = scheduleRuleDataSchema.extend({
+	roomId: z.uuid().nullable(),
 	id: z.uuid(),
 	organizationId: z.uuid(),
 	classGroupId: z.uuid(),
@@ -1275,8 +1401,10 @@ const scheduleCandidateOverrideSchema = z.object({
 	occurrenceDate: z.iso.date(),
 	startsAt: z.iso.datetime({ offset: true }),
 	room: z.string().trim().min(1).max(80),
+	roomId: z.uuid(),
 });
 const scheduleCandidateSchema = scheduleCandidateOverrideSchema.extend({
+	roomId: z.uuid().nullable(),
 	baselineStartsAt: z.iso.datetime({ offset: true }),
 	endsAt: z.iso.datetime({ offset: true }),
 	conflicts: z.array(z.enum(["teacher", "room", "already_generated"])),
@@ -1328,11 +1456,13 @@ const scheduleRuleUpdateItemSchema = z.object({
 		startsAt: z.iso.datetime({ offset: true }),
 		endsAt: z.iso.datetime({ offset: true }),
 		room: z.string(),
+		roomId: z.uuid().nullable(),
 	}),
 	proposed: z.object({
 		startsAt: z.iso.datetime({ offset: true }),
 		endsAt: z.iso.datetime({ offset: true }),
 		room: z.string(),
+		roomId: z.uuid().nullable(),
 	}),
 	conflicts: z.array(z.enum(["teacher", "room", "already_generated"])),
 });
@@ -1378,6 +1508,7 @@ const bulkLessonUpdateItemInputSchema = z.object({
 	startsAt: z.iso.datetime({ offset: true }),
 	teacherId: z.uuid(),
 	room: z.string().trim().min(1).max(80),
+	roomId: z.uuid(),
 });
 const bulkLessonUpdateItemSchema = z.object({
 	id: z.uuid(),
@@ -1389,12 +1520,14 @@ const bulkLessonUpdateItemSchema = z.object({
 		endsAt: z.iso.datetime({ offset: true }),
 		teacherId: z.uuid(),
 		room: z.string(),
+		roomId: z.uuid().nullable(),
 	}),
 	proposed: z.object({
 		startsAt: z.iso.datetime({ offset: true }),
 		endsAt: z.iso.datetime({ offset: true }),
 		teacherId: z.uuid(),
 		room: z.string(),
+		roomId: z.uuid().nullable(),
 	}),
 	conflicts: z.array(z.enum(["teacher", "room", "time"])),
 });
@@ -1426,6 +1559,8 @@ export type ClassGroup = z.infer<typeof classGroupSchema>;
 export type ClassGroupListInput = z.infer<typeof classGroupListInputSchema>;
 export type CreateClassGroupInput = z.infer<typeof createClassGroupInputSchema>;
 export type UpdateClassGroupInput = z.infer<typeof updateClassGroupInputSchema>;
+export type PauseClassGroupInput = z.infer<typeof pauseClassGroupInputSchema>;
+export type ResumeClassGroupInput = z.infer<typeof resumeClassGroupInputSchema>;
 export type ClassEnrollmentListInput = z.infer<
 	typeof classEnrollmentListInputSchema
 >;
@@ -1442,6 +1577,14 @@ export type LessonAttendanceInput = z.infer<typeof lessonAttendanceInputSchema>;
 export type LessonAttendance = z.infer<typeof lessonAttendanceResultSchema>;
 export type SaveLessonAttendanceDraftInput = z.infer<
 	typeof saveLessonAttendanceDraftInputSchema
+>;
+export type MakeupLesson = z.infer<typeof makeupLessonSchema>;
+export type MakeupLessonListInput = z.infer<typeof makeupLessonListInputSchema>;
+export type CreateMakeupLessonInput = z.infer<
+	typeof createMakeupLessonInputSchema
+>;
+export type CancelMakeupLessonInput = z.infer<
+	typeof cancelMakeupLessonInputSchema
 >;
 export type TeacherWorkspaceInput = z.infer<typeof teacherWorkspaceInputSchema>;
 export type ScheduleRule = z.infer<typeof scheduleRuleSchema>;

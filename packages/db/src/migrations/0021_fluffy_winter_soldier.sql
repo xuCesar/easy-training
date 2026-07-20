@@ -1,0 +1,1 @@
+ALTER TYPE "public"."organization_audit_action" ADD VALUE 'makeup_lesson_needs_reschedule' BEFORE 'lead_imported';

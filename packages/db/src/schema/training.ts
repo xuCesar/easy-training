@@ -52,6 +52,15 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"lessons_bulk_rescheduled",
 	"lessons_bulk_cancelled",
 	"teacher_binding_changed",
+	"class_paused",
+	"class_resumed",
+	"classroom_created",
+	"classroom_updated",
+	"classroom_activated",
+	"classroom_deactivated",
+	"makeup_lesson_created",
+	"makeup_lesson_cancelled",
+	"makeup_lesson_needs_reschedule",
 	"lead_imported",
 	"lead_exported",
 	"notification_read",
@@ -117,6 +126,20 @@ export const attendanceStatus = pgEnum("attendance_status", [
 	"late",
 	"leave",
 ]);
+export const makeupLessonStatus = pgEnum("makeup_lesson_status", [
+	"scheduled",
+	"fulfilled",
+	"needs_reschedule",
+	"cancelled",
+]);
+export const classStatusEventKind = pgEnum("class_status_event_kind", [
+	"paused",
+	"resumed",
+]);
+export const classPauseFutureLessonPolicy = pgEnum(
+	"class_pause_future_lesson_policy",
+	["keep", "cancel"],
+);
 export const enrollmentStatus = pgEnum("enrollment_status", [
 	"active",
 	"transferred",
@@ -735,6 +758,79 @@ export const classGroup = pgTable(
 	],
 );
 
+export const classroom = pgTable(
+	"classroom",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id, { onDelete: "restrict" }),
+		name: text("name").notNull(),
+		nameNormalized: text("name_normalized").notNull(),
+		capacity: integer("capacity").notNull(),
+		isActive: boolean("is_active").default(true).notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("classroom_org_campus_name_uidx").on(
+			table.organizationId,
+			table.campusId,
+			table.nameNormalized,
+		),
+		index("classroom_org_campus_active_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.isActive,
+		),
+	],
+);
+
+export const classStatusEvent = pgTable(
+	"class_status_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		classGroupId: uuid("class_group_id")
+			.notNull()
+			.references(() => classGroup.id, { onDelete: "cascade" }),
+		kind: classStatusEventKind("kind").notNull(),
+		futureLessonPolicy: classPauseFutureLessonPolicy("future_lesson_policy"),
+		reason: text("reason").notNull(),
+		affectedLessonIds: uuid("affected_lesson_ids")
+			.array()
+			.default([])
+			.notNull(),
+		requestId: uuid("request_id").notNull(),
+		actorUserId: text("actor_user_id")
+			.notNull()
+			.references(() => user.id),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("class_status_event_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("class_status_event_class_created_idx").on(
+			table.classGroupId,
+			table.createdAt,
+		),
+	],
+);
+
 export const lessonScheduleRule = pgTable(
 	"lesson_schedule_rule",
 	{
@@ -750,6 +846,9 @@ export const lessonScheduleRule = pgTable(
 		weekdays: integer("weekdays").array().notNull(),
 		startMinuteOfDay: integer("start_minute_of_day").notNull(),
 		room: text("room").notNull(),
+		roomId: uuid("room_id").references(() => classroom.id, {
+			onDelete: "set null",
+		}),
 		timezone: text("timezone").default("Asia/Shanghai").notNull(),
 		validFrom: date("valid_from").notNull(),
 		validUntil: date("valid_until").notNull(),
@@ -920,6 +1019,9 @@ export const lesson = pgTable(
 			.notNull()
 			.references(() => campus.id),
 		room: text("room").notNull(),
+		roomId: uuid("room_id").references(() => classroom.id, {
+			onDelete: "set null",
+		}),
 		scheduleRuleId: uuid("schedule_rule_id").references(
 			() => lessonScheduleRule.id,
 		),
@@ -966,6 +1068,51 @@ export const lesson = pgTable(
 			table.campusId,
 			table.room,
 			table.startsAt,
+		),
+	],
+);
+
+export const makeupLesson = pgTable(
+	"makeup_lesson",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		sourceLessonId: uuid("source_lesson_id")
+			.notNull()
+			.references(() => lesson.id),
+		sourceEnrollmentId: uuid("source_enrollment_id")
+			.notNull()
+			.references(() => enrollment.id),
+		targetLessonId: uuid("target_lesson_id")
+			.notNull()
+			.references(() => lesson.id),
+		status: makeupLessonStatus("status").default("scheduled").notNull(),
+		requestId: uuid("request_id").notNull(),
+		requestFingerprint: text("request_fingerprint").notNull(),
+		createdByUserId: text("created_by_user_id")
+			.notNull()
+			.references(() => user.id),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("makeup_lesson_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		uniqueIndex("makeup_lesson_source_active_uidx")
+			.on(table.sourceLessonId, table.sourceEnrollmentId)
+			.where(sql`${table.status} = 'scheduled'`),
+		index("makeup_lesson_target_status_idx").on(
+			table.targetLessonId,
+			table.status,
 		),
 	],
 );
@@ -1262,6 +1409,15 @@ export const campusRelations = relations(campus, ({ one, many }) => ({
 	}),
 	students: many(student),
 	classes: many(classGroup),
+	classrooms: many(classroom),
+}));
+
+export const classroomRelations = relations(classroom, ({ one, many }) => ({
+	campus: one(campus, {
+		fields: [classroom.campusId],
+		references: [campus.id],
+	}),
+	lessons: many(lesson),
 }));
 
 export const studentRelations = relations(student, ({ one, many }) => ({
@@ -1349,7 +1505,18 @@ export const classGroupRelations = relations(classGroup, ({ one, many }) => ({
 	lessons: many(lesson),
 	scheduleRules: many(lessonScheduleRule),
 	enrollments: many(enrollment),
+	statusEvents: many(classStatusEvent),
 }));
+
+export const classStatusEventRelations = relations(
+	classStatusEvent,
+	({ one }) => ({
+		classGroup: one(classGroup, {
+			fields: [classStatusEvent.classGroupId],
+			references: [classGroup.id],
+		}),
+	}),
+);
 
 export const enrollmentRelations = relations(enrollment, ({ many }) => ({
 	lessonConsumptions: many(lessonConsumption),
@@ -1368,12 +1535,35 @@ export const lessonScheduleRuleRelations = relations(
 );
 
 export const lessonRelations = relations(lesson, ({ one, many }) => ({
+	classroom: one(classroom, {
+		fields: [lesson.roomId],
+		references: [classroom.id],
+	}),
 	scheduleRule: one(lessonScheduleRule, {
 		fields: [lesson.scheduleRuleId],
 		references: [lessonScheduleRule.id],
 	}),
 	attendances: many(attendance),
 	consumptions: many(lessonConsumption),
+	makeupSources: many(makeupLesson, { relationName: "sourceLesson" }),
+	makeupTargets: many(makeupLesson, { relationName: "targetLesson" }),
+}));
+
+export const makeupLessonRelations = relations(makeupLesson, ({ one }) => ({
+	sourceLesson: one(lesson, {
+		fields: [makeupLesson.sourceLessonId],
+		references: [lesson.id],
+		relationName: "sourceLesson",
+	}),
+	targetLesson: one(lesson, {
+		fields: [makeupLesson.targetLessonId],
+		references: [lesson.id],
+		relationName: "targetLesson",
+	}),
+	sourceEnrollment: one(enrollment, {
+		fields: [makeupLesson.sourceEnrollmentId],
+		references: [enrollment.id],
+	}),
 }));
 
 export const lessonConsumptionRelations = relations(

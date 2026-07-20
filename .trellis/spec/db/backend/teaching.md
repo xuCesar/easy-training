@@ -9,7 +9,7 @@
 - 课程：`list/create/update/setActiveCourseRecord`，机构级目录，仅 `owner/admin` 可写。
 - 教师：`list/create/updateTeacherRecord`，教师必须通过 `teacherCampus` 归属一个或多个启用校区。
 - 班级：`list/create/updateClassGroupRecord`，属于单一校区、课程和主讲教师。
-- 课次：`list/create/cancelLessonRecord`；创建输入 `{ classGroupId, room, startsAt, endsAt }`，取消输入 `{ id, reason? }`。
+- 课次：`list/create/cancelLessonRecord`；新建输入 `{ classGroupId, roomId, room, startsAt, endsAt }`，其中 `roomId` 是必须校验的资源标识，`room` 仅为兼容字段并由服务端以教室名称覆盖为历史快照；取消输入 `{ id, reason? }`。
 - 入班：`listClassEnrollmentRecords({ classGroupId })` 与 `assignEnrollmentClassRecord({ enrollmentId, classGroupId | null })`；仍使用 `enrollment.classGroupId`，不维护平行成员表。
 - 点名结课：`getLessonAttendanceRecord({ id })` 返回当前名单；`completeLessonRecord({ id, attendance })` 以完整名单完成考勤、消课和课次结课。
 
@@ -21,7 +21,7 @@
 - 新建班级要求课程和校区启用、教师归属目标校区、容量为正，且仓储/API 固定写为 `recruiting`；已有报名或课次时禁止更换课程或校区，容量不能小于 active 报名数。
 - 班级状态唯一允许 `recruiting → running`、`running → paused | completed`、`paused → running | completed`；`completed` 只能保持完成态，不能重新开启。首次进入 `completed` 前不得存在 `scheduled` 课次。
 - 课次继承班级的校区和主讲教师，限 `recruiting/running` 班级；时长必须等于课程标准时长。时间区间为半开区间 `[startsAt, endsAt)`，以 `Asia/Shanghai` 解释和展示。
-- 冲突判断仅针对 `scheduled` 课次：同教师或同机构内同校区、规范化教室，满足 `existing.startsAt < next.endsAt && existing.endsAt > next.startsAt` 即冲突。
+- 冲突判断仅针对 `scheduled` 课次：同教师或同机构内同校区、同 `roomId` 时，满足 `existing.startsAt < next.endsAt && existing.endsAt > next.startsAt` 即冲突；为兼容历史数据，`roomId = null` 的既有课次继续以规范化 `room` 快照参与教室冲突判断。
 - 取消仅允许 `scheduled -> cancelled`，写入 `cancelledAt`、`cancelledByUserId` 和可选原因，不改动报名、账单、考勤或课消。
 - 入班只允许 `enrollment.status = active`、同机构、同课程、学员同校区且 `recruiting/running` 的未满班级；移出班级传 `classGroupId: null`，不改动金额、购买课次或剩余课时。同一学员不得在同一班级保留两条 active 报名。
 - 成员列表、容量、报名转化班级候选/入班校验、点名名单和结课消课均只使用 active 报名；这同时保护历史遗留的 `transferred` 记录，即使其错误保留了 `classGroupId` 也不得占用席位、阻止同学员重新报名或参与考勤、扣课。
@@ -179,3 +179,91 @@ const preview = await buildBulkLessonUpdatePreview(tx, {
 });
 // 再以相同 transactionNow、status、version 与资源冲突条件原子更新全部课次。
 ```
+
+## 场景：补课、班级停复课与教室资源
+
+### 1. Scope / Trigger
+
+- 适用于教室资源 CRUD/启停、班级专用停复课、补课安排，以及单次排课、周期规则、规则生成/同步、批量调课和入班的容量联动。
+- `lesson.roomId`、`lesson_schedule_rule.roomId` 为 nullable 仅用于历史兼容；所有新增排课写入口必须提交启用教室的 `roomId`，不得以自由文本绕过资源状态、校区或容量校验。
+
+### 2. Signatures
+
+- 教室：`listClassroomRecords`、`createClassroomRecord`、`updateClassroomRecord`、`setClassroomActiveRecord`；创建输入 `{ campusId, name, capacity }`，更新输入 `{ id, name, capacity }`，启停输入 `{ id, isActive }`。
+- 停复课：`pauseClassGroupRecord({ id, reason, futureLessonPolicy: "keep" | "cancel", requestId })`、`resumeClassGroupRecord({ id, reason, requestId })`。
+- 补课：`listMakeupLessonRecords`、`createMakeupLessonRecord({ sourceLessonId, sourceEnrollmentId, targetLessonId, requestId })`、`cancelMakeupLessonRecord({ id })`。
+- 排课资源：`createLessonRecord`、规则创建/更新/生成/同步与 `bulkUpdateLessonsRecord` 必须携带 `roomId`；服务端读取教室名称并写入 `room` 快照，不能信任客户端自由文本。
+- 数据库：`classroom` 以 `(organizationId, campusId, nameNormalized)` 唯一；`makeupLesson` 以 `(organizationId, requestId)` 幂等，并用部分唯一索引保证同一来源报名/来源课次最多一个 `scheduled` 安排。
+
+### 3. Contracts
+
+- 教室写入统一采用“机构 advisory lock / 当前权限重验 → classroom 行锁”的顺序。更新、启停不得先锁教室再获取机构锁，避免与排课、补课或其他教室写入形成锁顺序反转。
+- 教室容量占用人数为目标班级不同 `studentId` 的 active 报名人数，加目标课次不同学员的 `scheduled` 补课人数；排课、规则生成/同步、批量调课、补课创建都使用该口径。
+- 教室降容必须检查该教室全部未来 `scheduled` 课次；任一课次按上述口径超容时整笔更新失败。停用教室时，只要仍有未来 `scheduled` 引用就拒绝，已完成、已取消或已开始课次不阻止停用。
+- 入班除班级容量外，还必须检查目标班级全部未来、已绑定 `roomId` 的 `scheduled` 课次；新增学员会造成任一课次超容时拒绝。若该学员已作为 `scheduled` 补课成员存在于目标班未来课次，也必须拒绝入班，防止点名名单重复。
+- 停课仅允许 `running -> paused`，必须携带原因、处理策略和 requestId。`keep` 不改写未来课次；`cancel` 在同一事务取消提交时仍未开始的 `scheduled` 课次，并把对应 scheduled 补课标为 `needs_reschedule`。复课仅允许 `paused -> running`，不自动恢复或生成课次。
+- 暂停班级冻结所有未来变更入口：单次排课、规则创建/更新/预览停用/停用/删除、规则生成/同步、批量调课、点名和结课都必须由服务端拒绝；已完成、已取消及已开始课次保持历史事实不变。
+- 补课不修改 `enrollment.classGroupId`、来源课次、来源考勤或来源课消。来源必须是 active 报名在已完成来源课次中的 `absent/leave`；目标必须为同课程、同校区、未开始的 `scheduled` 课次，且学员不是目标班 active 成员。
+- 目标课次名单合并目标班 active 报名和 scheduled 补课成员，并按学员去重。补课成员 `present/late` 写唯一课消并将安排置为 `fulfilled`；`absent/leave` 不扣课并置为 `needs_reschedule`，之后可重新安排。
+- 同一来源报名与来源课次在 `scheduled` 时只能有一条有效安排；`cancelled` 或 `needs_reschedule` 可重排，但一旦任一安排已 `fulfilled`，该来源事实已经完成课消，后续创建必须返回 `MAKEUP_LESSON_DUPLICATE`。取消补课也只允许目标课次仍为未开始的 `scheduled` 状态。
+- 停复课与补课的幂等重放在返回既有结果前，必须锁定关联班级或目标课次并重新执行校区写权限校验；不得仅凭机构内 requestId 返回跨校区数据。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 领域错误 | API 语义 |
+| --- | --- | --- |
+| 教室不存在、跨校区或已停用 | `CLASSROOM_NOT_FOUND` / `CAMPUS_OUT_OF_SCOPE` / `CLASSROOM_INACTIVE` 或排课域对应错误 | `NOT_FOUND` / `FORBIDDEN` / `CONFLICT` |
+| 同校区规范化同名教室 | `CLASSROOM_DUPLICATE` | `CONFLICT` |
+| 教室仍有未来课次时停用 | `CLASSROOM_HAS_FUTURE_LESSONS` | `CONFLICT` |
+| 降容、排课、调课、补课或入班造成未来课次超容 | `CLASS_FULL` 或 `INVALID_INPUT`（教室仓储降容） | `CONFLICT` / `BAD_REQUEST` |
+| 非 running 班级停课、非 paused 班级复课 | `CLASS_NOT_PAUSABLE` / `CLASS_NOT_RESUMABLE` | `CONFLICT` |
+| 暂停班级排课、调课、点名或结课 | `CLASS_NOT_SCHEDULABLE` / `LESSON_BULK_UPDATE_INVALID` / `CLASS_ATTENDANCE_LOCKED` | `CONFLICT` |
+| 补课来源、目标、课程、校区、状态或名单不合法 | `MAKEUP_LESSON_INVALID` | `CONFLICT` |
+| 同一来源已有有效补课或目标课次重复学员 | `MAKEUP_LESSON_DUPLICATE` / `CLASS_STUDENT_DUPLICATE` | `CONFLICT` |
+| 已完成来源再次安排，或取消已开始/非待上目标的补课 | `MAKEUP_LESSON_DUPLICATE` / `MAKEUP_LESSON_INVALID` | `CONFLICT` |
+| 相同 requestId 的载荷不同 | `IDEMPOTENCY_CONFLICT` | `CONFLICT` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：缺勤学员保持原班级归属，被安排到同课程、同校区且容量充足的未来课次；目标点名显示该学员，到课后只扣来源报名一次课时。
+- Good：班级停课选择取消未来课次时，班级状态、未来课次和对应补课安排在一个事务内一致更新；相同 requestId 重放不新增审计。
+- Base：历史课次只有 `room` 文本、`roomId = null` 时仍可展示和参与兼容冲突判断，但不追溯执行启停与容量阻断。
+- Base：教室更名只影响后续排课快照，不改写历史 `lesson.room`；复课也不恢复此前取消的课次。
+- Bad：允许客户端仅传 `room: "A201"` 新增课次，或用班级人数代替“active 班级学员 + scheduled 补课学员”检查容量。
+- Bad：为补课修改学员班级归属，或在班级暂停后仅隐藏前端按钮而不阻断规则和课次写接口。
+
+### 6. Tests Required
+
+- PostgreSQL 集成测试覆盖教室机构/校区权限、同名唯一、启停、未来引用保护，以及降容时 active 报名与 scheduled 补课共同计入容量。
+- 覆盖单次排课、周期规则创建/生成/同步和批量调课拒绝缺失、跨校区或停用 `roomId`，并断言 `room` 快照来自资源名称；历史文本课次保持可读。
+- 覆盖入班对全部未来课次的容量保护，以及学员已有目标班未来补课时拒绝入班。
+- 覆盖停课 keep/cancel、复课、幂等重放/载荷冲突、历史课次冻结，以及暂停期间规则变更、调课、点名和结课均被拒绝。
+- 覆盖补课资格、课程/校区一致性、目标容量、并发唯一、取消、目标课次取消后重排，以及结课后 `fulfilled/needs_reschedule`、课消幂等和来源事实不变。
+- 覆盖 `fulfilled` 来源不可再次安排、已开始目标不可取消，以及跨校区权限不足时不能通过相同 requestId 重放读取既有停复课或补课结果。
+- 并发测试需验证教室写入与排课/补课使用一致锁顺序，不出现死锁或越过更新后的容量、启停状态。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await tx.insert(lesson).values({ room: input.room, roomId: null });
+const attendeeCount = await countClassEnrollments(classGroupId);
+```
+
+自由文本绕过了教室启停、校区与容量约束，且忽略目标课次已有补课学员。
+
+#### Correct
+
+```ts
+const room = await resolveActiveClassroom(tx, {
+  organizationId,
+  campusId,
+  roomId: input.roomId,
+  classGroupId,
+  extraAttendeeCount: scheduledMakeupCount,
+});
+await tx.insert(lesson).values({ roomId: room.id, room: room.name });
+```
+
+`roomId` 是新写入的资源事实，`room` 只保存当时名称快照；容量检查必须显式带入目标课次有效补课人数。

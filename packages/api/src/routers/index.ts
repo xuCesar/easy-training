@@ -13,12 +13,15 @@ import {
 	campusListInputSchema,
 	campusListResultSchema,
 	cancelLessonInputSchema,
+	cancelMakeupLessonInputSchema,
 	claimInvitationInputSchema,
 	claimInvitationResultSchema,
 	classEnrollmentListInputSchema,
 	classEnrollmentListResultSchema,
 	classGroupListInputSchema,
 	classGroupListResultSchema,
+	classroomListInputSchema,
+	classroomListResultSchema,
 	completeLessonInputSchema,
 	confirmLeadImportInputSchema,
 	confirmLeadImportResultSchema,
@@ -28,6 +31,7 @@ import {
 	courseListResultSchema,
 	createCampusInputSchema,
 	createClassGroupInputSchema,
+	createClassroomInputSchema,
 	createCourseInputSchema,
 	createInvitationInputSchema,
 	createInvitationResultSchema,
@@ -36,6 +40,7 @@ import {
 	createLeadInputSchema,
 	createLeadResultSchema,
 	createLessonInputSchema,
+	createMakeupLessonInputSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
 	createRefundInputSchema,
@@ -71,11 +76,16 @@ import {
 	lessonAttendanceResultSchema,
 	lessonListInputSchema,
 	lessonListResultSchema,
+	makeupLessonListInputSchema,
+	makeupLessonListResultSchema,
+	makeupLessonMutationResultSchema,
 	markNotificationReadInputSchema,
 	markNotificationsReadResultSchema,
 	memberListResultSchema,
 	notificationListInputSchema,
 	notificationListResultSchema,
+	pauseClassGroupInputSchema,
+	pauseClassGroupResultSchema,
 	previewBulkLessonUpdateInputSchema,
 	previewBulkLessonUpdateResultSchema,
 	previewLeadImportInputSchema,
@@ -90,12 +100,15 @@ import {
 	renewEnrollmentInputSchema,
 	renewEnrollmentResultSchema,
 	resendInvitationInputSchema,
+	resumeClassGroupInputSchema,
+	resumeClassGroupResultSchema,
 	revokeInvitationInputSchema,
 	saveLessonAttendanceDraftInputSchema,
 	scheduleRuleListInputSchema,
 	scheduleRuleListResultSchema,
 	selectOrganizationInputSchema,
 	setCampusActiveInputSchema,
+	setClassroomActiveInputSchema,
 	setCourseActiveInputSchema,
 	setStudentTagActiveInputSchema,
 	studentDetailInputSchema,
@@ -111,6 +124,7 @@ import {
 	transferEnrollmentResultSchema,
 	updateCampusInputSchema,
 	updateClassGroupInputSchema,
+	updateClassroomInputSchema,
 	updateCourseInputSchema,
 	updateLeadInputSchema,
 	updateMemberInputSchema,
@@ -133,6 +147,12 @@ import {
 	studentProcedure,
 	teacherWorkspaceProcedure,
 } from "../index";
+import {
+	createClassroom,
+	listClassrooms,
+	setClassroomActive,
+	updateClassroom,
+} from "../repositories/classrooms";
 import {
 	convertLead,
 	getLeadConversionOptions,
@@ -199,10 +219,12 @@ import {
 	assignEnrollmentClass,
 	bulkUpdateLessons,
 	cancelLesson,
+	cancelMakeupLesson,
 	completeLesson,
 	createClassGroup,
 	createCourse,
 	createLesson,
+	createMakeupLesson,
 	createScheduleRule,
 	createTeacher,
 	deactivateScheduleRule,
@@ -216,12 +238,15 @@ import {
 	listClassGroups,
 	listCourses,
 	listLessons,
+	listMakeupLessons,
 	listScheduleRules,
 	listTeachers,
+	pauseClassGroup,
 	previewBulkLessonUpdate,
 	previewScheduleGeneration,
 	previewScheduleRuleDeactivation,
 	previewScheduleRuleUpdate,
+	resumeClassGroup,
 	saveLessonAttendanceDraft,
 	setCourseActive,
 	updateClassGroup,
@@ -584,6 +609,60 @@ export const appRouter = {
 			},
 		},
 		teaching: {
+			classrooms: {
+				list: academicManagementProcedure
+					.input(classroomListInputSchema)
+					.output(classroomListResultSchema)
+					.handler(({ context, input }) =>
+						listClassrooms(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				create: academicManagementProcedure
+					.input(createClassroomInputSchema)
+					.output(classroomListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						createClassroom(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				update: academicManagementProcedure
+					.input(updateClassroomInputSchema)
+					.output(classroomListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						updateClassroom(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				setActive: academicManagementProcedure
+					.input(setClassroomActiveInputSchema)
+					.output(classroomListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						setClassroomActive(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
 			courses: {
 				list: organizationProcedure
 					.input(courseListInputSchema)
@@ -843,6 +922,32 @@ export const appRouter = {
 							input,
 						),
 					),
+				pause: academicManagementProcedure
+					.input(pauseClassGroupInputSchema)
+					.output(pauseClassGroupResultSchema)
+					.handler(({ context, input }) =>
+						pauseClassGroup(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				resume: academicManagementProcedure
+					.input(resumeClassGroupInputSchema)
+					.output(resumeClassGroupResultSchema)
+					.handler(({ context, input }) =>
+						resumeClassGroup(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
 				enrollments: academicManagementProcedure
 					.input(classEnrollmentListInputSchema)
 					.output(classEnrollmentListResultSchema)
@@ -967,6 +1072,47 @@ export const appRouter = {
 					.output(lessonListResultSchema.shape.items.element)
 					.handler(({ context, input }) =>
 						cancelLesson(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+			makeups: {
+				list: academicManagementProcedure
+					.input(makeupLessonListInputSchema)
+					.output(makeupLessonListResultSchema)
+					.handler(({ context, input }) =>
+						listMakeupLessons(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				create: academicManagementProcedure
+					.input(createMakeupLessonInputSchema)
+					.output(makeupLessonMutationResultSchema)
+					.handler(({ context, input }) =>
+						createMakeupLesson(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				cancel: academicManagementProcedure
+					.input(cancelMakeupLessonInputSchema)
+					.output(makeupLessonMutationResultSchema)
+					.handler(({ context, input }) =>
+						cancelMakeupLesson(
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,

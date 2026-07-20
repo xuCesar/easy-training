@@ -1,5 +1,6 @@
 import type {
 	ClassGroup,
+	Classroom,
 	ScheduleRule,
 } from "@easy-training/api/contracts/training";
 import { Badge } from "@easy-training/ui/components/badge";
@@ -13,6 +14,13 @@ import {
 	DialogTitle,
 } from "@easy-training/ui/components/dialog";
 import { Input } from "@easy-training/ui/components/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@easy-training/ui/components/select";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { LoaderCircleIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
@@ -26,7 +34,9 @@ type PreviewCandidate = {
 	startsAt: string;
 	endsAt: string;
 	room: string;
+	roomId: string | null;
 	conflicts: Array<"teacher" | "room" | "already_generated">;
+	isConflictChecked: boolean;
 };
 
 const weekdayLabels = [
@@ -41,10 +51,12 @@ const weekdayLabels = [
 
 export function ScheduleRulesDialog({
 	classGroup,
+	classrooms,
 	onClose,
 	onSaved,
 }: {
 	classGroup: ClassGroup;
+	classrooms: Classroom[];
 	onClose: () => void;
 	onSaved: () => Promise<unknown>;
 }) {
@@ -65,6 +77,9 @@ export function ScheduleRulesDialog({
 	);
 	const [isCreatingRule, setIsCreatingRule] = useState(false);
 	const isCreatingRuleRef = useRef(false);
+	const eligibleRooms = classrooms.filter(
+		(item) => item.isActive && item.campusId === classGroup.campusId,
+	);
 	const rulesOptions = orpc.training.teaching.scheduleRules.list.queryOptions({
 		input: { classGroupId: classGroup.id },
 	});
@@ -104,6 +119,12 @@ export function ScheduleRulesDialog({
 		const data = new FormData(form);
 		const startTime = String(data.get("startTime") ?? "");
 		const [hour = 0, minute = 0] = startTime.split(":").map(Number);
+		const roomId = String(data.get("roomId") ?? "");
+		const room = eligibleRooms.find((item) => item.id === roomId);
+		if (!room) {
+			toast.error("请选择启用中的教室");
+			return;
+		}
 		isCreatingRuleRef.current = true;
 		setIsCreatingRule(true);
 		void (async () => {
@@ -113,7 +134,8 @@ export function ScheduleRulesDialog({
 					data: {
 						weekdays: data.getAll("weekday").map(Number),
 						startMinuteOfDay: hour * 60 + minute,
-						room: String(data.get("room") ?? ""),
+						room: room.name,
+						roomId: room.id,
 						validFrom: String(data.get("validFrom") ?? ""),
 						validUntil: String(data.get("validUntil") ?? ""),
 					},
@@ -137,29 +159,72 @@ export function ScheduleRulesDialog({
 	}
 
 	function preview(rule: ScheduleRule, nextCandidates = candidates) {
+		let overrides: Array<{
+			occurrenceDate: string;
+			startsAt: string;
+			room: string;
+			roomId: string;
+		}> = [];
+		try {
+			overrides = nextCandidates.map((item) => {
+				if (!item.roomId) throw new Error("ROOM_REQUIRED");
+				return {
+					occurrenceDate: item.occurrenceDate,
+					startsAt: item.startsAt,
+					room: item.room,
+					roomId: item.roomId,
+				};
+			});
+		} catch {
+			toast.error("请选择启用中的教室资源后再检测冲突");
+			return;
+		}
 		void previewMutation
 			.mutateAsync({
 				ruleId: rule.id,
 				...range,
-				overrides:
-					nextCandidates.length > 0
-						? nextCandidates.map((item) => ({
-								occurrenceDate: item.occurrenceDate,
-								startsAt: item.startsAt,
-								room: item.room,
-							}))
-						: [],
+				overrides,
 			})
 			.then((result) => {
 				setSelectedRule(result.rule);
-				setCandidates(result.candidates);
+				setCandidates(
+					result.candidates.map((candidate) => ({
+						...candidate,
+						isConflictChecked: true,
+					})),
+				);
 			})
 			.catch((error: Error) => toast.error(error.message));
 	}
 
 	function generate() {
-		if (!selectedRule || candidates.some((item) => item.conflicts.length > 0)) {
+		if (
+			!selectedRule ||
+			candidates.some(
+				(item) => !item.isConflictChecked || item.conflicts.length > 0,
+			)
+		) {
 			toast.error("请先调节并重新预览，确认所有冲突均已消除");
+			return;
+		}
+		let generatedCandidates: Array<{
+			occurrenceDate: string;
+			startsAt: string;
+			room: string;
+			roomId: string;
+		}>;
+		try {
+			generatedCandidates = candidates.map((item) => {
+				if (!item.roomId) throw new Error("ROOM_REQUIRED");
+				return {
+					occurrenceDate: item.occurrenceDate,
+					startsAt: item.startsAt,
+					room: item.room,
+					roomId: item.roomId,
+				};
+			});
+		} catch {
+			toast.error("候选课次缺少有效教室，请重新预览");
 			return;
 		}
 		void generateMutation
@@ -169,11 +234,7 @@ export function ScheduleRulesDialog({
 				...range,
 				requestId: crypto.randomUUID(),
 				overrides: [],
-				candidates: candidates.map((item) => ({
-					occurrenceDate: item.occurrenceDate,
-					startsAt: item.startsAt,
-					room: item.room,
-				})),
+				candidates: generatedCandidates,
 			})
 			.then(async (result) => {
 				toast.success(`已生成 ${result.lessonIds.length} 节课次`);
@@ -238,7 +299,18 @@ export function ScheduleRulesDialog({
 
 	return (
 		<>
-			<Dialog open onOpenChange={(open) => !open && onClose()}>
+			<Dialog
+				open
+				onOpenChange={(open) =>
+					!open &&
+					!createMutation.isPending &&
+					!previewMutation.isPending &&
+					!generateMutation.isPending &&
+					!deactivateMutation.isPending &&
+					!deleteMutation.isPending &&
+					onClose()
+				}
+			>
 				<DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
 					<DialogHeader>
 						<DialogTitle>{classGroup.name} · 周期排课</DialogTitle>
@@ -270,7 +342,11 @@ export function ScheduleRulesDialog({
 							type="time"
 							required
 						/>
-						<LabeledInput label="教室" name="room" required />
+						<RoomSelectField
+							name="roomId"
+							rooms={eligibleRooms}
+							defaultValue={eligibleRooms[0]?.id ?? ""}
+						/>
 						<div className="hidden md:block" />
 						<LabeledInput
 							label="生效日期"
@@ -370,17 +446,19 @@ export function ScheduleRulesDialog({
 									label="生成自"
 									type="date"
 									value={range.from}
-									onValueChange={(value) =>
-										setRange((current) => ({ ...current, from: value }))
-									}
+									onValueChange={(value) => {
+										setRange((current) => ({ ...current, from: value }));
+										setCandidates([]);
+									}}
 								/>
 								<LabeledInput
 									label="生成至"
 									type="date"
 									value={range.to}
-									onValueChange={(value) =>
-										setRange((current) => ({ ...current, to: value }))
-									}
+									onValueChange={(value) => {
+										setRange((current) => ({ ...current, to: value }));
+										setCandidates([]);
+									}}
 								/>
 								<Button
 									variant="outline"
@@ -404,15 +482,27 @@ export function ScheduleRulesDialog({
 											onValueChange={(value) =>
 												updateCandidate(setCandidates, index, {
 													startsAt: toShanghaiIso(value),
+													conflicts: [],
+													isConflictChecked: false,
 												})
 											}
 										/>
-										<LabeledInput
-											label="教室"
-											value={item.room}
-											onValueChange={(value) =>
-												updateCandidate(setCandidates, index, { room: value })
-											}
+										<RoomSelectField
+											rooms={eligibleRooms}
+											value={item.roomId ?? ""}
+											fallbackLabel={item.room}
+											onValueChange={(roomId) => {
+												const room = eligibleRooms.find(
+													(value) => value.id === roomId,
+												);
+												if (room)
+													updateCandidate(setCandidates, index, {
+														room: room.name,
+														roomId,
+														conflicts: [],
+														isConflictChecked: false,
+													});
+											}}
 										/>
 										<div className="flex flex-wrap gap-1">
 											{item.conflicts.length === 0 ? (
@@ -434,7 +524,10 @@ export function ScheduleRulesDialog({
 									disabled={
 										generateMutation.isPending ||
 										candidates.length === 0 ||
-										candidates.some((item) => item.conflicts.length > 0)
+										candidates.some(
+											(item) =>
+												!item.isConflictChecked || item.conflicts.length > 0,
+										)
 									}
 								>
 									{generateMutation.isPending ? (
@@ -449,6 +542,7 @@ export function ScheduleRulesDialog({
 					{editingRule ? (
 						<ScheduleRuleUpdatePanel
 							rule={editingRule}
+							rooms={eligibleRooms}
 							onClose={() => setEditingRule(null)}
 							onSaved={async () => {
 								setEditingRule(null);
@@ -579,10 +673,12 @@ type RuleUpdatePreviewItem = {
 
 function ScheduleRuleUpdatePanel({
 	rule,
+	rooms,
 	onClose,
 	onSaved,
 }: {
 	rule: ScheduleRule;
+	rooms: Classroom[];
 	onClose: () => void;
 	onSaved: () => Promise<unknown>;
 }) {
@@ -591,6 +687,7 @@ function ScheduleRuleUpdatePanel({
 		rule.startMinuteOfDay,
 	);
 	const [room, setRoom] = useState(rule.room);
+	const [roomId, setRoomId] = useState(rule.roomId ?? "");
 	const [validFrom, setValidFrom] = useState(rule.validFrom);
 	const [validUntil, setValidUntil] = useState(rule.validUntil);
 	const [effectiveFrom, setEffectiveFrom] = useState(todayInShanghai());
@@ -606,10 +703,18 @@ function ScheduleRuleUpdatePanel({
 		weekdays,
 		startMinuteOfDay,
 		room,
+		roomId,
 		validFrom,
 		validUntil,
 	};
+	function invalidatePreview() {
+		setItems([]);
+	}
 	function preview() {
+		if (!roomId) {
+			toast.error("请选择启用中的教室资源");
+			return;
+		}
 		void previewMutation
 			.mutateAsync({
 				ruleId: rule.id,
@@ -622,7 +727,7 @@ function ScheduleRuleUpdatePanel({
 			.catch((error: Error) => toast.error(error.message));
 	}
 	function submit() {
-		if (items.some((item) => item.conflicts.length > 0)) {
+		if (items.length === 0 || items.some((item) => item.conflicts.length > 0)) {
 			toast.error("请先调整规则并重新预览，消除全部冲突");
 			return;
 		}
@@ -666,13 +771,14 @@ function ScheduleRuleUpdatePanel({
 								<input
 									type="checkbox"
 									checked={weekdays.includes(item.value)}
-									onChange={(event) =>
+									onChange={(event) => {
 										setWeekdays((current) =>
 											event.target.checked
 												? [...current, item.value].sort()
 												: current.filter((value) => value !== item.value),
-										)
-									}
+										);
+										invalidatePreview();
+									}}
 								/>
 								{item.label}
 							</label>
@@ -686,32 +792,53 @@ function ScheduleRuleUpdatePanel({
 					onValueChange={(value) => {
 						const [hour = 0, minute = 0] = value.split(":").map(Number);
 						setStartMinuteOfDay(hour * 60 + minute);
+						invalidatePreview();
 					}}
 				/>
-				<LabeledInput label="教室" value={room} onValueChange={setRoom} />
+				<RoomSelectField
+					rooms={rooms}
+					value={roomId}
+					fallbackLabel={room}
+					onValueChange={(nextRoomId) => {
+						const nextRoom = rooms.find((item) => item.id === nextRoomId);
+						if (!nextRoom) return;
+						setRoomId(nextRoomId);
+						setRoom(nextRoom.name);
+						invalidatePreview();
+					}}
+				/>
 				<LabeledInput
 					label="同步生效日期"
 					type="date"
 					value={effectiveFrom}
-					onValueChange={setEffectiveFrom}
+					onValueChange={(value) => {
+						setEffectiveFrom(value);
+						invalidatePreview();
+					}}
 				/>
 				<LabeledInput
 					label="规则开始"
 					type="date"
 					value={validFrom}
-					onValueChange={setValidFrom}
+					onValueChange={(value) => {
+						setValidFrom(value);
+						invalidatePreview();
+					}}
 				/>
 				<LabeledInput
 					label="规则结束"
 					type="date"
 					value={validUntil}
-					onValueChange={setValidUntil}
+					onValueChange={(value) => {
+						setValidUntil(value);
+						invalidatePreview();
+					}}
 				/>
 				<Button
 					variant="outline"
 					className="md:self-end"
 					onClick={preview}
-					disabled={previewMutation.isPending}
+					disabled={previewMutation.isPending || !roomId}
 				>
 					<RefreshCwIcon /> 预览影响
 				</Button>
@@ -797,6 +924,49 @@ function LabeledInput({
 						: undefined
 				}
 			/>
+		</div>
+	);
+}
+
+function RoomSelectField({
+	rooms,
+	value,
+	defaultValue,
+	name,
+	fallbackLabel,
+	onValueChange,
+}: {
+	rooms: Classroom[];
+	value?: string;
+	defaultValue?: string;
+	name?: string;
+	fallbackLabel?: string;
+	onValueChange?: (value: string) => void;
+}) {
+	return (
+		<div className="grid gap-1 text-sm">
+			<span>教室</span>
+			<Select
+				name={name}
+				value={value}
+				defaultValue={defaultValue}
+				onValueChange={(next) => next && onValueChange?.(next)}
+			>
+				<SelectTrigger>
+					<SelectValue
+						placeholder={
+							fallbackLabel ? `历史教室：${fallbackLabel}` : "选择教室"
+						}
+					/>
+				</SelectTrigger>
+				<SelectContent>
+					{rooms.map((room) => (
+						<SelectItem key={room.id} value={room.id}>
+							{room.name} · {room.capacity} 人
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
 		</div>
 	);
 }

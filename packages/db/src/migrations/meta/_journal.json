@@ -120,6 +120,41 @@
       "when": 1784538983957,
       "tag": "0016_cloudy_trish_tilby",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784560598298,
+      "tag": "0017_wild_mastermind",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784560645486,
+      "tag": "0018_awesome_victor_mancha",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784561051352,
+      "tag": "0019_chilly_master_chief",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784562089189,
+      "tag": "0020_old_speed_demon",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1784567678709,
+      "tag": "0021_fluffy_winter_soldier",
+      "breakpoints": true
     }
   ]
 }
