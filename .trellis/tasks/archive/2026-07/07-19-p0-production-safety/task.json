@@ -3,7 +3,7 @@
   "name": "p0-production-safety",
   "title": "P0 生产安全与状态边界",
   "description": "",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": "server",
@@ -11,7 +11,7 @@
   "creator": "xuCesar",
   "assignee": "xuCesar",
   "createdAt": "2026-07-19",
-  "completedAt": null,
+  "completedAt": "2026-07-21",
   "branch": null,
   "base_branch": "develop",
   "worktree_path": null,
@@ -29,8 +29,9 @@
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "仓库内 P0 状态边界、审计、邮箱验证、可观测性、CI 与运行手册已完成；真实告警投递和恢复演练继续由 GitHub #23 跟踪。",
   "meta": {
-    "githubIssue": 6
+    "githubIssue": 6,
+    "externalVerificationIssue": 23
   }
 }

@@ -3,7 +3,7 @@
   "name": "p1-core-business-loop",
   "title": "P1 核心业务闭环",
   "description": "拆分并验收 Issue #6 的 P1 教务、学员报名与财务核心业务闭环。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",
@@ -24,6 +24,10 @@
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "notes": "教务阶段 T1/T2 已完成并关闭 #24、#31、#32；学员与报名、财务闭环仍由 #25-#29 跟踪，父任务保持进行中。",
+  "meta": {
+    "githubIssue": 6,
+    "completedIssues": [24, 31, 32],
+    "remainingIssues": [25, 26, 27, 28, 29]
+  }
 }

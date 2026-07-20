@@ -3,7 +3,7 @@
   "name": "p1-makeup-class-pause-room-resources",
   "title": "P1 补课、班级停复课与教室资源管理",
   "description": "实现 GitHub Issue #24：补课、班级级停复课，以及校区教室资源、容量和排课兼容。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": "server",
@@ -11,7 +11,7 @@
   "creator": "xuCesar",
   "assignee": "xuCesar",
   "createdAt": "2026-07-20",
-  "completedAt": null,
+  "completedAt": "2026-07-21",
   "branch": null,
   "base_branch": "develop",
   "worktree_path": null,
@@ -21,7 +21,7 @@
   "children": [],
   "parent": "07-20-p1-core-business-loop",
   "relatedFiles": [],
-  "notes": "Issue #24 实现与自动化验证已完成；按用户要求暂不提交、推送或同步 GitHub Issue，任务保持 in_progress。",
+  "notes": "Issue #24 已实现、验证、提交并推送；GitHub #24、#31、#32 已关闭。",
   "meta": {
     "implementationComplete": true,
     "verification": {
@@ -32,9 +32,7 @@
       "integration": "45/45 passed",
       "diffCheck": "passed"
     },
-    "pending": [
-      "user-authorized commit and push",
-      "GitHub Issue #24 status synchronization"
-    ]
+    "githubIssuesClosed": [24, 31, 32],
+    "pending": []
   }
 }
