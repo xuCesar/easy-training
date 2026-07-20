@@ -1,0 +1,28 @@
+{
+  "id": "p1-independent-enrollment",
+  "name": "p1-independent-enrollment",
+  "title": "P1 独立报名入口与原子建档开单",
+  "description": "实现 GitHub Issue #25：从学员中心为已有或新建学员原子创建独立报名与应收账单，不依赖招生线索。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": "server",
+  "priority": "P1",
+  "creator": "xuCesar",
+  "assignee": "xuCesar",
+  "createdAt": "2026-07-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "develop",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "07-20-p1-core-business-loop",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "githubIssue": 25
+  }
+}

@@ -33,6 +33,8 @@ import {
 	createClassGroupInputSchema,
 	createClassroomInputSchema,
 	createCourseInputSchema,
+	createIndependentEnrollmentInputSchema,
+	createIndependentEnrollmentResultSchema,
 	createInvitationInputSchema,
 	createInvitationResultSchema,
 	createInvoiceFollowUpInputSchema,
@@ -60,6 +62,8 @@ import {
 	exportLeadsResultSchema,
 	generateScheduleLessonsInputSchema,
 	generateScheduleLessonsResultSchema,
+	independentEnrollmentOptionsInputSchema,
+	independentEnrollmentOptionsSchema,
 	invitationListResultSchema,
 	invoiceDetailInputSchema,
 	invoiceDetailSchema,
@@ -165,6 +169,10 @@ import {
 	renewEnrollment,
 	transferEnrollment,
 } from "../repositories/enrollment-finance-adjustments";
+import {
+	createIndependentEnrollment,
+	getIndependentEnrollmentOptions,
+} from "../repositories/enrollment-registration";
 import {
 	createPayment,
 	getInvoiceDetail,
@@ -1176,6 +1184,36 @@ export const appRouter = {
 						),
 					),
 			},
+		},
+		enrollments: {
+			independentOptions: studentProcedure
+				.input(independentEnrollmentOptionsInputSchema)
+				.output(independentEnrollmentOptionsSchema)
+				.handler(({ context, input }) =>
+					getIndependentEnrollmentOptions(
+						{
+							organizationId: context.organization.id,
+							role: context.role,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			createIndependent: studentProcedure
+				.input(createIndependentEnrollmentInputSchema)
+				.output(createIndependentEnrollmentResultSchema)
+				.handler(({ context, input }) =>
+					createIndependentEnrollment(
+						{
+							organizationId: context.organization.id,
+							role: context.role,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
 		},
 		leads: {
 			import: {

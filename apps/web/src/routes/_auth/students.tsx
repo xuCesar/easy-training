@@ -71,7 +71,7 @@ import {
 	useState,
 } from "react";
 import { toast } from "sonner";
-
+import { IndependentEnrollmentDialog } from "@/features/training/independent-enrollment-dialog";
 import { useOrganization } from "@/features/training/organization-context";
 import { client, orpc, queryClient } from "@/utils/orpc";
 
@@ -112,6 +112,8 @@ function StudentsRoute() {
 	const [status, setStatus] = useState<"all" | StudentStatus>("all");
 	const [tagId, setTagId] = useState<string | null>(null);
 	const [editor, setEditor] = useState<EditorTarget>(null);
+	const [independentEnrollmentOpen, setIndependentEnrollmentOpen] =
+		useState(false);
 	const [tagsOpen, setTagsOpen] = useState(false);
 	const deferredSearch = useDeferredValue(search.trim());
 	const queryContext = { organizationId: organization.id, sessionUserId };
@@ -173,6 +175,13 @@ function StudentsRoute() {
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
+					<Button
+						variant="outline"
+						onClick={() => setIndependentEnrollmentOpen(true)}
+					>
+						<UserPlusIcon data-icon="inline-start" />
+						办理报名
+					</Button>
 					{canManageTags ? (
 						<Button variant="outline" onClick={() => setTagsOpen(true)}>
 							<TagsIcon data-icon="inline-start" />
@@ -269,6 +278,11 @@ function StudentsRoute() {
 					campuses={campusesQuery.data?.items ?? []}
 					tags={tagsQuery.data?.items ?? []}
 					onClose={() => setEditor(null)}
+				/>
+			) : null}
+			{independentEnrollmentOpen ? (
+				<IndependentEnrollmentDialog
+					onClose={() => setIndependentEnrollmentOpen(false)}
 				/>
 			) : null}
 			{canManageTags ? (

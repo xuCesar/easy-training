@@ -447,6 +447,7 @@ const auditActionSchema = z.enum([
 	"makeup_lesson_created",
 	"makeup_lesson_cancelled",
 	"makeup_lesson_needs_reschedule",
+	"enrollment_created",
 	"lead_imported",
 	"lead_exported",
 	"notification_read",
@@ -645,19 +646,19 @@ const conversionStudentSchema = z.object({
 	status: z.enum(["active", "trial", "paused", "graduated", "atRisk"]),
 });
 
-const conversionCampusSchema = z.object({
+export const conversionCampusSchema = z.object({
 	id: z.uuid(),
 	name: z.string(),
 });
 
-const conversionCourseSchema = z.object({
+export const conversionCourseSchema = z.object({
 	id: z.uuid(),
 	name: z.string(),
 	listPriceInCents: z.number().int().nonnegative(),
 	lessonsPerPackage: z.number().int().positive(),
 });
 
-const conversionClassSchema = z.object({
+export const conversionClassSchema = z.object({
 	id: z.uuid(),
 	name: z.string(),
 	courseId: z.uuid(),
@@ -718,6 +719,65 @@ export type LeadConversionOptionsInput = z.infer<
 export type LeadConversionOptions = z.infer<typeof leadConversionOptionsSchema>;
 export type ConvertLeadInput = z.infer<typeof convertLeadInputSchema>;
 export type ConvertLeadResult = z.infer<typeof convertLeadResultSchema>;
+
+export const independentEnrollmentOptionsInputSchema = z.object({});
+
+const independentStudentChoiceSchema = z.discriminatedUnion("mode", [
+	z.object({
+		mode: z.literal("existing"),
+		studentId: z.uuid(),
+	}),
+	z.object({
+		mode: z.literal("new"),
+		name: z.string().trim().min(1).max(50),
+		campusId: z.uuid(),
+		primaryContact: z.object({
+			name: z.string().trim().min(1).max(50),
+			phone: z.string().trim().min(1).max(50),
+			relationship: z.string().trim().max(30).nullable().default(null),
+		}),
+	}),
+]);
+
+export const independentEnrollmentOptionsSchema = z.object({
+	permissions: z.object({
+		canOverridePackageTerms: z.boolean(),
+	}),
+	campuses: z.array(conversionCampusSchema),
+	courses: z.array(conversionCourseSchema),
+	classes: z.array(conversionClassSchema),
+});
+
+export const createIndependentEnrollmentInputSchema = z.object({
+	requestId: z.uuid(),
+	student: independentStudentChoiceSchema,
+	courseId: z.uuid(),
+	classGroupId: z.uuid().nullable().default(null),
+	purchasedLessons: z.number().int().min(1).max(1000),
+	amountInCents: z.number().int().min(0).max(100_000_000),
+	invoiceDueDate: z.iso.date(),
+});
+
+export const createIndependentEnrollmentResultSchema = z.object({
+	studentId: z.uuid(),
+	enrollmentId: z.uuid(),
+	invoiceId: z.uuid(),
+	classGroupId: z.uuid().nullable(),
+	replayed: z.boolean(),
+});
+
+export type IndependentEnrollmentOptionsInput = z.infer<
+	typeof independentEnrollmentOptionsInputSchema
+>;
+export type IndependentEnrollmentOptions = z.infer<
+	typeof independentEnrollmentOptionsSchema
+>;
+export type CreateIndependentEnrollmentInput = z.infer<
+	typeof createIndependentEnrollmentInputSchema
+>;
+export type CreateIndependentEnrollmentResult = z.infer<
+	typeof createIndependentEnrollmentResultSchema
+>;
 
 const invoiceSettlementStatusSchema = z.enum(["pending", "partial", "paid"]);
 const paymentMethodSchema = z.enum([

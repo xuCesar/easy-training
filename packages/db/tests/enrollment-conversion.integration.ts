@@ -634,6 +634,7 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 			scopeA,
 			convertLeadInputSchema.parse({
 				...baseConversionInput(ids, ids.leadComplimentary),
+				student: { mode: "existing", studentId: ids.studentMatchingA2 },
 				amountInCents: 0,
 			}),
 		);
@@ -705,6 +706,12 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 		await expectOrpcError(
 			convertLead(scopeA, {
 				...baseConversionInput(ids, ids.leadCourseMismatch),
+				student: {
+					mode: "new",
+					name: "课程不匹配学员",
+					guardianName: "课程不匹配家长",
+					campusId: ids.campusA1,
+				},
 				classGroupId: ids.classOtherCourse,
 			}),
 			"BAD_REQUEST",
@@ -712,6 +719,12 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 		await expectOrpcError(
 			convertLead(scopeA, {
 				...baseConversionInput(ids, ids.leadCampusMismatch),
+				student: {
+					mode: "new",
+					name: "校区不匹配学员",
+					guardianName: "校区不匹配家长",
+					campusId: ids.campusA1,
+				},
 				classGroupId: ids.classOtherCampus,
 			}),
 			"BAD_REQUEST",
@@ -719,6 +732,12 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 		await expectOrpcError(
 			convertLead(scopeA, {
 				...baseConversionInput(ids, ids.leadPausedClass),
+				student: {
+					mode: "new",
+					name: "暂停班学员",
+					guardianName: "暂停班家长",
+					campusId: ids.campusA1,
+				},
 				classGroupId: ids.classPaused,
 			}),
 			"CONFLICT",
@@ -726,6 +745,12 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 		await expectOrpcError(
 			convertLead(scopeA, {
 				...baseConversionInput(ids, ids.leadCrossClass),
+				student: {
+					mode: "new",
+					name: "跨机构班级学员",
+					guardianName: "跨机构班级家长",
+					campusId: ids.campusA1,
+				},
 				classGroupId: ids.classB,
 			}),
 			"NOT_FOUND",

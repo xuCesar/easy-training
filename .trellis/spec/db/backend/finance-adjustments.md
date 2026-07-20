@@ -66,3 +66,70 @@ await tx.insert(refund).values(refundEvent);
 ```
 
 以不可变业务流水表达变更，并由机构内唯一请求 ID 和资源锁保证重试安全。
+
+## Scenario: 独立报名与原子建档开单
+
+### 1. Scope / Trigger
+
+- 从学员中心直接为已有学员报名，或同时创建新学员、主要联系人、报名与应收账单时使用。
+- 这是跨 DB / API / Web 的写入契约：提交选项只供展示，所有权限、校区、课程、班级与容量条件必须在 repository 事务内重读并复核。
+
+### 2. Signatures
+
+- DB：`createIndependentEnrollmentRecord({ organizationId, operatorUserId, student, courseId, classGroupId, purchasedLessons, amountInCents, invoiceDueDate, requestId })`
+- API：`training.enrollments.independentOptions({})`、`training.enrollments.createIndependent(input)`。
+- 幂等事实：`enrollmentRegistration` 对 `(organizationId, requestId)` 唯一；其记录保存输入哈希与学员、报名、账单结果。
+
+### 3. Contracts
+
+- `student` 是判别联合：已有学员传 `studentId`；新建学员传姓名、校区及一位主要联系人。新建路径在同一事务中创建所有事实。
+- 独立报名固定 `enrollment.leadId = null`，不得伪造招生线索；响应返回 `studentId`、`enrollmentId`、`invoiceId`、可空 `classGroupId` 与 `replayed`。
+- 相同 `requestId` 和相同输入重放原结果；相同 request ID 但输入哈希不同返回 `IDEMPOTENCY_CONFLICT`。
+- 成功事务写 `enrollment_created` 审计；`after` 只能记录标识、课程/班级、课时、金额、到期日、来源和 requestId，不得写入完整联系电话。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 领域错误 | API 语义 |
+| --- | --- | --- |
+| 操作者在事务中被撤权或校区越权 | `MEMBER_FORBIDDEN` / `CAMPUS_OUT_OF_SCOPE` | `FORBIDDEN` |
+| 学员不存在或为暂停/结业 | `STUDENT_NOT_FOUND` / `STUDENT_NOT_ENROLLABLE` | `NOT_FOUND` / `CONFLICT` |
+| 课程、校区停用或不存在 | `COURSE_INACTIVE` / `CAMPUS_INACTIVE` 等 | `CONFLICT` / `NOT_FOUND` |
+| 班级课程、校区不匹配，不可报名或容量不足 | `CLASS_*` | `BAD_REQUEST` / `CONFLICT` |
+| 同学员已有同课程有效报名 | `ACTIVE_COURSE_ENROLLMENT` | `CONFLICT`，提示改用续费 |
+| 顾问覆盖标准课时或价格 | `PACKAGE_TERMS_OVERRIDE_FORBIDDEN` | `FORBIDDEN` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：校区管理员为已有在读学员直接报名并分班，创建一条 `leadId = null` 报名、一张账单和一条审计。
+- Base：顾问为新学员创建报名时使用课程标准课时和价格；重放相同 request ID 返回首个报名结果且不新增账单。
+- Bad：仅依赖 API middleware 中的角色快照，或允许同一学员重复创建同课程有效报名。这会让撤权并发与多课时账户产生不可追溯的状态。
+
+### 6. Tests Required
+
+- PostgreSQL 集成测试覆盖已有/新建学员、直接入班/暂不分班、事务回滚、同课程报名拒绝及线索转报名的相同行为。
+- 覆盖权限撤销、跨机构/校区、停用资源、班级与未来教室容量、顾问套餐越权。
+- 断言相同 request ID 重放不增加报名、账单或审计；不同载荷冲突；并发只保留一份结果。
+- API 断言 `affectedLessons.startsAt` 序列化为 ISO 字符串，且审计快照不包含完整联系人手机号。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+// 先创建学员，再在事务外创建报名；或只由前端禁用重复提交。
+await createStudent(input.student);
+await createEnrollment(input);
+```
+
+#### Correct
+
+```ts
+await db.transaction(async (tx) => {
+  const access = await getCurrentWriteCampusAccess(tx, operator);
+  const replay = await getReplay(tx, { organizationId, requestId, inputHash, campusAccess: access });
+  if (replay) return replay;
+  // 事务内复核资源、创建事实、登记幂等结果与审计。
+});
+```
+
+把建档、报名、账单、幂等和审计作为一个原子操作，并在写入点重读授权。

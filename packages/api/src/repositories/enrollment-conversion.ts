@@ -83,6 +83,10 @@ function throwConversionError(error: unknown): never {
 			throw new ORPCError("CONFLICT", {
 				message: "该学员已在所选班级中，不能重复入班。",
 			});
+		case "ACTIVE_COURSE_ENROLLMENT":
+			throw new ORPCError("CONFLICT", {
+				message: "该学员已有同课程有效报名，请使用续费。",
+			});
 		case "PACKAGE_TERMS_OVERRIDE_FORBIDDEN":
 			throw new ORPCError("FORBIDDEN", {
 				message: "当前角色不能修改课程标准价格或课时。",

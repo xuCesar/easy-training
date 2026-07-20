@@ -32,6 +32,7 @@ export type EnrollmentConversionErrorCode =
 	| "CLASS_NOT_AVAILABLE"
 	| "CLASS_FULL"
 	| "CLASS_STUDENT_DUPLICATE"
+	| "ACTIVE_COURSE_ENROLLMENT"
 	| "PACKAGE_TERMS_OVERRIDE_FORBIDDEN"
 	| "RESOURCE_UNAVAILABLE"
 	| "CAMPUS_OUT_OF_SCOPE"
@@ -320,6 +321,9 @@ export async function convertLeadRecord(
 ): Promise<ConvertLeadRecordResult> {
 	try {
 		return await db.transaction(async (tx) => {
+			await tx.execute(
+				sql`SELECT pg_advisory_xact_lock(hashtext(${input.organizationId}))`,
+			);
 			const [leadRecord] = await tx
 				.select({
 					id: lead.id,
@@ -509,6 +513,23 @@ export async function convertLeadRecord(
 
 				studentId = createdStudent.id;
 				studentCampusId = createdStudent.campusId;
+			}
+
+			const [activeCourseEnrollment] = await tx
+				.select({ id: enrollment.id })
+				.from(enrollment)
+				.where(
+					and(
+						eq(enrollment.organizationId, input.organizationId),
+						eq(enrollment.studentId, studentId),
+						eq(enrollment.courseId, input.courseId),
+						eq(enrollment.status, "active"),
+					),
+				)
+				.limit(1)
+				.for("update");
+			if (activeCourseEnrollment) {
+				throw new EnrollmentConversionError("ACTIVE_COURSE_ENROLLMENT");
 			}
 
 			if (input.classGroupId) {

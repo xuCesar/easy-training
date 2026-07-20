@@ -1,0 +1,1003 @@
+import {
+	type CreateIndependentEnrollmentInput,
+	createIndependentEnrollmentInputSchema,
+	type IndependentEnrollmentOptions,
+	type StudentListResult,
+} from "@easy-training/api/contracts/training";
+import { Button } from "@easy-training/ui/components/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@easy-training/ui/components/dialog";
+import {
+	Empty,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyTitle,
+} from "@easy-training/ui/components/empty";
+import {
+	Field,
+	FieldError,
+	FieldLabel,
+} from "@easy-training/ui/components/field";
+import { Input } from "@easy-training/ui/components/input";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@easy-training/ui/components/select";
+import { Skeleton } from "@easy-training/ui/components/skeleton";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import {
+	LoaderCircleIcon,
+	SearchIcon,
+	UserPlusIcon,
+	UsersRoundIcon,
+} from "lucide-react";
+import { type FormEvent, useDeferredValue, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { client, orpc, queryClient } from "@/utils/orpc";
+import { useOrganization } from "./organization-context";
+
+type StudentMode = "existing" | "new";
+type StudentSummary = StudentListResult["items"][number];
+type EnrollmentErrorKey =
+	| "studentId"
+	| "studentName"
+	| "campusId"
+	| "contactName"
+	| "contactPhone"
+	| "contactRelationship"
+	| "courseId"
+	| "classGroupId"
+	| "purchasedLessons"
+	| "amountInCents"
+	| "invoiceDueDate";
+type EnrollmentErrors = Partial<Record<EnrollmentErrorKey, string>>;
+
+const enrollableStatuses = new Set(["active", "trial", "atRisk"]);
+
+export function IndependentEnrollmentDialog({
+	onClose,
+}: {
+	onClose: () => void;
+}) {
+	const { organization } = useOrganization();
+	const navigate = useNavigate();
+	const optionsQueryOptions =
+		orpc.training.enrollments.independentOptions.queryOptions({ input: {} });
+	const optionsQuery = useQuery({
+		...optionsQueryOptions,
+		queryKey: [
+			...optionsQueryOptions.queryKey,
+			{ organizationId: organization.id },
+		],
+	});
+	const mutation = useMutation(
+		orpc.training.enrollments.createIndependent.mutationOptions({
+			onSuccess: () => {
+				toast.success("报名和应收账单已创建", {
+					action: {
+						label: "前往收款",
+						onClick: () => void navigate({ to: "/finance" }),
+					},
+				});
+				void invalidateEnrollmentQueries();
+				onClose();
+			},
+		}),
+	);
+
+	return (
+		<Dialog
+			open
+			onOpenChange={(open) => {
+				if (!open && !mutation.isPending) onClose();
+			}}
+		>
+			<DialogContent className="max-h-[calc(100dvh-2rem)] max-w-3xl overflow-y-auto">
+				<DialogHeader>
+					<DialogTitle>办理报名</DialogTitle>
+					<DialogDescription>
+						为已有学员办理报名，或同时创建新学员、主要联系人和应收账单。
+					</DialogDescription>
+				</DialogHeader>
+				{optionsQuery.isPending ? (
+					<EnrollmentSkeleton />
+				) : optionsQuery.isError ? (
+					<Empty className="min-h-64 border">
+						<EmptyHeader>
+							<EmptyMedia variant="icon">
+								<UsersRoundIcon />
+							</EmptyMedia>
+							<EmptyTitle>报名选项加载失败</EmptyTitle>
+							<EmptyDescription>{optionsQuery.error.message}</EmptyDescription>
+						</EmptyHeader>
+						<Button onClick={() => void optionsQuery.refetch()}>重试</Button>
+					</Empty>
+				) : (
+					<IndependentEnrollmentForm
+						options={optionsQuery.data}
+						pending={mutation.isPending}
+						onCancel={onClose}
+						onSubmit={(input) => mutation.mutate(input)}
+						serverError={mutation.error}
+					/>
+				)}
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function IndependentEnrollmentForm({
+	options,
+	pending,
+	onCancel,
+	onSubmit,
+	serverError,
+}: {
+	options: IndependentEnrollmentOptions;
+	pending: boolean;
+	onCancel: () => void;
+	onSubmit: (input: CreateIndependentEnrollmentInput) => void;
+	serverError: unknown;
+}) {
+	const [mode, setMode] = useState<StudentMode>("existing");
+	const [studentQuery, setStudentQuery] = useState("");
+	const deferredStudentQuery = useDeferredValue(studentQuery.trim());
+	const [selectedStudent, setSelectedStudent] = useState<StudentSummary | null>(
+		null,
+	);
+	const [studentName, setStudentName] = useState("");
+	const [campusId, setCampusId] = useState("");
+	const [contactName, setContactName] = useState("");
+	const [contactPhone, setContactPhone] = useState("");
+	const [contactRelationship, setContactRelationship] = useState("");
+	const [courseId, setCourseId] = useState(options.courses[0]?.id ?? "");
+	const [classGroupId, setClassGroupId] = useState<string | null>(null);
+	const initialCourse = options.courses[0];
+	const [purchasedLessons, setPurchasedLessons] = useState(
+		initialCourse ? String(initialCourse.lessonsPerPackage) : "",
+	);
+	const [amountInYuan, setAmountInYuan] = useState(
+		initialCourse ? formatCentsAsYuan(initialCourse.listPriceInCents) : "",
+	);
+	const [invoiceDueDate, setInvoiceDueDate] = useState(getShanghaiToday);
+	const [requestId] = useState(() => crypto.randomUUID());
+	const [errors, setErrors] = useState<EnrollmentErrors>({});
+
+	const studentListQuery = useInfiniteQuery({
+		queryKey: ["independent-enrollment-students", deferredStudentQuery],
+		queryFn: ({ pageParam }) =>
+			client.training.students.list({
+				query: deferredStudentQuery || undefined,
+				status: "all",
+				pageSize: 10,
+				cursor: pageParam ?? undefined,
+			}),
+		initialPageParam: null as string | null,
+		getNextPageParam: (page) => page.nextCursor ?? undefined,
+		enabled: mode === "existing",
+	});
+	const students =
+		studentListQuery.data?.pages.flatMap((page) => page.items) ?? [];
+	const selectedCampusId =
+		mode === "existing" ? selectedStudent?.campusId : campusId;
+	const availableClasses = useMemo(
+		() =>
+			options.classes.filter(
+				(classGroup) =>
+					classGroup.courseId === courseId &&
+					classGroup.campusId === selectedCampusId,
+			),
+		[courseId, options.classes, selectedCampusId],
+	);
+	const affectedLessons = getAffectedLessons(serverError);
+
+	function clearError(...fields: EnrollmentErrorKey[]) {
+		setErrors((current) => {
+			const next = { ...current };
+			for (const field of fields) delete next[field];
+			return next;
+		});
+	}
+
+	function chooseCourse(nextCourseId: string) {
+		const course = options.courses.find((item) => item.id === nextCourseId);
+		setCourseId(nextCourseId);
+		setClassGroupId(null);
+		if (course) {
+			setPurchasedLessons(String(course.lessonsPerPackage));
+			setAmountInYuan(formatCentsAsYuan(course.listPriceInCents));
+		}
+		clearError("courseId", "classGroupId", "purchasedLessons", "amountInCents");
+	}
+
+	function submit(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		if (pending) return;
+		const amountInCents = parseYuanToCents(amountInYuan);
+		const lessons = parsePositiveInteger(purchasedLessons);
+		const nextErrors: EnrollmentErrors = {};
+		if (mode === "existing" && !selectedStudent) {
+			nextErrors.studentId = "请选择可报名的已有学员";
+		}
+		if (mode === "new") {
+			if (!studentName.trim()) nextErrors.studentName = "请填写学员姓名";
+			if (!campusId) nextErrors.campusId = "请选择所属校区";
+			if (!contactName.trim()) nextErrors.contactName = "请填写主要联系人姓名";
+			if (!contactPhone.trim())
+				nextErrors.contactPhone = "请填写主要联系人手机号";
+		}
+		if (!courseId) nextErrors.courseId = "请选择课程";
+		if (lessons === null)
+			nextErrors.purchasedLessons = "请输入 1 至 1000 的整数课时";
+		if (amountInCents === null)
+			nextErrors.amountInCents = "请输入最多两位小数的有效金额";
+		if (!invoiceDueDate) nextErrors.invoiceDueDate = "请选择付款到期日";
+		if (
+			Object.keys(nextErrors).length > 0 ||
+			lessons === null ||
+			amountInCents === null
+		) {
+			setErrors(nextErrors);
+			return;
+		}
+
+		const input =
+			mode === "existing"
+				? {
+						requestId,
+						student: {
+							mode: "existing" as const,
+							studentId: selectedStudent?.id ?? "",
+						},
+						courseId,
+						classGroupId,
+						purchasedLessons: lessons,
+						amountInCents,
+						invoiceDueDate,
+					}
+				: {
+						requestId,
+						student: {
+							mode: "new" as const,
+							name: studentName.trim(),
+							campusId,
+							primaryContact: {
+								name: contactName.trim(),
+								phone: contactPhone.trim(),
+								relationship: contactRelationship.trim() || null,
+							},
+						},
+						courseId,
+						classGroupId,
+						purchasedLessons: lessons,
+						amountInCents,
+						invoiceDueDate,
+					};
+		const parsed = createIndependentEnrollmentInputSchema.safeParse(input);
+		if (!parsed.success) {
+			const schemaErrors: EnrollmentErrors = {};
+			for (const issue of parsed.error.issues) {
+				const field = getErrorKey(issue.path);
+				if (field && !schemaErrors[field]) schemaErrors[field] = issue.message;
+			}
+			setErrors(schemaErrors);
+			return;
+		}
+		setErrors({});
+		onSubmit(parsed.data);
+	}
+
+	return (
+		<form className="flex min-w-0 flex-col gap-5" onSubmit={submit}>
+			<div
+				className="grid gap-2 sm:grid-cols-2"
+				role="radiogroup"
+				aria-label="报名对象"
+			>
+				<Button
+					type="button"
+					variant={mode === "existing" ? "default" : "outline"}
+					disabled={pending}
+					onClick={() => {
+						setMode("existing");
+						setClassGroupId(null);
+						clearError("studentId", "classGroupId");
+					}}
+				>
+					<UsersRoundIcon data-icon="inline-start" />
+					已有学员
+				</Button>
+				<Button
+					type="button"
+					variant={mode === "new" ? "default" : "outline"}
+					disabled={pending}
+					onClick={() => {
+						setMode("new");
+						setClassGroupId(null);
+						clearError(
+							"studentName",
+							"campusId",
+							"contactName",
+							"contactPhone",
+							"classGroupId",
+						);
+					}}
+				>
+					<UserPlusIcon data-icon="inline-start" />
+					新建学员
+				</Button>
+			</div>
+
+			{mode === "existing" ? (
+				<ExistingStudentField
+					students={students}
+					search={studentQuery}
+					selectedStudentId={selectedStudent?.id ?? null}
+					error={errors.studentId}
+					isLoading={studentListQuery.isPending}
+					isLoadingMore={studentListQuery.isFetchingNextPage}
+					hasMore={studentListQuery.hasNextPage}
+					onSearchChange={setStudentQuery}
+					onLoadMore={() => void studentListQuery.fetchNextPage()}
+					onSelect={(student) => {
+						setSelectedStudent(student);
+						setClassGroupId(null);
+						clearError("studentId", "classGroupId");
+					}}
+				/>
+			) : (
+				<NewStudentFields
+					campuses={options.campuses}
+					studentName={studentName}
+					campusId={campusId}
+					contactName={contactName}
+					contactPhone={contactPhone}
+					contactRelationship={contactRelationship}
+					errors={errors}
+					onStudentNameChange={(value) => {
+						setStudentName(value);
+						clearError("studentName");
+					}}
+					onCampusChange={(value) => {
+						setCampusId(value);
+						setClassGroupId(null);
+						clearError("campusId", "classGroupId");
+					}}
+					onContactNameChange={(value) => {
+						setContactName(value);
+						clearError("contactName");
+					}}
+					onContactPhoneChange={(value) => {
+						setContactPhone(value);
+						clearError("contactPhone");
+					}}
+					onContactRelationshipChange={(value) => {
+						setContactRelationship(value);
+						clearError("contactRelationship");
+					}}
+				/>
+			)}
+
+			<div className="grid min-w-0 gap-4 sm:grid-cols-2">
+				<CourseField
+					courses={options.courses}
+					courseId={courseId}
+					error={errors.courseId}
+					onChange={chooseCourse}
+				/>
+				<TextField
+					id="independent-enrollment-lessons"
+					label="购买课时"
+					value={purchasedLessons}
+					onChange={(value) => {
+						setPurchasedLessons(value);
+						clearError("purchasedLessons");
+					}}
+					error={errors.purchasedLessons}
+					type="number"
+					min={1}
+					max={1000}
+					readOnly={!options.permissions.canOverridePackageTerms}
+					required
+				/>
+				<TextField
+					id="independent-enrollment-amount"
+					label="成交金额（元）"
+					value={amountInYuan}
+					onChange={(value) => {
+						setAmountInYuan(value);
+						clearError("amountInCents");
+					}}
+					error={errors.amountInCents}
+					inputMode="decimal"
+					readOnly={!options.permissions.canOverridePackageTerms}
+					placeholder="0.00"
+					required
+				/>
+				<TextField
+					id="independent-enrollment-due-date"
+					label="付款到期日"
+					value={invoiceDueDate}
+					onChange={(value) => {
+						setInvoiceDueDate(value);
+						clearError("invoiceDueDate");
+					}}
+					error={errors.invoiceDueDate}
+					type="date"
+					required
+				/>
+				<ClassField
+					courseId={courseId}
+					campusId={selectedCampusId}
+					classes={availableClasses}
+					classGroupId={classGroupId}
+					error={errors.classGroupId}
+					onChange={(value) => {
+						setClassGroupId(value);
+						clearError("classGroupId");
+					}}
+				/>
+			</div>
+			{affectedLessons.length > 0 ? (
+				<AffectedLessons lessons={affectedLessons} />
+			) : null}
+			<DialogFooter className="flex-col-reverse sm:flex-row">
+				<Button
+					type="button"
+					variant="outline"
+					disabled={pending}
+					onClick={onCancel}
+				>
+					取消
+				</Button>
+				<Button
+					type="submit"
+					disabled={pending || options.courses.length === 0}
+				>
+					{pending ? (
+						<LoaderCircleIcon
+							className="animate-spin"
+							data-icon="inline-start"
+						/>
+					) : null}
+					{pending ? "提交中" : "确认办理报名"}
+				</Button>
+			</DialogFooter>
+		</form>
+	);
+}
+
+function ExistingStudentField({
+	students,
+	search,
+	selectedStudentId,
+	error,
+	isLoading,
+	isLoadingMore,
+	hasMore,
+	onSearchChange,
+	onLoadMore,
+	onSelect,
+}: {
+	students: StudentSummary[];
+	search: string;
+	selectedStudentId: string | null;
+	error?: string;
+	isLoading: boolean;
+	isLoadingMore: boolean;
+	hasMore: boolean;
+	onSearchChange: (value: string) => void;
+	onLoadMore: () => void;
+	onSelect: (student: StudentSummary) => void;
+}) {
+	return (
+		<Field invalid={Boolean(error)}>
+			<FieldLabel htmlFor="independent-enrollment-student-search">
+				选择已有学员
+			</FieldLabel>
+			<div className="relative">
+				<SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+				<Input
+					id="independent-enrollment-student-search"
+					className="pl-8"
+					value={search}
+					onChange={(event) => onSearchChange(event.target.value)}
+					placeholder="搜索学员、主要联系人或手机号"
+				/>
+			</div>
+			<div className="max-h-48 overflow-y-auto border">
+				{isLoading ? (
+					<div className="space-y-2 p-3">
+						<Skeleton className="h-10 w-full" />
+						<Skeleton className="h-10 w-full" />
+					</div>
+				) : students.length === 0 ? (
+					<p className="p-3 text-muted-foreground text-sm">
+						暂无可选学员，可改为新建学员。
+					</p>
+				) : (
+					<div className="divide-y">
+						{students.map((student) => {
+							const eligible = enrollableStatuses.has(student.status);
+							return (
+								<button
+									key={student.id}
+									type="button"
+									disabled={!eligible}
+									className={`flex w-full items-center justify-between gap-3 p-3 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 ${student.id === selectedStudentId ? "bg-primary/5 ring-1 ring-primary ring-inset" : ""}`}
+									onClick={() => onSelect(student)}
+								>
+									<span>
+										<span className="block font-medium">{student.name}</span>
+										<span className="block text-muted-foreground text-xs">
+											{student.campusName} · {student.primaryContactName} ·{" "}
+											{student.primaryContactPhoneMasked}
+										</span>
+									</span>
+									<span className="text-muted-foreground text-xs">
+										{studentStatusLabel(student.status)}
+									</span>
+								</button>
+							);
+						})}
+						{hasMore ? (
+							<Button
+								type="button"
+								variant="ghost"
+								className="w-full"
+								disabled={isLoadingMore}
+								onClick={onLoadMore}
+							>
+								{isLoadingMore ? "正在加载" : "加载更多"}
+							</Button>
+						) : null}
+					</div>
+				)}
+			</div>
+			<FieldError match={Boolean(error)}>{error}</FieldError>
+		</Field>
+	);
+}
+
+function NewStudentFields({
+	campuses,
+	studentName,
+	campusId,
+	contactName,
+	contactPhone,
+	contactRelationship,
+	errors,
+	onStudentNameChange,
+	onCampusChange,
+	onContactNameChange,
+	onContactPhoneChange,
+	onContactRelationshipChange,
+}: {
+	campuses: IndependentEnrollmentOptions["campuses"];
+	studentName: string;
+	campusId: string;
+	contactName: string;
+	contactPhone: string;
+	contactRelationship: string;
+	errors: EnrollmentErrors;
+	onStudentNameChange: (value: string) => void;
+	onCampusChange: (value: string) => void;
+	onContactNameChange: (value: string) => void;
+	onContactPhoneChange: (value: string) => void;
+	onContactRelationshipChange: (value: string) => void;
+}) {
+	return (
+		<div className="grid min-w-0 gap-4 border p-3 sm:grid-cols-2">
+			<TextField
+				id="independent-enrollment-student-name"
+				label="学员姓名"
+				value={studentName}
+				onChange={onStudentNameChange}
+				error={errors.studentName}
+				maxLength={50}
+				required
+			/>
+			<Field invalid={Boolean(errors.campusId)}>
+				<FieldLabel htmlFor="independent-enrollment-campus">
+					所属校区
+				</FieldLabel>
+				{campuses.length === 0 ? (
+					<p className="border p-2 text-muted-foreground text-xs">
+						暂无可用校区，不能新建学员。
+					</p>
+				) : (
+					<Select
+						value={campusId}
+						onValueChange={(value) => value && onCampusChange(value)}
+					>
+						<SelectTrigger
+							id="independent-enrollment-campus"
+							className="w-full"
+						>
+							<SelectValue placeholder="请选择校区" />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectGroup>
+								{campuses.map((campus) => (
+									<SelectItem key={campus.id} value={campus.id}>
+										{campus.name}
+									</SelectItem>
+								))}
+							</SelectGroup>
+						</SelectContent>
+					</Select>
+				)}
+				<FieldError match={Boolean(errors.campusId)}>
+					{errors.campusId}
+				</FieldError>
+			</Field>
+			<TextField
+				id="independent-enrollment-contact-name"
+				label="主要联系人姓名"
+				value={contactName}
+				onChange={onContactNameChange}
+				error={errors.contactName}
+				maxLength={50}
+				required
+			/>
+			<TextField
+				id="independent-enrollment-contact-phone"
+				label="主要联系人手机号"
+				value={contactPhone}
+				onChange={onContactPhoneChange}
+				error={errors.contactPhone}
+				type="tel"
+				maxLength={50}
+				required
+			/>
+			<TextField
+				id="independent-enrollment-contact-relationship"
+				label="关系（可选）"
+				value={contactRelationship}
+				onChange={onContactRelationshipChange}
+				error={errors.contactRelationship}
+				maxLength={30}
+			/>
+		</div>
+	);
+}
+
+function CourseField({
+	courses,
+	courseId,
+	error,
+	onChange,
+}: {
+	courses: IndependentEnrollmentOptions["courses"];
+	courseId: string;
+	error?: string;
+	onChange: (value: string) => void;
+}) {
+	return (
+		<Field invalid={Boolean(error)}>
+			<FieldLabel htmlFor="independent-enrollment-course">课程</FieldLabel>
+			{courses.length === 0 ? (
+				<p className="border p-2 text-muted-foreground text-xs">
+					暂无启用课程，暂时不能办理报名。
+				</p>
+			) : (
+				<Select
+					value={courseId}
+					onValueChange={(value) => value && onChange(value)}
+				>
+					<SelectTrigger id="independent-enrollment-course" className="w-full">
+						<SelectValue placeholder="请选择课程" />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectGroup>
+							{courses.map((course) => (
+								<SelectItem key={course.id} value={course.id}>
+									{course.name} · {formatCentsAsYuan(course.listPriceInCents)}{" "}
+									元 / {course.lessonsPerPackage} 课时
+								</SelectItem>
+							))}
+						</SelectGroup>
+					</SelectContent>
+				</Select>
+			)}
+			<FieldError match={Boolean(error)}>{error}</FieldError>
+		</Field>
+	);
+}
+
+function ClassField({
+	courseId,
+	campusId,
+	classes,
+	classGroupId,
+	error,
+	onChange,
+}: {
+	courseId: string;
+	campusId?: string;
+	classes: IndependentEnrollmentOptions["classes"];
+	classGroupId: string | null;
+	error?: string;
+	onChange: (value: string | null) => void;
+}) {
+	return (
+		<Field invalid={Boolean(error)}>
+			<FieldLabel htmlFor="independent-enrollment-class">
+				班级（可选）
+			</FieldLabel>
+			{!courseId || !campusId ? (
+				<p className="border p-2 text-muted-foreground text-xs">
+					请先选择学员、校区和课程。
+				</p>
+			) : classes.length === 0 ? (
+				<p className="border p-2 text-muted-foreground text-xs">
+					该课程在所选校区暂无可选班级，可暂不分班。
+				</p>
+			) : (
+				<Select
+					value={classGroupId ?? "unassigned"}
+					onValueChange={(value) =>
+						onChange(value === "unassigned" ? null : (value ?? null))
+					}
+				>
+					<SelectTrigger id="independent-enrollment-class" className="w-full">
+						<SelectValue>
+							{() => {
+								const selected = classes.find(
+									(item) => item.id === classGroupId,
+								);
+								return selected
+									? `${selected.name} · 余 ${selected.seatsRemaining}`
+									: "暂不分班";
+							}}
+						</SelectValue>
+					</SelectTrigger>
+					<SelectContent>
+						<SelectGroup>
+							<SelectItem value="unassigned">暂不分班</SelectItem>
+							{classes.map((classGroup) => (
+								<SelectItem key={classGroup.id} value={classGroup.id}>
+									{classGroup.name} · 余 {classGroup.seatsRemaining} ·{" "}
+									{classGroup.scheduleText || "排课待定"}
+								</SelectItem>
+							))}
+						</SelectGroup>
+					</SelectContent>
+				</Select>
+			)}
+			<FieldError match={Boolean(error)}>{error}</FieldError>
+		</Field>
+	);
+}
+
+function TextField({
+	id,
+	label,
+	value,
+	onChange,
+	error,
+	type = "text",
+	readOnly,
+	required,
+	maxLength,
+	min,
+	max,
+	inputMode,
+	placeholder,
+}: {
+	id: string;
+	label: string;
+	value: string;
+	onChange: (value: string) => void;
+	error?: string;
+	type?: "text" | "tel" | "number" | "date";
+	readOnly?: boolean;
+	required?: boolean;
+	maxLength?: number;
+	min?: number;
+	max?: number;
+	inputMode?: "decimal";
+	placeholder?: string;
+}) {
+	return (
+		<Field invalid={Boolean(error)}>
+			<FieldLabel htmlFor={id}>{label}</FieldLabel>
+			<Input
+				id={id}
+				type={type}
+				value={value}
+				onChange={(event) => onChange(event.target.value)}
+				aria-invalid={Boolean(error)}
+				aria-describedby={error ? `${id}-error` : undefined}
+				readOnly={readOnly}
+				required={required}
+				maxLength={maxLength}
+				min={min}
+				max={max}
+				inputMode={inputMode}
+				placeholder={placeholder}
+			/>
+			<FieldError id={`${id}-error`} match={Boolean(error)}>
+				{error}
+			</FieldError>
+		</Field>
+	);
+}
+
+function AffectedLessons({
+	lessons,
+}: {
+	lessons: Array<{
+		id: string;
+		className: string;
+		startsAt: string;
+		roomName: string;
+		occupancy: number;
+		capacity: number;
+	}>;
+}) {
+	return (
+		<div className="border border-destructive/50 bg-destructive/5 p-3 text-sm">
+			<p className="font-medium text-destructive">未来课次教室容量不足</p>
+			<ul className="mt-2 space-y-1 text-muted-foreground">
+				{lessons.map((lesson) => (
+					<li key={lesson.id}>
+						{formatDateTime(lesson.startsAt)} · {lesson.className} ·{" "}
+						{lesson.roomName}（{lesson.occupancy}/{lesson.capacity}）
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
+function EnrollmentSkeleton() {
+	return (
+		<div
+			className="flex flex-col gap-4"
+			role="status"
+			aria-label="正在加载报名选项"
+		>
+			<Skeleton className="h-10 w-full" />
+			<Skeleton className="h-48 w-full" />
+			<div className="grid gap-4 sm:grid-cols-2">
+				{["one", "two", "three", "four"].map((key) => (
+					<Skeleton key={key} className="h-14 w-full" />
+				))}
+			</div>
+		</div>
+	);
+}
+
+function getErrorKey(path: PropertyKey[]): EnrollmentErrorKey | null {
+	const field = path.join(".");
+	if (field === "student.studentId" || field === "student") return "studentId";
+	if (field === "student.name") return "studentName";
+	if (field === "student.campusId") return "campusId";
+	if (field === "student.primaryContact.name") return "contactName";
+	if (field === "student.primaryContact.phone") return "contactPhone";
+	if (field === "student.primaryContact.relationship")
+		return "contactRelationship";
+	if (field === "courseId") return "courseId";
+	if (field === "classGroupId") return "classGroupId";
+	if (field === "purchasedLessons") return "purchasedLessons";
+	if (field === "amountInCents") return "amountInCents";
+	if (field === "invoiceDueDate") return "invoiceDueDate";
+	return null;
+}
+
+function getAffectedLessons(error: unknown): Array<{
+	id: string;
+	className: string;
+	startsAt: string;
+	roomName: string;
+	occupancy: number;
+	capacity: number;
+}> {
+	if (typeof error !== "object" || error === null || !("data" in error))
+		return [];
+	const data = error.data;
+	if (
+		typeof data !== "object" ||
+		data === null ||
+		!("affectedLessons" in data) ||
+		!Array.isArray(data.affectedLessons)
+	)
+		return [];
+	return data.affectedLessons.filter(
+		(
+			item,
+		): item is {
+			id: string;
+			className: string;
+			startsAt: string;
+			roomName: string;
+			occupancy: number;
+			capacity: number;
+		} =>
+			typeof item === "object" &&
+			item !== null &&
+			"id" in item &&
+			"className" in item &&
+			"startsAt" in item &&
+			"roomName" in item &&
+			"occupancy" in item &&
+			"capacity" in item &&
+			typeof item.id === "string" &&
+			typeof item.className === "string" &&
+			typeof item.startsAt === "string" &&
+			typeof item.roomName === "string" &&
+			typeof item.occupancy === "number" &&
+			typeof item.capacity === "number",
+	);
+}
+
+function parsePositiveInteger(value: string): number | null {
+	if (!/^[1-9]\d*$/.test(value.trim())) return null;
+	const result = Number(value);
+	return Number.isSafeInteger(result) && result <= 1000 ? result : null;
+}
+
+function parseYuanToCents(value: string): number | null {
+	const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
+	if (!match) return null;
+	const result =
+		Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
+	return Number.isSafeInteger(result) ? result : null;
+}
+
+function formatCentsAsYuan(value: number) {
+	return `${Math.floor(value / 100)}.${String(value % 100).padStart(2, "0")}`;
+}
+function getShanghaiToday() {
+	return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+function formatDateTime(value: string) {
+	return new Intl.DateTimeFormat("zh-CN", {
+		timeZone: "Asia/Shanghai",
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		hour12: false,
+	}).format(new Date(value));
+}
+function studentStatusLabel(status: StudentSummary["status"]) {
+	return {
+		active: "在读",
+		trial: "试听",
+		paused: "暂停",
+		graduated: "已结业",
+		atRisk: "需关注",
+	}[status];
+}
+function invalidateEnrollmentQueries() {
+	return Promise.all([
+		queryClient.invalidateQueries({ queryKey: ["training-students"] }),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.teaching.classes.list.key(),
+		}),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.teaching.classes.enrollments.key(),
+		}),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.finance.invoices.list.key(),
+		}),
+		queryClient.invalidateQueries({ queryKey: orpc.training.snapshot.key() }),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.enrollments.independentOptions.key(),
+		}),
+	]);
+}

@@ -61,6 +61,7 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"makeup_lesson_created",
 	"makeup_lesson_cancelled",
 	"makeup_lesson_needs_reschedule",
+	"enrollment_created",
 	"lead_imported",
 	"lead_exported",
 	"notification_read",
@@ -925,6 +926,50 @@ export const enrollment = pgTable(
 		index("enrollment_org_idx").on(table.organizationId),
 		index("enrollment_student_idx").on(table.studentId),
 		index("enrollment_class_idx").on(table.classGroupId),
+	],
+);
+
+export const enrollmentRegistration = pgTable(
+	"enrollment_registration",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		requestId: uuid("request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id),
+		enrollmentId: uuid("enrollment_id")
+			.notNull()
+			.references(() => enrollment.id),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		classGroupId: uuid("class_group_id").references(() => classGroup.id, {
+			onDelete: "set null",
+		}),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("enrollment_registration_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("enrollment_registration_org_student_idx").on(
+			table.organizationId,
+			table.studentId,
+			table.createdAt,
+		),
 	],
 );
 
