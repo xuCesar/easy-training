@@ -8,6 +8,7 @@ import {
 	organizationManagementRoles,
 	organizationOperationsRoles,
 	studentManagementRoles,
+	teacherWorkspaceRoles,
 } from "./authorization/training";
 import type { Context } from "./context";
 import {
@@ -111,5 +112,11 @@ export const academicManagementProcedure = publicProcedure.use(
 	createOrganizationMiddleware(
 		academicManagementRoles,
 		"当前角色无权管理教务。",
+	),
+);
+export const teacherWorkspaceProcedure = publicProcedure.use(
+	createOrganizationMiddleware(
+		teacherWorkspaceRoles,
+		"当前角色无权访问教师工作台。",
 	),
 );

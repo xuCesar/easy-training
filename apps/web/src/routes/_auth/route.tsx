@@ -36,6 +36,7 @@ import {
 import {
 	BellIcon,
 	BookOpenIcon,
+	CalendarCheckIcon,
 	CalendarDaysIcon,
 	CheckIcon,
 	ChevronsUpDownIcon,
@@ -114,6 +115,13 @@ const navigation = [
 		icon: CalendarDaysIcon,
 		available: true,
 		roles: ["owner", "admin", "campus_manager"],
+	},
+	{
+		to: "/teacher",
+		label: "我的课表",
+		icon: CalendarCheckIcon,
+		available: true,
+		roles: ["teacher"],
 	},
 ] as const;
 

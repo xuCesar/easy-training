@@ -34,3 +34,7 @@ export const academicManagementRoles: ReadonlySet<OrganizationRole> = new Set([
 	"admin",
 	"campus_manager",
 ]);
+
+export const teacherWorkspaceRoles: ReadonlySet<OrganizationRole> = new Set([
+	"teacher",
+]);

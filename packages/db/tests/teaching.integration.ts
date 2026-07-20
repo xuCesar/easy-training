@@ -5,6 +5,16 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import { db } from "../src";
 import {
+	createScheduleRuleRecord,
+	deactivateScheduleRuleRecord,
+	deleteScheduleRuleRecord,
+	generateScheduleLessonsRecord,
+	previewBulkLessonUpdateRecord,
+	previewScheduleGenerationRecord,
+	previewScheduleRuleUpdateRecord,
+	updateScheduleRuleRecord,
+} from "../src/repositories/scheduling";
+import {
 	assignEnrollmentClassRecord,
 	cancelLessonRecord,
 	completeLessonRecord,
@@ -26,6 +36,8 @@ import {
 	enrollment,
 	lesson,
 	lessonConsumption,
+	lessonScheduleBatch,
+	lessonScheduleRule,
 	organization,
 	organizationAuditEvent,
 	organizationMember,
@@ -58,6 +70,9 @@ async function cleanup(ids: FixtureIds) {
 	await db
 		.delete(lessonConsumption)
 		.where(eq(lessonConsumption.organizationId, ids.organizationId));
+	await db
+		.delete(lessonScheduleBatch)
+		.where(eq(lessonScheduleBatch.organizationId, ids.organizationId));
 	const lessonIds = (
 		await db
 			.select({ id: lesson.id })
@@ -71,6 +86,9 @@ async function cleanup(ids: FixtureIds) {
 		.delete(enrollment)
 		.where(eq(enrollment.organizationId, ids.organizationId));
 	await db.delete(lesson).where(eq(lesson.organizationId, ids.organizationId));
+	await db
+		.delete(lessonScheduleRule)
+		.where(eq(lessonScheduleRule.organizationId, ids.organizationId));
 	await db
 		.delete(classGroup)
 		.where(eq(classGroup.organizationId, ids.organizationId));
@@ -788,8 +806,8 @@ test("非 active 报名不能入班，且不出现在成员、点名或消课路
 			userId: ids.adminId,
 			classGroupId: group.id,
 			room: "A205",
-			startsAt: new Date("2026-08-07T02:00:00.000Z"),
-			endsAt: new Date("2026-08-07T03:00:00.000Z"),
+			startsAt: new Date("2020-08-07T02:00:00.000Z"),
+			endsAt: new Date("2020-08-07T03:00:00.000Z"),
 		});
 		const attendanceBeforeCompletion = await getLessonAttendanceRecord({
 			organizationId: ids.organizationId,
@@ -819,6 +837,47 @@ test("非 active 报名不能入班，且不出现在成员、点名或消课路
 		assert.deepEqual(consumptions, [
 			{ enrollmentId: activeEnrollment.enrollmentId },
 		]);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("批量调整中候选课次互相重叠时标记为时间冲突", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { group } = await createClassFixture(ids);
+		const first = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "A101",
+			startsAt: new Date("2026-08-19T01:30:00.000Z"),
+			endsAt: new Date("2026-08-19T02:30:00.000Z"),
+		});
+		const second = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: "A102",
+			startsAt: new Date("2026-08-20T01:30:00.000Z"),
+			endsAt: new Date("2026-08-20T02:30:00.000Z"),
+		});
+
+		const preview = await previewBulkLessonUpdateRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			items: [first, second].map((item) => ({
+				id: item.id,
+				expectedVersion: item.version,
+				startsAt: new Date("2026-08-21T01:30:00.000Z"),
+				teacherId: group.teacherId,
+				room: "A102",
+			})),
+		});
+
+		assert.ok(preview.items.every((item) => item.conflicts[0] === "time"));
+		assert.ok(preview.items.every((item) => item.conflicts.length === 1));
 	} finally {
 		await cleanup(ids);
 	}
@@ -861,8 +920,8 @@ test("结课原子写入考勤和消课，重复或并发结课不会重复扣�
 			userId: ids.adminId,
 			classGroupId: group.id,
 			room: "A201",
-			startsAt: new Date("2026-08-03T02:00:00.000Z"),
-			endsAt: new Date("2026-08-03T03:00:00.000Z"),
+			startsAt: new Date("2020-08-03T02:00:00.000Z"),
+			endsAt: new Date("2020-08-03T03:00:00.000Z"),
 		});
 		const roster = ["present", "late", "absent", "leave"] as const;
 		await completeLessonRecord({
@@ -951,8 +1010,8 @@ test("结课原子写入考勤和消课，重复或并发结课不会重复扣�
 			userId: ids.adminId,
 			classGroupId: group.id,
 			room: "A202",
-			startsAt: new Date("2026-08-04T02:00:00.000Z"),
-			endsAt: new Date("2026-08-04T03:00:00.000Z"),
+			startsAt: new Date("2020-08-04T02:00:00.000Z"),
+			endsAt: new Date("2020-08-04T03:00:00.000Z"),
 		});
 		const concurrent = await Promise.allSettled(
 			Array.from({ length: 2 }, () =>
@@ -1012,8 +1071,8 @@ test("课时不足时结课整体回滚，不保留考勤或消课流水", async
 			userId: ids.adminId,
 			classGroupId: group.id,
 			room: "A203",
-			startsAt: new Date("2026-08-05T02:00:00.000Z"),
-			endsAt: new Date("2026-08-05T03:00:00.000Z"),
+			startsAt: new Date("2020-08-05T02:00:00.000Z"),
+			endsAt: new Date("2020-08-05T03:00:00.000Z"),
 		});
 		await expectError(
 			completeLessonRecord({
@@ -1052,6 +1111,359 @@ test("课时不足时结课整体回滚，不保留考勤或消课流水", async
 				),
 			);
 		assert.equal(completionAudits.length, 0);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("周期规则预览、原子生成与停用分支只影响未来待上课次", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { group } = await createClassFixture(ids);
+		const rule = await createScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			data: {
+				weekdays: [2],
+				startMinuteOfDay: 9 * 60,
+				room: "A301",
+				validFrom: "2030-01-01",
+				validUntil: "2030-01-15",
+			},
+		});
+		await expectError(
+			createScheduleRuleRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				classGroupId: group.id,
+				data: {
+					weekdays: [2],
+					startMinuteOfDay: 9 * 60,
+					room: "A301",
+					validFrom: "2030-01-01",
+					validUntil: "2030-01-15",
+				},
+			}),
+			"SCHEDULE_RULE_DUPLICATE",
+		);
+		const concurrentResults = await Promise.allSettled(
+			[0, 1].map(() =>
+				createScheduleRuleRecord({
+					organizationId: ids.organizationId,
+					userId: ids.adminId,
+					classGroupId: group.id,
+					data: {
+						weekdays: [4],
+						startMinuteOfDay: 8 * 60,
+						room: "A303",
+						validFrom: "2030-01-01",
+						validUntil: "2030-01-15",
+					},
+				}),
+			),
+		);
+		assert.equal(
+			concurrentResults.filter((result) => result.status === "fulfilled")
+				.length,
+			1,
+		);
+		const rejected = concurrentResults.find(
+			(result): result is PromiseRejectedResult => result.status === "rejected",
+		);
+		assert.ok(rejected?.reason instanceof TeachingRepositoryError);
+		assert.equal(rejected.reason.code, "SCHEDULE_RULE_DUPLICATE");
+		const preview = await previewScheduleGenerationRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: rule.id,
+			from: "2030-01-01",
+			to: "2030-01-15",
+			overrides: [],
+		});
+		assert.ok(preview.candidates.length > 0);
+		assert.ok(preview.candidates.every((item) => item.conflicts.length === 0));
+		const generated = await generateScheduleLessonsRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: rule.id,
+			expectedRevision: rule.revision,
+			from: "2030-01-01",
+			to: "2030-01-15",
+			requestId: randomUUID(),
+			candidates: preview.candidates.map((item) => ({
+				occurrenceDate: item.occurrenceDate,
+				startsAt: item.startsAt,
+				room: item.room,
+			})),
+		});
+		assert.equal(generated.replayed, false);
+		assert.equal(generated.lessonIds.length, preview.candidates.length);
+		const kept = await deactivateScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: rule.id,
+			expectedRevision: rule.revision,
+			cancelFuture: false,
+			reason: null,
+			requestId: randomUUID(),
+		});
+		assert.deepEqual(kept.cancelledLessonIds, []);
+		const keptLessons = await db
+			.select({ status: lesson.status })
+			.from(lesson)
+			.where(inArray(lesson.id, generated.lessonIds));
+		assert.ok(keptLessons.every((item) => item.status === "scheduled"));
+		await expectError(
+			generateScheduleLessonsRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				ruleId: rule.id,
+				expectedRevision: rule.revision + 1,
+				from: "2030-01-01",
+				to: "2030-01-15",
+				requestId: randomUUID(),
+				candidates: [],
+			}),
+			"SCHEDULE_RULE_INACTIVE",
+		);
+
+		const cancellingRule = await createScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			data: {
+				weekdays: [3],
+				startMinuteOfDay: 11 * 60,
+				room: "A302",
+				validFrom: "2030-01-01",
+				validUntil: "2030-01-15",
+			},
+		});
+		const cancellationPreview = await previewScheduleGenerationRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: cancellingRule.id,
+			from: "2030-01-01",
+			to: "2030-01-15",
+			overrides: [],
+		});
+		const cancellationGenerated = await generateScheduleLessonsRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: cancellingRule.id,
+			expectedRevision: cancellingRule.revision,
+			from: "2030-01-01",
+			to: "2030-01-15",
+			requestId: randomUUID(),
+			candidates: cancellationPreview.candidates.map((item) => ({
+				occurrenceDate: item.occurrenceDate,
+				startsAt: item.startsAt,
+				room: item.room,
+			})),
+		});
+		const cancelled = await deactivateScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: cancellingRule.id,
+			expectedRevision: cancellingRule.revision,
+			cancelFuture: true,
+			reason: "班级停课",
+			requestId: randomUUID(),
+		});
+		assert.deepEqual(
+			cancelled.cancelledLessonIds.sort(),
+			cancellationGenerated.lessonIds.sort(),
+		);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("周期规则创建和修改会拒绝同班级未来时段重叠", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { group } = await createClassFixture(ids);
+		const first = await createScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			data: {
+				weekdays: [1, 2],
+				startMinuteOfDay: 9 * 60 + 50,
+				room: "A102",
+				validFrom: "2030-08-01",
+				validUntil: "2030-08-31",
+			},
+		});
+		await expectError(
+			createScheduleRuleRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				classGroupId: group.id,
+				data: {
+					weekdays: [1, 3],
+					startMinuteOfDay: 9 * 60 + 30,
+					room: "A102",
+					validFrom: "2030-08-01",
+					validUntil: "2030-08-31",
+				},
+			}),
+			"SCHEDULE_RULE_CONFLICT",
+		);
+		const second = await createScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			data: {
+				weekdays: [3],
+				startMinuteOfDay: 13 * 60,
+				room: "A102",
+				validFrom: "2030-08-01",
+				validUntil: "2030-08-31",
+			},
+		});
+		await expectError(
+			previewScheduleRuleUpdateRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				ruleId: second.id,
+				expectedRevision: second.revision,
+				data: {
+					weekdays: [1, 3],
+					startMinuteOfDay: 9 * 60 + 30,
+					room: "A102",
+					validFrom: "2030-08-01",
+					validUntil: "2030-08-31",
+				},
+				effectiveFrom: "2030-08-01",
+				reapplyOverrideLessonIds: [],
+			}),
+			"SCHEDULE_RULE_CONFLICT",
+		);
+		await expectError(
+			updateScheduleRuleRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				ruleId: second.id,
+				expectedRevision: second.revision,
+				data: {
+					weekdays: [1, 3],
+					startMinuteOfDay: 9 * 60 + 30,
+					room: "A102",
+					validFrom: "2030-08-01",
+					validUntil: "2030-08-31",
+				},
+				effectiveFrom: "2030-08-01",
+				reapplyOverrideLessonIds: [],
+				requestId: randomUUID(),
+			}),
+			"SCHEDULE_RULE_CONFLICT",
+		);
+		assert.equal(first.isActive, true);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("未生成课次的周期规则可删除，已生成课次的规则保留追溯记录", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { group } = await createClassFixture(ids);
+		const emptyRule = await createScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			data: {
+				weekdays: [1],
+				startMinuteOfDay: 9 * 60,
+				room: "A401",
+				validFrom: "2030-09-01",
+				validUntil: "2030-09-30",
+			},
+		});
+		await deactivateScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: emptyRule.id,
+			expectedRevision: emptyRule.revision,
+			cancelFuture: false,
+			reason: null,
+			requestId: randomUUID(),
+		});
+		await deleteScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: emptyRule.id,
+		});
+		const [deletedRule, deletedBatch, deleteAudit] = await Promise.all([
+			db
+				.select({ id: lessonScheduleRule.id })
+				.from(lessonScheduleRule)
+				.where(eq(lessonScheduleRule.id, emptyRule.id)),
+			db
+				.select({ id: lessonScheduleBatch.id })
+				.from(lessonScheduleBatch)
+				.where(eq(lessonScheduleBatch.scheduleRuleId, emptyRule.id)),
+			db
+				.select({ id: organizationAuditEvent.id })
+				.from(organizationAuditEvent)
+				.where(
+					and(
+						eq(organizationAuditEvent.entityId, emptyRule.id),
+						eq(organizationAuditEvent.action, "schedule_rule_deleted"),
+					),
+				),
+		]);
+		assert.equal(deletedRule.length, 0);
+		assert.equal(deletedBatch.length, 0);
+		assert.equal(deleteAudit.length, 1);
+
+		const generatedRule = await createScheduleRuleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			data: {
+				weekdays: [2],
+				startMinuteOfDay: 10 * 60,
+				room: "A402",
+				validFrom: "2030-09-01",
+				validUntil: "2030-09-30",
+			},
+		});
+		const preview = await previewScheduleGenerationRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: generatedRule.id,
+			from: "2030-09-01",
+			to: "2030-09-30",
+			overrides: [],
+		});
+		await generateScheduleLessonsRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			ruleId: generatedRule.id,
+			expectedRevision: generatedRule.revision,
+			from: "2030-09-01",
+			to: "2030-09-30",
+			requestId: randomUUID(),
+			candidates: preview.candidates.map((item) => ({
+				occurrenceDate: item.occurrenceDate,
+				startsAt: item.startsAt,
+				room: item.room,
+			})),
+		});
+		await expectError(
+			deleteScheduleRuleRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				ruleId: generatedRule.id,
+			}),
+			"SCHEDULE_RULE_HAS_GENERATED_LESSONS",
+		);
 	} finally {
 		await cleanup(ids);
 	}

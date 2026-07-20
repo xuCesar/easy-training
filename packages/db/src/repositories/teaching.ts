@@ -9,6 +9,7 @@ import {
 	inArray,
 	lt,
 	lte,
+	notInArray,
 	or,
 	sql,
 } from "drizzle-orm";
@@ -28,6 +29,7 @@ import {
 	student,
 	teacher,
 	teacherCampus,
+	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
@@ -60,6 +62,19 @@ export type TeachingRepositoryErrorCode =
 	| "LESSON_TIME_INVALID"
 	| "LESSON_DURATION_INVALID"
 	| "LESSON_CONFLICT"
+	| "SCHEDULE_RULE_NOT_FOUND"
+	| "SCHEDULE_RULE_DUPLICATE"
+	| "SCHEDULE_RULE_CONFLICT"
+	| "SCHEDULE_RULE_HAS_GENERATED_LESSONS"
+	| "SCHEDULE_RULE_INACTIVE"
+	| "SCHEDULE_RULE_VERSION_CONFLICT"
+	| "SCHEDULE_CANDIDATE_INVALID"
+	| "SCHEDULE_BATCH_TOO_LARGE"
+	| "IDEMPOTENCY_CONFLICT"
+	| "LESSON_BULK_UPDATE_INVALID"
+	| "TEACHER_BINDING_INVALID"
+	| "ATTENDANCE_DRAFT_INVALID"
+	| "ATTENDANCE_TOO_EARLY"
 	| "LESSON_COMPLETION_INVALID"
 	| "LESSON_CONSUMPTION_INSUFFICIENT"
 	| "INVALID_INPUT";
@@ -71,15 +86,21 @@ export class TeachingRepositoryError extends Error {
 	}
 }
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
 type ClassStatus = (typeof classGroup.$inferSelect)["status"];
 
 const courseWriteRoles = new Set<MemberRole>(["owner", "admin"]);
-const academicWriteRoles = new Set<MemberRole>([
+export const academicWriteRoles = new Set<MemberRole>([
 	"owner",
 	"admin",
 	"campus_manager",
+]);
+const lessonWriteRoles = new Set<MemberRole>([
+	"owner",
+	"admin",
+	"campus_manager",
+	"teacher",
 ]);
 const allowedClassStatusTransitions: Record<
 	ClassStatus,
@@ -114,7 +135,7 @@ function campusAccessCondition(access: CampusAccess) {
 		: sql`true`;
 }
 
-async function getCurrentWriteCampusAccess(
+export async function getCurrentWriteCampusAccess(
 	tx: Transaction,
 	input: {
 		organizationId: string;
@@ -161,7 +182,44 @@ async function getCurrentWriteCampusAccess(
 		: { kind: "none" };
 }
 
-async function assertWritableCampus(
+async function assertTeacherOwnsLessonIfNeeded(
+	tx: Transaction,
+	input: {
+		organizationId: string;
+		userId: string;
+		teacherId: string;
+	},
+): Promise<void> {
+	const [member] = await tx
+		.select({ role: organizationMember.role })
+		.from(organizationMember)
+		.where(
+			and(
+				eq(organizationMember.organizationId, input.organizationId),
+				eq(organizationMember.userId, input.userId),
+			),
+		)
+		.limit(1);
+	if (!member || !lessonWriteRoles.has(member.role)) {
+		throw new TeachingRepositoryError("MEMBER_FORBIDDEN");
+	}
+	if (member.role !== "teacher") return;
+	const [binding] = await tx
+		.select({ id: teacher.id })
+		.from(teacher)
+		.where(
+			and(
+				eq(teacher.organizationId, input.organizationId),
+				eq(teacher.userId, input.userId),
+				eq(teacher.id, input.teacherId),
+			),
+		)
+		.limit(1)
+		.for("update");
+	if (!binding) throw new TeachingRepositoryError("MEMBER_FORBIDDEN");
+}
+
+export async function assertWritableCampus(
 	tx: Transaction,
 	input: {
 		organizationId: string;
@@ -193,7 +251,7 @@ function normalizeName(value: string): string {
 	return normalized;
 }
 
-function normalizeRoom(value: string): string {
+export function normalizeRoom(value: string): string {
 	const normalized = value
 		.trim()
 		.normalize("NFKC")
@@ -209,7 +267,7 @@ function ensurePositive(value: number): void {
 	}
 }
 
-async function assertCourseActive(
+export async function assertCourseActive(
 	tx: Transaction,
 	organizationId: string,
 	courseId: string,
@@ -227,7 +285,7 @@ async function assertCourseActive(
 	return record;
 }
 
-async function assertTeacherForCampus(
+export async function assertTeacherForCampus(
 	tx: Transaction,
 	input: { organizationId: string; teacherId: string; campusId: string },
 ): Promise<typeof teacher.$inferSelect> {
@@ -279,6 +337,62 @@ export type CourseRecord = typeof course.$inferSelect;
 export type TeacherRecord = typeof teacher.$inferSelect & {
 	campusIds: string[];
 };
+
+export type BindableTeacherMemberRecord = {
+	userId: string;
+	name: string;
+	email: string;
+	boundTeacherId: string | null;
+};
+
+export async function listBindableTeacherMemberRecords(input: {
+	organizationId: string;
+}): Promise<BindableTeacherMemberRecord[]> {
+	return db
+		.select({
+			userId: organizationMember.userId,
+			name: user.name,
+			email: user.email,
+			boundTeacherId: teacher.id,
+		})
+		.from(organizationMember)
+		.innerJoin(user, eq(user.id, organizationMember.userId))
+		.leftJoin(
+			teacher,
+			and(
+				eq(teacher.organizationId, input.organizationId),
+				eq(teacher.userId, organizationMember.userId),
+			),
+		)
+		.where(
+			and(
+				eq(organizationMember.organizationId, input.organizationId),
+				eq(organizationMember.role, "teacher"),
+			),
+		)
+		.orderBy(asc(user.name), asc(organizationMember.userId));
+}
+
+async function assertBindableTeacherUser(
+	tx: Transaction,
+	input: { organizationId: string; boundUserId?: string | null },
+): Promise<void> {
+	if (!input.boundUserId) return;
+	const [member] = await tx
+		.select({ role: organizationMember.role })
+		.from(organizationMember)
+		.where(
+			and(
+				eq(organizationMember.organizationId, input.organizationId),
+				eq(organizationMember.userId, input.boundUserId),
+			),
+		)
+		.limit(1)
+		.for("update");
+	if (member?.role !== "teacher") {
+		throw new TeachingRepositoryError("TEACHER_BINDING_INVALID");
+	}
+}
 
 export async function listCourseRecords(input: {
 	organizationId: string;
@@ -498,6 +612,7 @@ export async function listTeacherRecords(input: {
 export async function createTeacherRecord(input: {
 	organizationId: string;
 	userId: string;
+	boundUserId?: string | null;
 	name: string;
 	phone: string | null;
 	subjects: string[];
@@ -511,44 +626,64 @@ export async function createTeacherRecord(input: {
 	) {
 		throw new TeachingRepositoryError("INVALID_INPUT");
 	}
-	return db.transaction(async (tx) => {
-		const access = await getCurrentWriteCampusAccess(tx, {
-			organizationId: input.organizationId,
-			userId: input.userId,
-			allowedRoles: courseWriteRoles,
-		});
-		for (const campusId of input.campusIds) {
-			await assertWritableCampus(tx, {
+	try {
+		return await db.transaction(async (tx) => {
+			const access = await getCurrentWriteCampusAccess(tx, {
 				organizationId: input.organizationId,
-				campusAccess: access,
-				campusId,
+				userId: input.userId,
+				allowedRoles: courseWriteRoles,
 			});
-		}
-		const [created] = await tx
-			.insert(teacher)
-			.values({
+			await assertBindableTeacherUser(tx, input);
+			for (const campusId of input.campusIds) {
+				await assertWritableCampus(tx, {
+					organizationId: input.organizationId,
+					campusAccess: access,
+					campusId,
+				});
+			}
+			const [created] = await tx
+				.insert(teacher)
+				.values({
+					organizationId: input.organizationId,
+					userId: input.boundUserId ?? null,
+					name: normalizeName(input.name),
+					phone: input.phone?.trim() || null,
+					subjects: input.subjects.map(normalizeName),
+					weeklyCapacityHours: input.weeklyCapacityHours,
+				})
+				.returning();
+			if (!created)
+				throw new Error("Teacher creation did not return a record.");
+			await tx.insert(teacherCampus).values(
+				input.campusIds.map((campusId) => ({
+					teacherId: created.id,
+					campusId,
+				})),
+			);
+			await writeOrganizationAuditEvent(tx, {
 				organizationId: input.organizationId,
-				name: normalizeName(input.name),
-				phone: input.phone?.trim() || null,
-				subjects: input.subjects.map(normalizeName),
-				weeklyCapacityHours: input.weeklyCapacityHours,
-			})
-			.returning();
-		if (!created) throw new Error("Teacher creation did not return a record.");
-		await tx.insert(teacherCampus).values(
-			input.campusIds.map((campusId) => ({
-				teacherId: created.id,
-				campusId,
-			})),
-		);
-		return { ...created, campusIds: input.campusIds };
-	});
+				action: "teacher_binding_changed",
+				entityType: "teacher",
+				entityId: created.id,
+				actorUserId: input.userId,
+				targetUserId: input.boundUserId ?? null,
+				after: { userId: input.boundUserId ?? null },
+			});
+			return { ...created, campusIds: input.campusIds };
+		});
+	} catch (error) {
+		if (isUniqueError(error, "teacher_org_user_uidx")) {
+			throw new TeachingRepositoryError("TEACHER_BINDING_INVALID");
+		}
+		throw error;
+	}
 }
 
 export async function updateTeacherRecord(input: {
 	organizationId: string;
 	userId: string;
 	id: string;
+	boundUserId?: string | null;
 	name: string;
 	phone: string | null;
 	subjects: string[];
@@ -562,47 +697,81 @@ export async function updateTeacherRecord(input: {
 	) {
 		throw new TeachingRepositoryError("INVALID_INPUT");
 	}
-	return db.transaction(async (tx) => {
-		const access = await getCurrentWriteCampusAccess(tx, {
-			organizationId: input.organizationId,
-			userId: input.userId,
-			allowedRoles: courseWriteRoles,
-		});
-		for (const campusId of input.campusIds) {
-			await assertWritableCampus(tx, {
+	try {
+		return await db.transaction(async (tx) => {
+			const access = await getCurrentWriteCampusAccess(tx, {
 				organizationId: input.organizationId,
-				campusAccess: access,
-				campusId,
+				userId: input.userId,
+				allowedRoles: courseWriteRoles,
 			});
+			await assertBindableTeacherUser(tx, input);
+			for (const campusId of input.campusIds) {
+				await assertWritableCampus(tx, {
+					organizationId: input.organizationId,
+					campusAccess: access,
+					campusId,
+				});
+			}
+			const [existing] = await tx
+				.select({ userId: teacher.userId })
+				.from(teacher)
+				.where(
+					and(
+						eq(teacher.id, input.id),
+						eq(teacher.organizationId, input.organizationId),
+					),
+				)
+				.limit(1)
+				.for("update");
+			if (!existing) throw new TeachingRepositoryError("TEACHER_NOT_FOUND");
+			const boundUserId = input.boundUserId ?? null;
+			const [updated] = await tx
+				.update(teacher)
+				.set({
+					userId: boundUserId,
+					name: normalizeName(input.name),
+					phone: input.phone?.trim() || null,
+					subjects: input.subjects.map(normalizeName),
+					weeklyCapacityHours: input.weeklyCapacityHours,
+					updatedAt: new Date(),
+				})
+				.where(
+					and(
+						eq(teacher.id, input.id),
+						eq(teacher.organizationId, input.organizationId),
+					),
+				)
+				.returning();
+			if (!updated) throw new TeachingRepositoryError("TEACHER_NOT_FOUND");
+			await tx
+				.delete(teacherCampus)
+				.where(eq(teacherCampus.teacherId, updated.id));
+			await tx.insert(teacherCampus).values(
+				input.campusIds.map((campusId) => ({
+					teacherId: updated.id,
+					campusId,
+				})),
+			);
+			if (existing.userId !== boundUserId) {
+				await writeOrganizationAuditEvent(tx, {
+					organizationId: input.organizationId,
+					action: "teacher_binding_changed",
+					entityType: "teacher",
+					entityId: updated.id,
+					actorUserId: input.userId,
+					targetUserId: boundUserId ?? existing.userId,
+					before: { userId: existing.userId },
+					after: { userId: boundUserId },
+				});
+			}
+			return { ...updated, campusIds: input.campusIds };
+		});
+	} catch (error) {
+		if (isUniqueError(error, "teacher_org_user_uidx")) {
+			throw new TeachingRepositoryError("TEACHER_BINDING_INVALID");
 		}
-		const [updated] = await tx
-			.update(teacher)
-			.set({
-				name: normalizeName(input.name),
-				phone: input.phone?.trim() || null,
-				subjects: input.subjects.map(normalizeName),
-				weeklyCapacityHours: input.weeklyCapacityHours,
-				updatedAt: new Date(),
-			})
-			.where(
-				and(
-					eq(teacher.id, input.id),
-					eq(teacher.organizationId, input.organizationId),
-				),
-			)
-			.returning();
-		if (!updated) throw new TeachingRepositoryError("TEACHER_NOT_FOUND");
-		await tx
-			.delete(teacherCampus)
-			.where(eq(teacherCampus.teacherId, updated.id));
-		await tx.insert(teacherCampus).values(
-			input.campusIds.map((campusId) => ({
-				teacherId: updated.id,
-				campusId,
-			})),
-		);
-		return { ...updated, campusIds: input.campusIds };
-	});
+		throw error;
+	}
 }
 
 export type ClassGroupRecord = {
@@ -1069,6 +1238,14 @@ export type LessonRecord = {
 	cancelledAt: Date | null;
 	cancelledByUserId: string | null;
 	cancellationReason: string | null;
+	scheduleRuleId: string | null;
+	scheduleRuleRevision: number | null;
+	scheduleOccurrenceDate: string | null;
+	isScheduleOverride: boolean;
+	version: number;
+	teachingSummary: string | null;
+	completedAt: Date | null;
+	completedByUserId: string | null;
 };
 
 export async function listLessonRecords(input: {
@@ -1076,6 +1253,7 @@ export async function listLessonRecords(input: {
 	campusAccess: CampusAccess;
 	campusId?: string;
 	classGroupId?: string;
+	teacherId?: string;
 	from?: Date;
 	to?: Date;
 }): Promise<LessonRecord[]> {
@@ -1086,6 +1264,7 @@ export async function listLessonRecords(input: {
 	if (input.campusId) filters.push(eq(lesson.campusId, input.campusId));
 	if (input.classGroupId)
 		filters.push(eq(lesson.classGroupId, input.classGroupId));
+	if (input.teacherId) filters.push(eq(lesson.teacherId, input.teacherId));
 	if (input.from) filters.push(gte(lesson.startsAt, input.from));
 	if (input.to) filters.push(lte(lesson.startsAt, input.to));
 	return db
@@ -1105,6 +1284,14 @@ export async function listLessonRecords(input: {
 			cancelledAt: lesson.cancelledAt,
 			cancelledByUserId: lesson.cancelledByUserId,
 			cancellationReason: lesson.cancellationReason,
+			scheduleRuleId: lesson.scheduleRuleId,
+			scheduleRuleRevision: lesson.scheduleRuleRevision,
+			scheduleOccurrenceDate: lesson.scheduleOccurrenceDate,
+			isScheduleOverride: lesson.isScheduleOverride,
+			version: lesson.version,
+			teachingSummary: lesson.teachingSummary,
+			completedAt: lesson.completedAt,
+			completedByUserId: lesson.completedByUserId,
 		})
 		.from(lesson)
 		.innerJoin(
@@ -1364,17 +1551,103 @@ export async function getLessonAttendanceRecord(input: {
 	return { lesson: lessonRecord, members };
 }
 
-export async function completeLessonRecord(input: {
+export type TeacherWorkspaceRecord = {
+	teacher: Pick<typeof teacher.$inferSelect, "id" | "name"> | null;
+	lessons: LessonRecord[];
+};
+
+export async function getTeacherWorkspaceRecord(input: {
+	organizationId: string;
+	userId: string;
+	from: Date;
+	to: Date;
+}): Promise<TeacherWorkspaceRecord> {
+	const [member] = await db
+		.select({ role: organizationMember.role })
+		.from(organizationMember)
+		.where(
+			and(
+				eq(organizationMember.organizationId, input.organizationId),
+				eq(organizationMember.userId, input.userId),
+			),
+		)
+		.limit(1);
+	if (member?.role !== "teacher") {
+		throw new TeachingRepositoryError("MEMBER_FORBIDDEN");
+	}
+	const [binding] = await db
+		.select({ id: teacher.id, name: teacher.name })
+		.from(teacher)
+		.where(
+			and(
+				eq(teacher.organizationId, input.organizationId),
+				eq(teacher.userId, input.userId),
+			),
+		)
+		.limit(1);
+	if (!binding) return { teacher: null, lessons: [] };
+	return {
+		teacher: binding,
+		lessons: await listLessonRecords({
+			organizationId: input.organizationId,
+			campusAccess: { kind: "all" },
+			teacherId: binding.id,
+			from: input.from,
+			to: input.to,
+		}),
+	};
+}
+
+export async function getTeacherLessonAttendanceRecord(input: {
+	organizationId: string;
+	userId: string;
+	id: string;
+}): Promise<LessonAttendanceRecord> {
+	const [owned] = await db
+		.select({ id: lesson.id })
+		.from(lesson)
+		.innerJoin(
+			teacher,
+			and(
+				eq(teacher.id, lesson.teacherId),
+				eq(teacher.organizationId, input.organizationId),
+				eq(teacher.userId, input.userId),
+			),
+		)
+		.innerJoin(
+			organizationMember,
+			and(
+				eq(organizationMember.organizationId, input.organizationId),
+				eq(organizationMember.userId, input.userId),
+				eq(organizationMember.role, "teacher"),
+			),
+		)
+		.where(
+			and(
+				eq(lesson.id, input.id),
+				eq(lesson.organizationId, input.organizationId),
+			),
+		)
+		.limit(1);
+	if (!owned) throw new TeachingRepositoryError("MEMBER_FORBIDDEN");
+	return getLessonAttendanceRecord({
+		organizationId: input.organizationId,
+		campusAccess: { kind: "all" },
+		id: input.id,
+	});
+}
+
+export async function saveLessonAttendanceDraftRecord(input: {
 	organizationId: string;
 	userId: string;
 	id: string;
 	attendance: LessonAttendanceInput[];
-}): Promise<LessonRecord> {
-	const completedId = await db.transaction(async (tx) => {
+}): Promise<LessonAttendanceRecord> {
+	await db.transaction(async (tx) => {
 		const access = await getCurrentWriteCampusAccess(tx, {
 			organizationId: input.organizationId,
 			userId: input.userId,
-			allowedRoles: academicWriteRoles,
+			allowedRoles: lessonWriteRoles,
 		});
 		const [lessonRecord] = await tx
 			.select()
@@ -1388,12 +1661,142 @@ export async function completeLessonRecord(input: {
 			.limit(1)
 			.for("update");
 		if (!lessonRecord) throw new TeachingRepositoryError("LESSON_NOT_FOUND");
+		await assertTeacherOwnsLessonIfNeeded(tx, {
+			organizationId: input.organizationId,
+			userId: input.userId,
+			teacherId: lessonRecord.teacherId,
+		});
 		await assertWritableCampus(tx, {
 			organizationId: input.organizationId,
 			campusAccess: access,
 			campusId: lessonRecord.campusId,
 		});
-		if (lessonRecord.status !== "scheduled") {
+		const now = new Date();
+		if (
+			lessonRecord.status !== "scheduled" ||
+			now < new Date(lessonRecord.startsAt.getTime() - 30 * 60_000)
+		) {
+			throw new TeachingRepositoryError("ATTENDANCE_TOO_EARLY");
+		}
+		const [group] = await tx
+			.select({ id: classGroup.id })
+			.from(classGroup)
+			.where(
+				and(
+					eq(classGroup.id, lessonRecord.classGroupId),
+					eq(classGroup.organizationId, input.organizationId),
+				),
+			)
+			.limit(1)
+			.for("update");
+		if (!group) throw new TeachingRepositoryError("CLASS_NOT_FOUND");
+		const memberships = await tx
+			.select({ id: enrollment.id, studentId: enrollment.studentId })
+			.from(enrollment)
+			.where(
+				and(
+					eq(enrollment.organizationId, input.organizationId),
+					eq(enrollment.classGroupId, lessonRecord.classGroupId),
+					eq(enrollment.status, "active"),
+				),
+			)
+			.for("update");
+		const submitted = new Map(
+			input.attendance.map((item) => [item.enrollmentId, item]),
+		);
+		if (
+			memberships.length !== input.attendance.length ||
+			submitted.size !== input.attendance.length ||
+			memberships.some((item) => !submitted.has(item.id))
+		) {
+			throw new TeachingRepositoryError("ATTENDANCE_DRAFT_INVALID");
+		}
+		const studentIds = memberships.map((item) => item.studentId);
+		await tx
+			.delete(attendance)
+			.where(
+				studentIds.length > 0
+					? and(
+							eq(attendance.lessonId, lessonRecord.id),
+							notInArray(attendance.studentId, studentIds),
+						)
+					: eq(attendance.lessonId, lessonRecord.id),
+			);
+		for (const membership of memberships) {
+			const item = submitted.get(membership.id);
+			if (!item) throw new TeachingRepositoryError("ATTENDANCE_DRAFT_INVALID");
+			await tx
+				.insert(attendance)
+				.values({
+					lessonId: lessonRecord.id,
+					studentId: membership.studentId,
+					status: item.status,
+					checkedInAt:
+						item.status === "present" || item.status === "late" ? now : null,
+					note: item.note?.trim() || null,
+					recordedByUserId: input.userId,
+					updatedAt: now,
+				})
+				.onConflictDoUpdate({
+					target: [attendance.lessonId, attendance.studentId],
+					set: {
+						status: item.status,
+						checkedInAt:
+							item.status === "present" || item.status === "late" ? now : null,
+						note: item.note?.trim() || null,
+						recordedByUserId: input.userId,
+						updatedAt: now,
+					},
+				});
+		}
+	});
+	return getLessonAttendanceRecord({
+		organizationId: input.organizationId,
+		campusAccess: { kind: "all" },
+		id: input.id,
+	});
+}
+
+export async function completeLessonRecord(input: {
+	organizationId: string;
+	userId: string;
+	id: string;
+	attendance: LessonAttendanceInput[] | null;
+	teachingSummary?: string | null;
+}): Promise<LessonRecord> {
+	const completedId = await db.transaction(async (tx) => {
+		const access = await getCurrentWriteCampusAccess(tx, {
+			organizationId: input.organizationId,
+			userId: input.userId,
+			allowedRoles: lessonWriteRoles,
+		});
+		const [lessonRecord] = await tx
+			.select()
+			.from(lesson)
+			.where(
+				and(
+					eq(lesson.id, input.id),
+					eq(lesson.organizationId, input.organizationId),
+				),
+			)
+			.limit(1)
+			.for("update");
+		if (!lessonRecord) throw new TeachingRepositoryError("LESSON_NOT_FOUND");
+		await assertTeacherOwnsLessonIfNeeded(tx, {
+			organizationId: input.organizationId,
+			userId: input.userId,
+			teacherId: lessonRecord.teacherId,
+		});
+		await assertWritableCampus(tx, {
+			organizationId: input.organizationId,
+			campusAccess: access,
+			campusId: lessonRecord.campusId,
+		});
+		const completedAt = new Date();
+		if (
+			lessonRecord.status !== "scheduled" ||
+			completedAt < lessonRecord.endsAt
+		) {
 			throw new TeachingRepositoryError("LESSON_COMPLETION_INVALID");
 		}
 		const [group] = await tx
@@ -1429,12 +1832,47 @@ export async function completeLessonRecord(input: {
 		) {
 			throw new TeachingRepositoryError("CLASS_STUDENT_DUPLICATE");
 		}
-		const submitted = new Map(
-			input.attendance.map((item) => [item.enrollmentId, item]),
+		const existingDrafts = await tx
+			.select({
+				studentId: attendance.studentId,
+				status: attendance.status,
+				note: attendance.note,
+			})
+			.from(attendance)
+			.where(eq(attendance.lessonId, lessonRecord.id))
+			.for("update");
+		const enrollmentByStudentId = new Map(
+			memberships.map((item) => [item.studentId, item.id]),
 		);
 		if (
-			memberships.length !== input.attendance.length ||
-			submitted.size !== input.attendance.length ||
+			input.attendance === null &&
+			existingDrafts.length > 0 &&
+			(existingDrafts.length !== memberships.length ||
+				existingDrafts.some(
+					(item) => !enrollmentByStudentId.has(item.studentId),
+				))
+		) {
+			throw new TeachingRepositoryError("ATTENDANCE_DRAFT_INVALID");
+		}
+		const finalAttendance =
+			input.attendance ??
+			(existingDrafts.length > 0
+				? existingDrafts.map((item) => ({
+						enrollmentId: enrollmentByStudentId.get(item.studentId) ?? "",
+						status: item.status,
+						note: item.note,
+					}))
+				: memberships.map((item) => ({
+						enrollmentId: item.id,
+						status: "present" as const,
+						note: null,
+					})));
+		const submitted = new Map(
+			finalAttendance.map((item) => [item.enrollmentId, item]),
+		);
+		if (
+			memberships.length !== finalAttendance.length ||
+			submitted.size !== finalAttendance.length ||
 			memberships.some((item) => !submitted.has(item.id))
 		) {
 			throw new TeachingRepositoryError("LESSON_COMPLETION_INVALID");
@@ -1448,19 +1886,47 @@ export async function completeLessonRecord(input: {
 				throw new TeachingRepositoryError("LESSON_CONSUMPTION_INSUFFICIENT");
 			}
 		}
+		const currentStudentIds = memberships.map((item) => item.studentId);
+		await tx
+			.delete(attendance)
+			.where(
+				currentStudentIds.length > 0
+					? and(
+							eq(attendance.lessonId, lessonRecord.id),
+							notInArray(attendance.studentId, currentStudentIds),
+						)
+					: eq(attendance.lessonId, lessonRecord.id),
+			);
 		for (const membership of memberships) {
 			const item = submitted.get(membership.id);
 			if (!item) throw new TeachingRepositoryError("LESSON_COMPLETION_INVALID");
-			await tx.insert(attendance).values({
-				lessonId: lessonRecord.id,
-				studentId: membership.studentId,
-				status: item.status,
-				checkedInAt:
-					item.status === "present" || item.status === "late"
-						? new Date()
-						: null,
-				note: item.note?.trim() || null,
-			});
+			await tx
+				.insert(attendance)
+				.values({
+					lessonId: lessonRecord.id,
+					studentId: membership.studentId,
+					status: item.status,
+					checkedInAt:
+						item.status === "present" || item.status === "late"
+							? new Date()
+							: null,
+					note: item.note?.trim() || null,
+					recordedByUserId: input.userId,
+					updatedAt: completedAt,
+				})
+				.onConflictDoUpdate({
+					target: [attendance.lessonId, attendance.studentId],
+					set: {
+						status: item.status,
+						checkedInAt:
+							item.status === "present" || item.status === "late"
+								? completedAt
+								: null,
+						note: item.note?.trim() || null,
+						recordedByUserId: input.userId,
+						updatedAt: completedAt,
+					},
+				});
 			if (item.status === "present" || item.status === "late") {
 				await tx.insert(lessonConsumption).values({
 					organizationId: input.organizationId,
@@ -1479,7 +1945,13 @@ export async function completeLessonRecord(input: {
 		}
 		await tx
 			.update(lesson)
-			.set({ status: "completed" })
+			.set({
+				status: "completed",
+				teachingSummary: input.teachingSummary?.trim() || null,
+				completedAt,
+				completedByUserId: input.userId,
+				version: sql`${lesson.version} + 1`,
+			})
 			.where(eq(lesson.id, lessonRecord.id));
 		await writeOrganizationAuditEvent(tx, {
 			organizationId: input.organizationId,

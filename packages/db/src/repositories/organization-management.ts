@@ -11,6 +11,7 @@ import {
 	organizationMember,
 	organizationMemberCampus,
 	session,
+	teacher,
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
@@ -28,6 +29,7 @@ export type OrganizationManagementErrorCode =
 	| "INVITATION_EMAIL_UNVERIFIED"
 	| "INVITATION_ALREADY_MEMBER"
 	| "INVITATION_REQUEST_REPLAY"
+	| "TEACHER_BINDING_EXISTS"
 	| "INVALID_SCOPE";
 
 export class OrganizationManagementError extends Error {
@@ -490,6 +492,22 @@ export async function updateMemberRecord(input: {
 				throw new OrganizationManagementError("LAST_OWNER");
 			}
 		}
+		if (target.role === "teacher" && input.role !== "teacher") {
+			const [binding] = await tx
+				.select({ id: teacher.id })
+				.from(teacher)
+				.where(
+					and(
+						eq(teacher.organizationId, input.organizationId),
+						eq(teacher.userId, target.userId),
+					),
+				)
+				.limit(1)
+				.for("update");
+			if (binding) {
+				throw new OrganizationManagementError("TEACHER_BINDING_EXISTS");
+			}
+		}
 		const nextCampusAccessMode = isOrganizationWideRole(input.role)
 			? "all"
 			: input.campusAccessMode;
@@ -576,6 +594,22 @@ export async function removeMemberRecord(input: {
 				);
 			if ((owners?.value ?? 0) <= 1) {
 				throw new OrganizationManagementError("LAST_OWNER");
+			}
+		}
+		if (target.role === "teacher") {
+			const [binding] = await tx
+				.select({ id: teacher.id })
+				.from(teacher)
+				.where(
+					and(
+						eq(teacher.organizationId, input.organizationId),
+						eq(teacher.userId, target.userId),
+					),
+				)
+				.limit(1)
+				.for("update");
+			if (binding) {
+				throw new OrganizationManagementError("TEACHER_BINDING_EXISTS");
 			}
 		}
 		const currentScopes = await tx

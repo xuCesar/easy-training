@@ -388,6 +388,14 @@ const auditActionSchema = z.enum([
 	"enrollment_renewed",
 	"enrollment_transferred",
 	"lesson_completed",
+	"schedule_rule_created",
+	"schedule_rule_updated",
+	"schedule_rule_deactivated",
+	"schedule_rule_deleted",
+	"lessons_generated",
+	"lessons_bulk_rescheduled",
+	"lessons_bulk_cancelled",
+	"teacher_binding_changed",
 	"lead_imported",
 	"lead_exported",
 	"notification_read",
@@ -1070,10 +1078,25 @@ const teacherSchema = teacherDataSchema.extend({
 export const teacherListResultSchema = z.object({
 	items: z.array(teacherSchema),
 });
-export const createTeacherInputSchema = teacherDataSchema;
+const teacherBindingInputSchema = z.object({
+	boundUserId: z.string().min(1).max(128).nullable().default(null),
+});
+export const createTeacherInputSchema = teacherDataSchema.merge(
+	teacherBindingInputSchema,
+);
 export const updateTeacherInputSchema = z.object({
 	id: z.uuid(),
-	data: teacherDataSchema,
+	data: teacherDataSchema.merge(teacherBindingInputSchema),
+});
+export const bindableTeacherMemberListResultSchema = z.object({
+	items: z.array(
+		z.object({
+			userId: z.string(),
+			name: z.string(),
+			email: z.email(),
+			boundTeacherId: z.uuid().nullable(),
+		}),
+	),
 });
 
 const classGroupDataSchema = z.object({
@@ -1144,6 +1167,14 @@ const lessonSchema = z.object({
 	cancelledAt: z.iso.datetime({ offset: true }).nullable(),
 	cancelledByUserId: z.string().nullable(),
 	cancellationReason: z.string().nullable(),
+	scheduleRuleId: z.uuid().nullable(),
+	scheduleRuleRevision: z.number().int().positive().nullable(),
+	scheduleOccurrenceDate: z.iso.date().nullable(),
+	isScheduleOverride: z.boolean(),
+	version: z.number().int().positive(),
+	teachingSummary: z.string().nullable(),
+	completedAt: z.iso.datetime({ offset: true }).nullable(),
+	completedByUserId: z.string().nullable(),
 });
 export const lessonListInputSchema = z.object({
 	campusId: z.uuid().optional(),
@@ -1174,6 +1205,21 @@ export const completeLessonInputSchema = z.object({
 				note: z.string().trim().max(300).nullable().default(null),
 			}),
 		)
+		.max(10_000)
+		.nullable()
+		.default(null),
+	teachingSummary: z.string().trim().max(2000).nullable().default(null),
+});
+export const saveLessonAttendanceDraftInputSchema = z.object({
+	id: z.uuid(),
+	attendance: z
+		.array(
+			z.object({
+				enrollmentId: z.uuid(),
+				status: z.enum(["present", "absent", "late", "leave"]),
+				note: z.string().trim().max(300).nullable().default(null),
+			}),
+		)
 		.max(10_000),
 });
 const lessonAttendanceMemberSchema = z.object({
@@ -1189,6 +1235,181 @@ export const lessonAttendanceResultSchema = z.object({
 	lesson: lessonSchema,
 	members: z.array(lessonAttendanceMemberSchema),
 });
+export const teacherWorkspaceInputSchema = z.object({
+	from: z.iso.datetime({ offset: true }),
+	to: z.iso.datetime({ offset: true }),
+});
+export const teacherWorkspaceResultSchema = z.object({
+	teacher: z.object({ id: z.uuid(), name: z.string() }).nullable(),
+	lessons: z.array(lessonSchema),
+});
+
+const scheduleRuleDataSchema = z.object({
+	weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
+	startMinuteOfDay: z.number().int().min(0).max(1439),
+	room: z.string().trim().min(1).max(80),
+	validFrom: z.iso.date(),
+	validUntil: z.iso.date(),
+});
+const scheduleRuleSchema = scheduleRuleDataSchema.extend({
+	id: z.uuid(),
+	organizationId: z.uuid(),
+	classGroupId: z.uuid(),
+	className: z.string(),
+	campusId: z.uuid(),
+	teacherId: z.uuid(),
+	courseId: z.uuid(),
+	durationMinutes: z.number().int().positive(),
+	kind: z.literal("weekly"),
+	intervalWeeks: z.literal(1),
+	timezone: z.literal("Asia/Shanghai"),
+	revision: z.number().int().positive(),
+	isActive: z.boolean(),
+	hasGeneratedLessons: z.boolean(),
+	createdByUserId: z.string(),
+	updatedByUserId: z.string(),
+	createdAt: z.iso.datetime({ offset: true }),
+	updatedAt: z.iso.datetime({ offset: true }),
+});
+const scheduleCandidateOverrideSchema = z.object({
+	occurrenceDate: z.iso.date(),
+	startsAt: z.iso.datetime({ offset: true }),
+	room: z.string().trim().min(1).max(80),
+});
+const scheduleCandidateSchema = scheduleCandidateOverrideSchema.extend({
+	baselineStartsAt: z.iso.datetime({ offset: true }),
+	endsAt: z.iso.datetime({ offset: true }),
+	conflicts: z.array(z.enum(["teacher", "room", "already_generated"])),
+});
+export const scheduleRuleListInputSchema = z.object({
+	classGroupId: z.uuid().optional(),
+});
+export const scheduleRuleListResultSchema = z.object({
+	items: z.array(scheduleRuleSchema),
+});
+export const createScheduleRuleInputSchema = z.object({
+	classGroupId: z.uuid(),
+	data: scheduleRuleDataSchema,
+});
+export const previewScheduleGenerationInputSchema = z.object({
+	ruleId: z.uuid(),
+	from: z.iso.date(),
+	to: z.iso.date(),
+	overrides: z.array(scheduleCandidateOverrideSchema).max(200).default([]),
+});
+export const previewScheduleGenerationResultSchema = z.object({
+	rule: scheduleRuleSchema,
+	candidates: z.array(scheduleCandidateSchema).max(200),
+});
+export const generateScheduleLessonsInputSchema =
+	previewScheduleGenerationInputSchema.extend({
+		expectedRevision: z.number().int().positive(),
+		requestId: z.uuid(),
+		candidates: z.array(scheduleCandidateOverrideSchema).max(200),
+	});
+export const generateScheduleLessonsResultSchema = z.object({
+	lessonIds: z.array(z.uuid()),
+	replayed: z.boolean(),
+});
+export const previewScheduleRuleUpdateInputSchema = z.object({
+	ruleId: z.uuid(),
+	expectedRevision: z.number().int().positive(),
+	data: scheduleRuleDataSchema,
+	effectiveFrom: z.iso.date(),
+	reapplyOverrideLessonIds: z.array(z.uuid()).max(200).default([]),
+});
+const scheduleRuleUpdateItemSchema = z.object({
+	lessonId: z.uuid(),
+	expectedVersion: z.number().int().positive(),
+	occurrenceDate: z.iso.date(),
+	isOverride: z.boolean(),
+	preserved: z.boolean(),
+	current: z.object({
+		startsAt: z.iso.datetime({ offset: true }),
+		endsAt: z.iso.datetime({ offset: true }),
+		room: z.string(),
+	}),
+	proposed: z.object({
+		startsAt: z.iso.datetime({ offset: true }),
+		endsAt: z.iso.datetime({ offset: true }),
+		room: z.string(),
+	}),
+	conflicts: z.array(z.enum(["teacher", "room", "already_generated"])),
+});
+export const previewScheduleRuleUpdateResultSchema = z.object({
+	ruleId: z.uuid(),
+	revision: z.number().int().positive(),
+	items: z.array(scheduleRuleUpdateItemSchema),
+});
+export const updateScheduleRuleInputSchema =
+	previewScheduleRuleUpdateInputSchema.extend({ requestId: z.uuid() });
+export const updateScheduleRuleResultSchema = z.object({
+	lessonIds: z.array(z.uuid()),
+	revision: z.number().int().positive(),
+	replayed: z.boolean(),
+});
+export const previewScheduleRuleDeactivationInputSchema = z.object({
+	ruleId: z.uuid(),
+});
+export const previewScheduleRuleDeactivationResultSchema = z.object({
+	ruleId: z.uuid(),
+	revision: z.number().int().positive(),
+	futureLessonIds: z.array(z.uuid()),
+});
+export const deactivateScheduleRuleInputSchema = z.object({
+	ruleId: z.uuid(),
+	expectedRevision: z.number().int().positive(),
+	cancelFuture: z.boolean(),
+	reason: z.string().trim().min(1).max(300).nullable().default(null),
+	requestId: z.uuid(),
+});
+export const deactivateScheduleRuleResultSchema = z.object({
+	cancelledLessonIds: z.array(z.uuid()),
+});
+export const deleteScheduleRuleInputSchema = z.object({
+	ruleId: z.uuid(),
+});
+export const deleteScheduleRuleResultSchema = z.object({
+	deletedRuleId: z.uuid(),
+});
+const bulkLessonUpdateItemInputSchema = z.object({
+	id: z.uuid(),
+	expectedVersion: z.number().int().positive(),
+	startsAt: z.iso.datetime({ offset: true }),
+	teacherId: z.uuid(),
+	room: z.string().trim().min(1).max(80),
+});
+const bulkLessonUpdateItemSchema = z.object({
+	id: z.uuid(),
+	expectedVersion: z.number().int().positive(),
+	classGroupId: z.uuid(),
+	campusId: z.uuid(),
+	current: z.object({
+		startsAt: z.iso.datetime({ offset: true }),
+		endsAt: z.iso.datetime({ offset: true }),
+		teacherId: z.uuid(),
+		room: z.string(),
+	}),
+	proposed: z.object({
+		startsAt: z.iso.datetime({ offset: true }),
+		endsAt: z.iso.datetime({ offset: true }),
+		teacherId: z.uuid(),
+		room: z.string(),
+	}),
+	conflicts: z.array(z.enum(["teacher", "room", "time"])),
+});
+export const previewBulkLessonUpdateInputSchema = z.object({
+	items: z.array(bulkLessonUpdateItemInputSchema).min(1).max(200),
+});
+export const previewBulkLessonUpdateResultSchema = z.object({
+	items: z.array(bulkLessonUpdateItemSchema),
+});
+export const bulkUpdateLessonsInputSchema =
+	previewBulkLessonUpdateInputSchema.extend({ requestId: z.uuid() });
+export const bulkUpdateLessonsResultSchema = z.object({
+	lessonIds: z.array(z.uuid()),
+	replayed: z.boolean(),
+});
 
 export type Course = z.infer<typeof courseSchema>;
 export type CourseListInput = z.infer<typeof courseListInputSchema>;
@@ -1198,6 +1419,9 @@ export type SetCourseActiveInput = z.infer<typeof setCourseActiveInputSchema>;
 export type Teacher = z.infer<typeof teacherSchema>;
 export type CreateTeacherInput = z.infer<typeof createTeacherInputSchema>;
 export type UpdateTeacherInput = z.infer<typeof updateTeacherInputSchema>;
+export type BindableTeacherMember = z.infer<
+	typeof bindableTeacherMemberListResultSchema.shape.items.element
+>;
 export type ClassGroup = z.infer<typeof classGroupSchema>;
 export type ClassGroupListInput = z.infer<typeof classGroupListInputSchema>;
 export type CreateClassGroupInput = z.infer<typeof createClassGroupInputSchema>;
@@ -1216,6 +1440,42 @@ export type CancelLessonInput = z.infer<typeof cancelLessonInputSchema>;
 export type CompleteLessonInput = z.infer<typeof completeLessonInputSchema>;
 export type LessonAttendanceInput = z.infer<typeof lessonAttendanceInputSchema>;
 export type LessonAttendance = z.infer<typeof lessonAttendanceResultSchema>;
+export type SaveLessonAttendanceDraftInput = z.infer<
+	typeof saveLessonAttendanceDraftInputSchema
+>;
+export type TeacherWorkspaceInput = z.infer<typeof teacherWorkspaceInputSchema>;
+export type ScheduleRule = z.infer<typeof scheduleRuleSchema>;
+export type ScheduleRuleListInput = z.infer<typeof scheduleRuleListInputSchema>;
+export type CreateScheduleRuleInput = z.infer<
+	typeof createScheduleRuleInputSchema
+>;
+export type PreviewScheduleGenerationInput = z.infer<
+	typeof previewScheduleGenerationInputSchema
+>;
+export type GenerateScheduleLessonsInput = z.infer<
+	typeof generateScheduleLessonsInputSchema
+>;
+export type PreviewScheduleRuleDeactivationInput = z.infer<
+	typeof previewScheduleRuleDeactivationInputSchema
+>;
+export type DeactivateScheduleRuleInput = z.infer<
+	typeof deactivateScheduleRuleInputSchema
+>;
+export type DeleteScheduleRuleInput = z.infer<
+	typeof deleteScheduleRuleInputSchema
+>;
+export type PreviewScheduleRuleUpdateInput = z.infer<
+	typeof previewScheduleRuleUpdateInputSchema
+>;
+export type UpdateScheduleRuleInput = z.infer<
+	typeof updateScheduleRuleInputSchema
+>;
+export type PreviewBulkLessonUpdateInput = z.infer<
+	typeof previewBulkLessonUpdateInputSchema
+>;
+export type BulkUpdateLessonsInput = z.infer<
+	typeof bulkUpdateLessonsInputSchema
+>;
 
 const dashboardFollowUpSchema = z.object({
 	id: z.uuid(),

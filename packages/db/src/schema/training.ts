@@ -44,6 +44,14 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"enrollment_renewed",
 	"enrollment_transferred",
 	"lesson_completed",
+	"schedule_rule_created",
+	"schedule_rule_updated",
+	"schedule_rule_deactivated",
+	"schedule_rule_deleted",
+	"lessons_generated",
+	"lessons_bulk_rescheduled",
+	"lessons_bulk_cancelled",
+	"teacher_binding_changed",
 	"lead_imported",
 	"lead_exported",
 	"notification_read",
@@ -95,6 +103,13 @@ export const lessonStatus = pgEnum("lesson_status", [
 	"scheduled",
 	"completed",
 	"cancelled",
+]);
+export const lessonScheduleKind = pgEnum("lesson_schedule_kind", ["weekly"]);
+export const lessonScheduleBatchKind = pgEnum("lesson_schedule_batch_kind", [
+	"generate",
+	"rule_sync",
+	"bulk_reschedule",
+	"rule_cancel_future",
 ]);
 export const attendanceStatus = pgEnum("attendance_status", [
 	"present",
@@ -382,7 +397,12 @@ export const teacher = pgTable(
 			.$onUpdate(() => new Date())
 			.notNull(),
 	},
-	(table) => [index("teacher_org_idx").on(table.organizationId)],
+	(table) => [
+		index("teacher_org_idx").on(table.organizationId),
+		uniqueIndex("teacher_org_user_uidx")
+			.on(table.organizationId, table.userId)
+			.where(sql`${table.userId} is not null`),
+	],
 );
 
 export const teacherCampus = pgTable(
@@ -715,6 +735,61 @@ export const classGroup = pgTable(
 	],
 );
 
+export const lessonScheduleRule = pgTable(
+	"lesson_schedule_rule",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		classGroupId: uuid("class_group_id")
+			.notNull()
+			.references(() => classGroup.id),
+		kind: lessonScheduleKind("kind").default("weekly").notNull(),
+		intervalWeeks: integer("interval_weeks").default(1).notNull(),
+		weekdays: integer("weekdays").array().notNull(),
+		startMinuteOfDay: integer("start_minute_of_day").notNull(),
+		room: text("room").notNull(),
+		timezone: text("timezone").default("Asia/Shanghai").notNull(),
+		validFrom: date("valid_from").notNull(),
+		validUntil: date("valid_until").notNull(),
+		revision: integer("revision").default(1).notNull(),
+		isActive: boolean("is_active").default(true).notNull(),
+		createdByUserId: text("created_by_user_id")
+			.notNull()
+			.references(() => user.id),
+		updatedByUserId: text("updated_by_user_id")
+			.notNull()
+			.references(() => user.id),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		check(
+			"lesson_schedule_rule_interval_check",
+			sql`${table.intervalWeeks} > 0`,
+		),
+		check(
+			"lesson_schedule_rule_start_minute_check",
+			sql`${table.startMinuteOfDay} >= 0 and ${table.startMinuteOfDay} < 1440`,
+		),
+		check(
+			"lesson_schedule_rule_date_range_check",
+			sql`${table.validUntil} >= ${table.validFrom}`,
+		),
+		index("lesson_schedule_rule_org_class_active_idx").on(
+			table.organizationId,
+			table.classGroupId,
+			table.isActive,
+		),
+	],
+);
+
 export const enrollment = pgTable(
 	"enrollment",
 	{
@@ -845,6 +920,15 @@ export const lesson = pgTable(
 			.notNull()
 			.references(() => campus.id),
 		room: text("room").notNull(),
+		scheduleRuleId: uuid("schedule_rule_id").references(
+			() => lessonScheduleRule.id,
+		),
+		scheduleRuleRevision: integer("schedule_rule_revision"),
+		scheduleOccurrenceDate: date("schedule_occurrence_date"),
+		isScheduleOverride: boolean("is_schedule_override")
+			.default(false)
+			.notNull(),
+		version: integer("version").default(1).notNull(),
 		startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
 		endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
 		status: lessonStatus("status").default("scheduled").notNull(),
@@ -853,11 +937,23 @@ export const lesson = pgTable(
 			onDelete: "set null",
 		}),
 		cancellationReason: text("cancellation_reason"),
+		teachingSummary: text("teaching_summary"),
+		completedAt: timestamp("completed_at", { withTimezone: true }),
+		completedByUserId: text("completed_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
 	},
 	(table) => [
+		uniqueIndex("lesson_schedule_rule_occurrence_uidx")
+			.on(table.scheduleRuleId, table.scheduleOccurrenceDate)
+			.where(sql`${table.scheduleRuleId} is not null`),
+		index("lesson_schedule_rule_starts_idx").on(
+			table.scheduleRuleId,
+			table.startsAt,
+		),
 		index("lesson_campus_starts_idx").on(table.campusId, table.startsAt),
 		index("lesson_teacher_starts_idx").on(table.teacherId, table.startsAt),
 		index("lesson_org_teacher_starts_idx").on(
@@ -870,6 +966,39 @@ export const lesson = pgTable(
 			table.campusId,
 			table.room,
 			table.startsAt,
+		),
+	],
+);
+
+export const lessonScheduleBatch = pgTable(
+	"lesson_schedule_batch",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		requestId: uuid("request_id").notNull(),
+		kind: lessonScheduleBatchKind("kind").notNull(),
+		scheduleRuleId: uuid("schedule_rule_id").references(
+			() => lessonScheduleRule.id,
+		),
+		actorUserId: text("actor_user_id")
+			.notNull()
+			.references(() => user.id),
+		requestFingerprint: text("request_fingerprint").notNull(),
+		affectedLessonIds: uuid("affected_lesson_ids").array().notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("lesson_schedule_batch_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("lesson_schedule_batch_org_created_idx").on(
+			table.organizationId,
+			table.createdAt,
 		),
 	],
 );
@@ -887,6 +1016,13 @@ export const attendance = pgTable(
 		status: attendanceStatus("status").notNull(),
 		checkedInAt: timestamp("checked_in_at", { withTimezone: true }),
 		note: text("note"),
+		recordedByUserId: text("recorded_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
 	},
 	(table) => [
 		uniqueIndex("attendance_lesson_student_uidx").on(
@@ -1211,6 +1347,7 @@ export const classGroupRelations = relations(classGroup, ({ one, many }) => ({
 		references: [teacher.id],
 	}),
 	lessons: many(lesson),
+	scheduleRules: many(lessonScheduleRule),
 	enrollments: many(enrollment),
 }));
 
@@ -1219,7 +1356,22 @@ export const enrollmentRelations = relations(enrollment, ({ many }) => ({
 	renewals: many(enrollmentRenewal),
 }));
 
-export const lessonRelations = relations(lesson, ({ many }) => ({
+export const lessonScheduleRuleRelations = relations(
+	lessonScheduleRule,
+	({ one, many }) => ({
+		classGroup: one(classGroup, {
+			fields: [lessonScheduleRule.classGroupId],
+			references: [classGroup.id],
+		}),
+		lessons: many(lesson),
+	}),
+);
+
+export const lessonRelations = relations(lesson, ({ one, many }) => ({
+	scheduleRule: one(lessonScheduleRule, {
+		fields: [lesson.scheduleRuleId],
+		references: [lessonScheduleRule.id],
+	}),
 	attendances: many(attendance),
 	consumptions: many(lessonConsumption),
 }));

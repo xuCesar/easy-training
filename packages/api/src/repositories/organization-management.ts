@@ -63,6 +63,10 @@ function toOrganizationError(error: OrganizationManagementError): never {
 			throw new ORPCError("CONFLICT", {
 				message: "机构必须至少保留一名负责人。",
 			});
+		case "TEACHER_BINDING_EXISTS":
+			throw new ORPCError("CONFLICT", {
+				message: "请先在教师档案中解绑账号，再变更角色或移除成员。",
+			});
 		case "INVALID_SCOPE":
 			throw new ORPCError("BAD_REQUEST", {
 				message: "校区范围包含无效的校区。",

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."organization_audit_action" ADD VALUE 'schedule_rule_deleted' BEFORE 'lessons_generated';

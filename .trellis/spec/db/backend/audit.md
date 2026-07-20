@@ -7,7 +7,7 @@
 ## 2. Signatures
 
 - 统一入口：`writeOrganizationAuditEvent(tx, { organizationId, action, entityType, entityId, actorUserId, targetUserId?, campusId?, before?, after? })`。
-- Action：`payment_created`、`refund_created`、`enrollment_renewed`、`enrollment_transferred`、`lesson_completed`，以及既有成员与机构操作 action。
+- Action：`payment_created`、`refund_created`、`enrollment_renewed`、`enrollment_transferred`、`lesson_completed`、`schedule_rule_created`、`schedule_rule_updated`、`schedule_rule_deactivated`、`schedule_rule_deleted`、`lessons_generated`、`lessons_bulk_rescheduled`、`lessons_bulk_cancelled`、`teacher_binding_changed`，以及既有成员与机构操作 action。
 - 审计 action 为 `organization_audit_action` PostgreSQL enum；新增值必须同时修改 Drizzle schema、生成 migration、API `auditActionSchema` 和 Web 审计页筛选/标签。
 
 ## 3. Contracts

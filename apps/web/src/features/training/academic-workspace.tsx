@@ -1,4 +1,5 @@
 import type {
+	BindableTeacherMember,
 	ClassEnrollment,
 	ClassGroup,
 	Course,
@@ -49,7 +50,9 @@ import {
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { orpc, queryClient } from "@/utils/orpc";
+import { BulkRescheduleDialog } from "./bulk-reschedule-dialog";
 import { formatCentsToCurrency, formatDateTime } from "./format";
+import { ScheduleRulesDialog } from "./schedule-rules-dialog";
 
 type AcademicTab = "classes" | "lessons" | "courses" | "teachers";
 type Editor =
@@ -82,6 +85,11 @@ export function AcademicWorkspace({
 	const [classMembersTarget, setClassMembersTarget] =
 		useState<ClassGroup | null>(null);
 	const [attendanceTarget, setAttendanceTarget] = useState<Lesson | null>(null);
+	const [scheduleRulesTarget, setScheduleRulesTarget] =
+		useState<ClassGroup | null>(null);
+	const [bulkRescheduleTarget, setBulkRescheduleTarget] = useState<
+		Lesson[] | null
+	>(null);
 	const [campusId, setCampusId] = useState<string | undefined>();
 	const [classStatus, setClassStatus] = useState<string>("all");
 	const canManageCatalog = role === "owner" || role === "admin";
@@ -93,6 +101,8 @@ export function AcademicWorkspace({
 		input: { includeInactive: true },
 	});
 	const teachersOptions = orpc.training.teaching.teachers.list.queryOptions();
+	const bindableTeacherMembersOptions =
+		orpc.training.teaching.teachers.bindableMembers.queryOptions();
 	const classesInput = {
 		campusId,
 		status:
@@ -117,6 +127,11 @@ export function AcademicWorkspace({
 	const teachersQuery = useQuery({
 		...teachersOptions,
 		queryKey: [...teachersOptions.queryKey, context],
+	});
+	const bindableTeacherMembersQuery = useQuery({
+		...bindableTeacherMembersOptions,
+		queryKey: [...bindableTeacherMembersOptions.queryKey, context],
+		enabled: canManageCatalog,
 	});
 	const classesQuery = useQuery({
 		...classesOptions,
@@ -190,6 +205,8 @@ export function AcademicWorkspace({
 				<ClassesPanel
 					campuses={campusesQuery.data?.items ?? []}
 					classes={classesQuery.data?.items ?? []}
+					lessons={lessonsQuery.data?.items ?? []}
+					isLessonsPending={lessonsQuery.isPending}
 					isPending={classesQuery.isPending}
 					isError={classesQuery.isError}
 					campusId={campusId}
@@ -214,6 +231,7 @@ export function AcademicWorkspace({
 					onSchedule={() => setEditor({ kind: "lesson", value: null })}
 					onCancel={setCancelTarget}
 					onTakeAttendance={setAttendanceTarget}
+					onBulkReschedule={setBulkRescheduleTarget}
 					onRetry={() => void lessonsQuery.refetch()}
 				/>
 			) : null}
@@ -249,6 +267,7 @@ export function AcademicWorkspace({
 				<TeacherEditor
 					value={editor.value}
 					campuses={campusesQuery.data?.items ?? []}
+					bindableMembers={bindableTeacherMembersQuery.data?.items ?? []}
 					onClose={() => setEditor(null)}
 					onSaved={refresh}
 				/>
@@ -271,6 +290,10 @@ export function AcademicWorkspace({
 					classes={classesQuery.data?.items ?? []}
 					onClose={() => setEditor(null)}
 					onSaved={refresh}
+					onStartRecurring={(classGroup) => {
+						setEditor(null);
+						setScheduleRulesTarget(classGroup);
+					}}
 				/>
 			) : null}
 			{cancelTarget ? (
@@ -291,6 +314,21 @@ export function AcademicWorkspace({
 				<LessonAttendanceDialog
 					lesson={attendanceTarget}
 					onClose={() => setAttendanceTarget(null)}
+					onSaved={refresh}
+				/>
+			) : null}
+			{scheduleRulesTarget ? (
+				<ScheduleRulesDialog
+					classGroup={scheduleRulesTarget}
+					onClose={() => setScheduleRulesTarget(null)}
+					onSaved={refresh}
+				/>
+			) : null}
+			{bulkRescheduleTarget ? (
+				<BulkRescheduleDialog
+					lessons={bulkRescheduleTarget}
+					teachers={teachersQuery.data?.items ?? []}
+					onClose={() => setBulkRescheduleTarget(null)}
 					onSaved={refresh}
 				/>
 			) : null}
@@ -324,6 +362,8 @@ function invalidateAcademicQueries() {
 function ClassesPanel({
 	campuses,
 	classes,
+	lessons,
+	isLessonsPending,
 	isPending,
 	isError,
 	campusId,
@@ -338,6 +378,8 @@ function ClassesPanel({
 }: {
 	campuses: Array<{ id: string; name: string }>;
 	classes: ClassGroup[];
+	lessons: Lesson[];
+	isLessonsPending: boolean;
 	isPending: boolean;
 	isError: boolean;
 	campusId: string | undefined;
@@ -350,6 +392,15 @@ function ClassesPanel({
 	onCreate: () => void;
 	onRetry: () => void;
 }) {
+	const [expandedClassId, setExpandedClassId] = useState<string | null>(null);
+	const now = new Date();
+	const lessonsByClassId = new Map<string, Lesson[]>();
+	for (const item of lessons) {
+		const current = lessonsByClassId.get(item.classGroupId) ?? [];
+		current.push(item);
+		lessonsByClassId.set(item.classGroupId, current);
+	}
+
 	return (
 		<>
 			<FilterBar
@@ -374,60 +425,128 @@ function ClassesPanel({
 				onCreate={onCreate}
 			>
 				<div className="grid gap-2">
-					{classes.map((item) => (
-						<article
-							key={item.id}
-							className="grid gap-3 border p-3 md:grid-cols-[minmax(12rem,1.4fr)_repeat(4,minmax(0,1fr))_auto] md:items-center"
-						>
-							<div className="min-w-0">
-								<p className="truncate font-medium">{item.name}</p>
-								<p className="mt-1 truncate text-muted-foreground text-xs">
-									{item.courseName} · {item.teacherName}
-								</p>
-							</div>
-							<DataCell label="校区" value={item.campusName} />
-							<DataCell
-								label="报名"
-								value={`${item.enrollmentCount} / ${item.capacity} 人`}
-							/>
-							<DataCell label="开班" value={item.startDate} />
-							<div>
-								<StatusBadge status={item.status} />
-								<p className="mt-1 truncate text-muted-foreground text-xs">
-									{item.scheduleText}
-								</p>
-							</div>
-							<div className="flex gap-1">
-								<Button
-									size="icon-sm"
-									variant="ghost"
-									aria-label={`编辑${item.name}`}
-									onClick={() => onEdit(item)}
-								>
-									<PencilIcon />
-								</Button>
-								<Button
-									size="icon-sm"
-									variant="ghost"
-									aria-label={`管理${item.name}成员`}
-									onClick={() => onManageMembers(item)}
-								>
-									<UsersRoundIcon />
-								</Button>
-								<Button
-									size="sm"
-									variant="outline"
-									disabled={
-										item.status === "paused" || item.status === "completed"
-									}
-									onClick={() => onSchedule(item)}
-								>
-									<CalendarClockIcon data-icon="inline-start" />
-									排课
-								</Button>
-							</div>
-						</article>
-					))}
+					{classes.map((item) => {
+						const classLessons = lessonsByClassId.get(item.id) ?? [];
+						const scheduledLessons = classLessons.filter(
+							(lesson) => lesson.status === "scheduled",
+						);
+						const futureLessons = scheduledLessons
+							.filter((lesson) => new Date(lesson.startsAt) > now)
+							.sort(
+								(left, right) =>
+									new Date(left.startsAt).getTime() -
+									new Date(right.startsAt).getTime(),
+							);
+						const visibleFutureLessons = futureLessons.slice(0, 3);
+						const isExpanded = expandedClassId === item.id;
+						return (
+							<article
+								key={item.id}
+								className="grid gap-3 border p-3 md:grid-cols-[minmax(12rem,1.4fr)_repeat(4,minmax(0,1fr))_auto] md:items-center"
+							>
+								<div className="min-w-0">
+									<p className="truncate font-medium">{item.name}</p>
+									<p className="mt-1 truncate text-muted-foreground text-xs">
+										{item.courseName} · {item.teacherName}
+									</p>
+								</div>
+								<DataCell label="校区" value={item.campusName} />
+								<DataCell
+									label="报名"
+									value={`${item.enrollmentCount} / ${item.capacity} 人`}
+								/>
+								<DataCell label="开班" value={item.startDate} />
+								<div>
+									<StatusBadge status={item.status} />
+									{isLessonsPending ? (
+										<p className="mt-1 text-muted-foreground text-xs">
+											课次加载中…
+										</p>
+									) : (
+										<button
+											type="button"
+											className="mt-1 max-w-full cursor-pointer text-left text-muted-foreground text-xs hover:text-foreground"
+											onClick={() =>
+												setExpandedClassId((current) =>
+													current === item.id ? null : item.id,
+												)
+											}
+											aria-expanded={isExpanded}
+											aria-controls={`class-lessons-${item.id}`}
+										>
+											已排 {scheduledLessons.length} 节
+											{futureLessons[0]
+												? ` · 下次 ${formatDateTime(futureLessons[0].startsAt)}`
+												: ""}
+										</button>
+									)}
+								</div>
+								<div className="flex gap-1">
+									<Button
+										size="icon-sm"
+										variant="ghost"
+										aria-label={`编辑${item.name}`}
+										onClick={() => onEdit(item)}
+									>
+										<PencilIcon />
+									</Button>
+									<Button
+										size="icon-sm"
+										variant="ghost"
+										aria-label={`管理${item.name}成员`}
+										onClick={() => onManageMembers(item)}
+									>
+										<UsersRoundIcon />
+									</Button>
+									<Button
+										size="sm"
+										variant="outline"
+										disabled={
+											item.status === "paused" || item.status === "completed"
+										}
+										onClick={() => onSchedule(item)}
+									>
+										<CalendarClockIcon data-icon="inline-start" />
+										排课
+									</Button>
+								</div>
+								{isExpanded ? (
+									<div
+										id={`class-lessons-${item.id}`}
+										className="grid gap-2 border-t pt-3 md:col-span-full"
+									>
+										<div className="flex items-center justify-between gap-2">
+											<p className="font-medium text-sm">未来待上课次</p>
+											<p className="text-muted-foreground text-xs">
+												共 {futureLessons.length} 节，显示最近{" "}
+												{visibleFutureLessons.length} 节
+											</p>
+										</div>
+										{visibleFutureLessons.length === 0 ? (
+											<p className="text-muted-foreground text-sm">
+												暂无未来待上课次
+											</p>
+										) : (
+											visibleFutureLessons.map((lesson) => (
+												<div
+													key={lesson.id}
+													className="grid gap-1 border p-2 text-sm sm:grid-cols-[minmax(12rem,1fr)_minmax(10rem,1fr)_auto] sm:items-center"
+												>
+													<p className="font-medium">
+														{formatDateTime(lesson.startsAt)}
+													</p>
+													<p className="text-muted-foreground text-xs">
+														{lesson.teacherName} · {lesson.room}
+													</p>
+													<StatusBadge status={lesson.status} />
+												</div>
+											))
+										)}
+									</div>
+								) : null}
+							</article>
+						);
+					})}
 				</div>
 			</PanelState>
 		</>
@@ -444,6 +563,7 @@ function LessonsPanel({
 	onSchedule,
 	onCancel,
 	onTakeAttendance,
+	onBulkReschedule,
 	onRetry,
 }: {
 	campuses: Array<{ id: string; name: string }>;
@@ -455,9 +575,15 @@ function LessonsPanel({
 	onSchedule: () => void;
 	onCancel: (item: Lesson) => void;
 	onTakeAttendance: (item: Lesson) => void;
+	onBulkReschedule: (items: Lesson[]) => void;
 	onRetry: () => void;
 }) {
 	const scheduled = lessons.filter((item) => item.status === "scheduled");
+	const future = scheduled.filter(
+		(item) => new Date(item.startsAt) > new Date(),
+	);
+	const [selectedIds, setSelectedIds] = useState<string[]>([]);
+	const selected = future.filter((item) => selectedIds.includes(item.id));
 	return (
 		<>
 			<FilterBar
@@ -465,9 +591,22 @@ function LessonsPanel({
 				campusId={campusId}
 				onCampusChange={onCampusChange}
 			>
-				<p className="self-center text-muted-foreground text-xs">
-					已排 {scheduled.length} 节，取消课次仍保留审计记录。
-				</p>
+				<div className="flex w-full flex-wrap items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+					<p className="rounded-md border bg-muted/30 px-3 py-2 text-muted-foreground text-xs">
+						<span className="font-medium text-foreground">
+							已排 {scheduled.length} 节
+						</span>
+						<span className="ml-2">取消课次仍保留审计记录。</span>
+					</p>
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={selected.length === 0}
+						onClick={() => onBulkReschedule(selected)}
+					>
+						批量调课（{selected.length}）
+					</Button>
+				</div>
 			</FilterBar>
 			<PanelState
 				pending={isPending}
@@ -484,6 +623,21 @@ function LessonsPanel({
 							key={item.id}
 							className="grid gap-3 border p-3 md:grid-cols-[10rem_minmax(12rem,1fr)_repeat(3,minmax(0,1fr))_auto] md:items-center"
 						>
+							<label className="flex items-center gap-2 text-xs md:col-span-full">
+								<input
+									type="checkbox"
+									checked={selectedIds.includes(item.id)}
+									disabled={!future.some((lesson) => lesson.id === item.id)}
+									onChange={(event) =>
+										setSelectedIds((current) =>
+											event.target.checked
+												? [...current, item.id]
+												: current.filter((id) => id !== item.id),
+										)
+									}
+								/>
+								选择未来课次
+							</label>
 							<div>
 								<p className="font-medium text-sm">
 									{formatDateTime(item.startsAt)}
@@ -715,7 +869,7 @@ function FilterSelect({
 	items: Array<{ value: string; label: string }>;
 }) {
 	return (
-		<div className="w-full sm:min-w-44 sm:flex-1">
+		<div className="w-full sm:w-44">
 			<span className="mb-1 block text-muted-foreground text-xs">{label}</span>
 			<Select
 				value={value}
@@ -963,11 +1117,13 @@ function CourseEditor({
 function TeacherEditor({
 	value,
 	campuses,
+	bindableMembers,
 	onClose,
 	onSaved,
 }: {
 	value: Teacher | null;
 	campuses: Array<{ id: string; name: string }>;
+	bindableMembers: BindableTeacherMember[];
 	onClose: () => void;
 	onSaved: () => Promise<unknown>;
 }) {
@@ -982,6 +1138,7 @@ function TeacherEditor({
 		event.preventDefault();
 		const data = new FormData(event.currentTarget);
 		const campusIds = data.getAll("campusId").map(String);
+		const boundUserId = text(data, "boundUserId");
 		const input = {
 			name: text(data, "name"),
 			phone: text(data, "phone") || null,
@@ -991,6 +1148,7 @@ function TeacherEditor({
 				.filter(Boolean),
 			weeklyCapacityHours: number(data, "weeklyCapacityHours"),
 			campusIds,
+			boundUserId: boundUserId === "unbound" ? null : boundUserId,
 		};
 		const request = value
 			? updateMutation.mutateAsync({ id: value.id, data: input })
@@ -1016,6 +1174,24 @@ function TeacherEditor({
 					name="name"
 					defaultValue={value?.name}
 					required
+				/>
+				<SelectField
+					label="绑定教师账号（可选）"
+					name="boundUserId"
+					defaultValue={value?.userId ?? "unbound"}
+					items={[
+						{ value: "unbound", label: "暂不绑定" },
+						...bindableMembers
+							.filter(
+								(item) =>
+									item.boundTeacherId === null ||
+									item.boundTeacherId === value?.id,
+							)
+							.map((item) => ({
+								value: item.userId,
+								label: `${item.name} · ${item.email}`,
+							})),
+					]}
 				/>
 				<TextField
 					label="手机号（可选）"
@@ -1221,11 +1397,13 @@ function LessonEditor({
 	classes,
 	onClose,
 	onSaved,
+	onStartRecurring,
 }: {
 	defaultClass: ClassGroup | null;
 	classes: ClassGroup[];
 	onClose: () => void;
 	onSaved: () => Promise<unknown>;
+	onStartRecurring: (classGroup: ClassGroup) => void;
 }) {
 	const mutation = useMutation(
 		orpc.training.teaching.lessons.create.mutationOptions(),
@@ -1236,6 +1414,9 @@ function LessonEditor({
 				(item) => item.status === "recruiting" || item.status === "running",
 			)?.id ??
 			"",
+	);
+	const [scheduleMode, setScheduleMode] = useState<"single" | "recurring">(
+		"single",
 	);
 	const selected = classes.find((item) => item.id === classId);
 	function submit(event: FormEvent<HTMLFormElement>) {
@@ -1263,61 +1444,128 @@ function LessonEditor({
 	}
 	return (
 		<EditorDialog
-			title="新增课次"
-			description="课次继承班级的校区与主讲教师；变更请取消后重新创建。"
+			title="排课"
+			description={
+				scheduleMode === "single"
+					? "单次排课用于临时加课；课次继承班级的校区与主讲教师。"
+					: "周期排课会先维护每周规则，再预览、调节冲突并批量生成课次。"
+			}
 			pending={mutation.isPending}
 			onClose={onClose}
 		>
-			<form className="grid gap-3" onSubmit={submit}>
-				<SelectField
-					label="班级"
-					name="classGroupId"
-					defaultValue={classId}
-					onValueChange={setClassId}
-					items={classes
-						.filter(
-							(item) =>
-								item.status === "recruiting" || item.status === "running",
-						)
-						.map((item) => ({
-							value: item.id,
-							label: `${item.name} · ${item.courseName}`,
-						}))}
-				/>
-				{selected ? (
-					<div className="grid gap-1 border bg-muted/30 p-3 text-sm">
-						<p>
-							{selected.campusName} · {selected.teacherName}
-						</p>
-						<p className="text-muted-foreground text-xs">
-							标准时长 {selected.courseName} 以服务端规则为准
-						</p>
+			<div className="inline-flex w-full rounded-md border p-1 sm:w-auto">
+				<Button
+					size="sm"
+					variant={scheduleMode === "single" ? "default" : "ghost"}
+					onClick={() => setScheduleMode("single")}
+				>
+					单次排课
+				</Button>
+				<Button
+					size="sm"
+					variant={scheduleMode === "recurring" ? "default" : "ghost"}
+					onClick={() => setScheduleMode("recurring")}
+				>
+					周期排课
+				</Button>
+			</div>
+			{scheduleMode === "single" ? (
+				<form className="grid gap-3" onSubmit={submit}>
+					<SelectField
+						label="班级"
+						name="classGroupId"
+						defaultValue={classId}
+						onValueChange={setClassId}
+						items={classes
+							.filter(
+								(item) =>
+									item.status === "recruiting" || item.status === "running",
+							)
+							.map((item) => ({
+								value: item.id,
+								label: `${item.name} · ${item.courseName}`,
+							}))}
+					/>
+					{selected ? (
+						<div className="grid gap-1 border bg-muted/30 p-3 text-sm">
+							<p>
+								{selected.campusName} · {selected.teacherName}
+							</p>
+							<p className="text-muted-foreground text-xs">
+								标准时长 {selected.courseName} 以服务端规则为准
+							</p>
+						</div>
+					) : null}
+					<div className="grid gap-3 sm:grid-cols-2">
+						<TextField
+							label="开始时间"
+							name="startsAt"
+							type="datetime-local"
+							required
+						/>
+						<TextField
+							label="结束时间"
+							name="endsAt"
+							type="datetime-local"
+							required
+						/>
 					</div>
-				) : null}
-				<div className="grid gap-3 sm:grid-cols-2">
 					<TextField
-						label="开始时间"
-						name="startsAt"
-						type="datetime-local"
+						label="教室"
+						name="room"
+						placeholder="例如 A201"
 						required
 					/>
-					<TextField
-						label="结束时间"
-						name="endsAt"
-						type="datetime-local"
-						required
+					<DialogFooter>
+						<Button type="button" variant="outline" onClick={onClose}>
+							取消
+						</Button>
+						<Button type="submit" disabled={mutation.isPending || !selected}>
+							创建课次
+						</Button>
+					</DialogFooter>
+				</form>
+			) : (
+				<div className="grid gap-3">
+					<SelectField
+						label="班级"
+						name="recurringClassGroupId"
+						defaultValue={classId}
+						onValueChange={setClassId}
+						items={classes
+							.filter(
+								(item) =>
+									item.status === "recruiting" || item.status === "running",
+							)
+							.map((item) => ({
+								value: item.id,
+								label: `${item.name} · ${item.courseName}`,
+							}))}
 					/>
+					{selected ? (
+						<div className="grid gap-1 border bg-muted/30 p-3 text-sm">
+							<p>
+								{selected.campusName} · {selected.teacherName}
+							</p>
+							<p className="text-muted-foreground text-xs">
+								可在下一步创建、修改或停用周期规则，并先预览冲突。
+							</p>
+						</div>
+					) : null}
+					<DialogFooter>
+						<Button type="button" variant="outline" onClick={onClose}>
+							取消
+						</Button>
+						<Button
+							type="button"
+							disabled={!selected}
+							onClick={() => selected && onStartRecurring(selected)}
+						>
+							进入周期排课
+						</Button>
+					</DialogFooter>
 				</div>
-				<TextField label="教室" name="room" placeholder="例如 A201" required />
-				<DialogFooter>
-					<Button type="button" variant="outline" onClick={onClose}>
-						取消
-					</Button>
-					<Button type="submit" disabled={mutation.isPending || !selected}>
-						创建课次
-					</Button>
-				</DialogFooter>
-			</form>
+			)}
 		</EditorDialog>
 	);
 }

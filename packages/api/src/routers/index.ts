@@ -7,6 +7,9 @@ import {
 	assignEnrollmentClassResultSchema,
 	auditEventListInputSchema,
 	auditEventListResultSchema,
+	bindableTeacherMemberListResultSchema,
+	bulkUpdateLessonsInputSchema,
+	bulkUpdateLessonsResultSchema,
 	campusListInputSchema,
 	campusListResultSchema,
 	cancelLessonInputSchema,
@@ -37,14 +40,21 @@ import {
 	createPaymentResultSchema,
 	createRefundInputSchema,
 	createRefundResultSchema,
+	createScheduleRuleInputSchema,
 	createStudentInputSchema,
 	createStudentTagInputSchema,
 	createTeacherInputSchema,
 	currentOrganizationSchema,
 	dashboardSnapshotSchema,
+	deactivateScheduleRuleInputSchema,
+	deactivateScheduleRuleResultSchema,
+	deleteScheduleRuleInputSchema,
+	deleteScheduleRuleResultSchema,
 	enrollmentAdjustmentListResultSchema,
 	exportLeadsInputSchema,
 	exportLeadsResultSchema,
+	generateScheduleLessonsInputSchema,
+	generateScheduleLessonsResultSchema,
 	invitationListResultSchema,
 	invoiceDetailInputSchema,
 	invoiceDetailSchema,
@@ -66,13 +76,24 @@ import {
 	memberListResultSchema,
 	notificationListInputSchema,
 	notificationListResultSchema,
+	previewBulkLessonUpdateInputSchema,
+	previewBulkLessonUpdateResultSchema,
 	previewLeadImportInputSchema,
 	previewLeadImportResultSchema,
+	previewScheduleGenerationInputSchema,
+	previewScheduleGenerationResultSchema,
+	previewScheduleRuleDeactivationInputSchema,
+	previewScheduleRuleDeactivationResultSchema,
+	previewScheduleRuleUpdateInputSchema,
+	previewScheduleRuleUpdateResultSchema,
 	removeMemberInputSchema,
 	renewEnrollmentInputSchema,
 	renewEnrollmentResultSchema,
 	resendInvitationInputSchema,
 	revokeInvitationInputSchema,
+	saveLessonAttendanceDraftInputSchema,
+	scheduleRuleListInputSchema,
+	scheduleRuleListResultSchema,
 	selectOrganizationInputSchema,
 	setCampusActiveInputSchema,
 	setCourseActiveInputSchema,
@@ -84,6 +105,8 @@ import {
 	studentTagListInputSchema,
 	studentTagListResultSchema,
 	teacherListResultSchema,
+	teacherWorkspaceInputSchema,
+	teacherWorkspaceResultSchema,
 	transferEnrollmentInputSchema,
 	transferEnrollmentResultSchema,
 	updateCampusInputSchema,
@@ -91,6 +114,8 @@ import {
 	updateCourseInputSchema,
 	updateLeadInputSchema,
 	updateMemberInputSchema,
+	updateScheduleRuleInputSchema,
+	updateScheduleRuleResultSchema,
 	updateStudentInputSchema,
 	updateStudentTagInputSchema,
 	updateTeacherInputSchema,
@@ -106,6 +131,7 @@ import {
 	protectedProcedure,
 	publicProcedure,
 	studentProcedure,
+	teacherWorkspaceProcedure,
 } from "../index";
 import {
 	convertLead,
@@ -171,21 +197,36 @@ import {
 } from "../repositories/students";
 import {
 	assignEnrollmentClass,
+	bulkUpdateLessons,
 	cancelLesson,
 	completeLesson,
 	createClassGroup,
 	createCourse,
 	createLesson,
+	createScheduleRule,
 	createTeacher,
+	deactivateScheduleRule,
+	deleteScheduleRule,
+	generateScheduleLessons,
 	getLessonAttendance,
+	getTeacherLessonAttendance,
+	getTeacherWorkspace,
+	listBindableTeacherMembers,
 	listClassEnrollments,
 	listClassGroups,
 	listCourses,
 	listLessons,
+	listScheduleRules,
 	listTeachers,
+	previewBulkLessonUpdate,
+	previewScheduleGeneration,
+	previewScheduleRuleDeactivation,
+	previewScheduleRuleUpdate,
+	saveLessonAttendanceDraft,
 	setCourseActive,
 	updateClassGroup,
 	updateCourse,
+	updateScheduleRule,
 	updateTeacher,
 } from "../repositories/teaching";
 import { getTrainingDashboardSnapshot } from "../repositories/training-dashboard";
@@ -633,6 +674,134 @@ export const appRouter = {
 							input,
 						),
 					),
+				bindableMembers: organizationManagementProcedure
+					.output(bindableTeacherMemberListResultSchema)
+					.handler(({ context }) =>
+						listBindableTeacherMembers({
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						}),
+					),
+			},
+			scheduleRules: {
+				list: academicManagementProcedure
+					.input(scheduleRuleListInputSchema)
+					.output(scheduleRuleListResultSchema)
+					.handler(({ context, input }) =>
+						listScheduleRules(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				create: academicManagementProcedure
+					.input(createScheduleRuleInputSchema)
+					.output(scheduleRuleListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						createScheduleRule(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				previewGenerate: academicManagementProcedure
+					.input(previewScheduleGenerationInputSchema)
+					.output(previewScheduleGenerationResultSchema)
+					.handler(({ context, input }) =>
+						previewScheduleGeneration(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				generate: academicManagementProcedure
+					.input(generateScheduleLessonsInputSchema)
+					.output(generateScheduleLessonsResultSchema)
+					.handler(({ context, input }) =>
+						generateScheduleLessons(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				previewUpdate: academicManagementProcedure
+					.input(previewScheduleRuleUpdateInputSchema)
+					.output(previewScheduleRuleUpdateResultSchema)
+					.handler(({ context, input }) =>
+						previewScheduleRuleUpdate(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				update: academicManagementProcedure
+					.input(updateScheduleRuleInputSchema)
+					.output(updateScheduleRuleResultSchema)
+					.handler(({ context, input }) =>
+						updateScheduleRule(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				previewDeactivate: academicManagementProcedure
+					.input(previewScheduleRuleDeactivationInputSchema)
+					.output(previewScheduleRuleDeactivationResultSchema)
+					.handler(({ context, input }) =>
+						previewScheduleRuleDeactivation(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				deactivate: academicManagementProcedure
+					.input(deactivateScheduleRuleInputSchema)
+					.output(deactivateScheduleRuleResultSchema)
+					.handler(({ context, input }) =>
+						deactivateScheduleRule(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				delete: academicManagementProcedure
+					.input(deleteScheduleRuleInputSchema)
+					.output(deleteScheduleRuleResultSchema)
+					.handler(({ context, input }) =>
+						deleteScheduleRule(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
 			},
 			classes: {
 				list: academicManagementProcedure
@@ -728,11 +897,50 @@ export const appRouter = {
 							input,
 						),
 					),
+				previewBulkUpdate: academicManagementProcedure
+					.input(previewBulkLessonUpdateInputSchema)
+					.output(previewBulkLessonUpdateResultSchema)
+					.handler(({ context, input }) =>
+						previewBulkLessonUpdate(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				bulkUpdate: academicManagementProcedure
+					.input(bulkUpdateLessonsInputSchema)
+					.output(bulkUpdateLessonsResultSchema)
+					.handler(({ context, input }) =>
+						bulkUpdateLessons(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
 				attendance: academicManagementProcedure
 					.input(lessonAttendanceInputSchema)
 					.output(lessonAttendanceResultSchema)
 					.handler(({ context, input }) =>
 						getLessonAttendance(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				saveDraft: academicManagementProcedure
+					.input(saveLessonAttendanceDraftInputSchema)
+					.output(lessonAttendanceResultSchema)
+					.handler(({ context, input }) =>
+						saveLessonAttendanceDraft(
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
@@ -759,6 +967,60 @@ export const appRouter = {
 					.output(lessonListResultSchema.shape.items.element)
 					.handler(({ context, input }) =>
 						cancelLesson(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+			teacherWorkspace: {
+				lessons: teacherWorkspaceProcedure
+					.input(teacherWorkspaceInputSchema)
+					.output(teacherWorkspaceResultSchema)
+					.handler(({ context, input }) =>
+						getTeacherWorkspace(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				attendance: teacherWorkspaceProcedure
+					.input(lessonAttendanceInputSchema)
+					.output(lessonAttendanceResultSchema)
+					.handler(({ context, input }) =>
+						getTeacherLessonAttendance(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				saveDraft: teacherWorkspaceProcedure
+					.input(saveLessonAttendanceDraftInputSchema)
+					.output(lessonAttendanceResultSchema)
+					.handler(({ context, input }) =>
+						saveLessonAttendanceDraft(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				complete: teacherWorkspaceProcedure
+					.input(completeLessonInputSchema)
+					.output(lessonListResultSchema.shape.items.element)
+					.handler(({ context, input }) =>
+						completeLesson(
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
