@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
+- **Total Sessions**: 13
 - **Last Active**: 2026-07-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~419 | Active |
+| `journal-1.md` | ~453 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-07-20 | 完成 P1 周期排课与教师工作台 | `bfdd491` | `develop` |
 | 12 | 2026-07-20 | 完成 P0 生产保障收尾 | `86cec96` | `develop` |
 | 11 | 2026-07-20 | 交付 P0 可观测性与恢复保障 | `685ba2f`, `2914289` | `develop` |
 | 10 | 2026-07-19 | 优化邀请重发入口 | `c1ef216` | `develop` |
