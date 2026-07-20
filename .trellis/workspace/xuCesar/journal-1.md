@@ -489,3 +489,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - 用户允许后再执行提交、推送与 Issue #24 状态同步。
+
+
+## Session 14: 独立报名闭环
+
+**Date**: 2026-07-21
+**Task**: 独立报名闭环
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+完成 #25：学员中心独立报名、原子建档开单、幂等审计与同课程续费引导；已完成类型、集成、静态、构建和浏览器基础验证。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ecd8613` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
