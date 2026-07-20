@@ -2,7 +2,13 @@ import { and, asc, countDistinct, eq, gt, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import { db } from "../index";
-import { classroom, enrollment, lesson, makeupLesson } from "../schema";
+import {
+	classGroup,
+	classroom,
+	enrollment,
+	lesson,
+	makeupLesson,
+} from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
 import {
 	assertWritableCampus,
@@ -24,7 +30,19 @@ export type ClassroomRepositoryErrorCode =
 	| "CAMPUS_INACTIVE";
 
 export class ClassroomRepositoryError extends Error {
-	constructor(public readonly code: ClassroomRepositoryErrorCode) {
+	constructor(
+		public readonly code: ClassroomRepositoryErrorCode,
+		public readonly details?: {
+			affectedLessons?: Array<{
+				id: string;
+				className: string;
+				startsAt: Date;
+				roomName: string;
+				occupancy?: number;
+				capacity?: number;
+			}>;
+		},
+	) {
 		super(code);
 		this.name = "ClassroomRepositoryError";
 	}
@@ -105,8 +123,15 @@ async function assertFutureLessonsFitCapacity(
 	},
 ) {
 	const futureLessons = await tx
-		.select({ id: lesson.id, classGroupId: lesson.classGroupId })
+		.select({
+			id: lesson.id,
+			classGroupId: lesson.classGroupId,
+			className: classGroup.name,
+			startsAt: lesson.startsAt,
+			roomName: lesson.room,
+		})
 		.from(lesson)
+		.innerJoin(classGroup, eq(classGroup.id, lesson.classGroupId))
 		.where(
 			and(
 				eq(lesson.organizationId, input.organizationId),
@@ -171,15 +196,20 @@ async function assertFutureLessonsFitCapacity(
 		makeupCounts.map((item) => [item.lessonId, item.value]),
 	);
 
-	if (
-		futureLessons.some(
-			(item) =>
+	const affectedLessons = futureLessons
+		.map((item) => ({
+			id: item.id,
+			className: item.className,
+			startsAt: item.startsAt,
+			roomName: item.roomName,
+			occupancy:
 				(activeEnrollmentCountByClassGroupId.get(item.classGroupId) ?? 0) +
-					(makeupCountByLessonId.get(item.id) ?? 0) >
-				input.capacity,
-		)
-	) {
-		throw new ClassroomRepositoryError("INVALID_INPUT");
+				(makeupCountByLessonId.get(item.id) ?? 0),
+			capacity: input.capacity,
+		}))
+		.filter((item) => (item.occupancy ?? 0) > input.capacity);
+	if (affectedLessons.length > 0) {
+		throw new ClassroomRepositoryError("INVALID_INPUT", { affectedLessons });
 	}
 }
 
@@ -385,8 +415,14 @@ export async function setClassroomActiveRecord(input: {
 		});
 		if (!input.isActive && current.isActive) {
 			const future = await tx
-				.select({ id: lesson.id })
+				.select({
+					id: lesson.id,
+					className: classGroup.name,
+					startsAt: lesson.startsAt,
+					roomName: lesson.room,
+				})
 				.from(lesson)
+				.innerJoin(classGroup, eq(classGroup.id, lesson.classGroupId))
 				.where(
 					and(
 						eq(lesson.organizationId, input.organizationId),
@@ -396,7 +432,9 @@ export async function setClassroomActiveRecord(input: {
 					),
 				);
 			if (future.length > 0)
-				throw new ClassroomRepositoryError("CLASSROOM_HAS_FUTURE_LESSONS");
+				throw new ClassroomRepositoryError("CLASSROOM_HAS_FUTURE_LESSONS", {
+					affectedLessons: future,
+				});
 		}
 		const [record] = await tx
 			.update(classroom)

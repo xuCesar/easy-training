@@ -678,7 +678,7 @@ function LessonsPanel({
 				onCampusChange={onCampusChange}
 			>
 				<div className="flex w-full flex-wrap items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end">
-					<p className="rounded-md border bg-muted/30 px-3 py-2 text-muted-foreground text-xs">
+					<p className="flex h-10 items-center border px-3 text-muted-foreground text-xs">
 						<span className="font-medium text-foreground">
 							已排 {scheduled.length} 节
 						</span>
@@ -687,6 +687,7 @@ function LessonsPanel({
 					<Button
 						size="sm"
 						variant="outline"
+						className="h-10"
 						disabled={selected.length === 0}
 						onClick={() => onBulkReschedule(selected)}
 					>
@@ -978,7 +979,7 @@ function FilterSelect({
 				value={value}
 				onValueChange={(next) => onValueChange(next ?? "all")}
 			>
-				<SelectTrigger className="w-full sm:w-auto" aria-label={label}>
+				<SelectTrigger className="h-10 w-full sm:w-auto" aria-label={label}>
 					<SelectValue>
 						{() => items.find((item) => item.value === value)?.label ?? label}
 					</SelectValue>
@@ -1060,6 +1061,41 @@ function DataCell({ label, value }: { label: string; value: string }) {
 		</div>
 	);
 }
+
+function getAffectedLessons(error: unknown): Array<{
+	className: string;
+	startsAt: string;
+	roomName: string;
+	occupancy: number;
+	capacity: number;
+}> {
+	if (!error || typeof error !== "object") return [];
+	const data = (error as { data?: unknown }).data;
+	if (!data || typeof data !== "object") return [];
+	const values = (data as { affectedLessons?: unknown }).affectedLessons;
+	if (!Array.isArray(values)) return [];
+	return values.filter(
+		(
+			value,
+		): value is {
+			className: string;
+			startsAt: string;
+			roomName: string;
+			occupancy: number;
+			capacity: number;
+		} =>
+			Boolean(
+				value &&
+					typeof value === "object" &&
+					typeof (value as { className?: unknown }).className === "string" &&
+					typeof (value as { startsAt?: unknown }).startsAt === "string" &&
+					typeof (value as { roomName?: unknown }).roomName === "string" &&
+					typeof (value as { occupancy?: unknown }).occupancy === "number" &&
+					typeof (value as { capacity?: unknown }).capacity === "number",
+			),
+	);
+}
+
 function StatusBadge({ status }: { status: string }) {
 	const label = statusLabels[status] ?? status;
 	const variant =
@@ -1789,7 +1825,20 @@ function ClassMembersDialog({
 				toast.success(classGroupId ? "学员已入班" : "已移出班级");
 				await onSaved();
 			})
-			.catch((error: Error) => toast.error(error.message));
+			.catch((error: Error) => {
+				const affectedLessons = getAffectedLessons(error);
+				toast.error(error.message, {
+					description: affectedLessons.length
+						? `${affectedLessons
+								.slice(0, 2)
+								.map(
+									(lesson) =>
+										`${lesson.className} · ${formatDateTime(lesson.startsAt)} · ${lesson.roomName}（${lesson.occupancy}/${lesson.capacity} 人）`,
+								)
+								.join("；")}。请先到课次管理调课或取消。`
+						: undefined,
+				});
+			});
 	}
 	return (
 		<EditorDialog

@@ -208,7 +208,12 @@ function throwTeachingError(error: unknown): never {
 				message: "班级容量不能低于现有报名人数。",
 			});
 		case "CLASS_FULL":
-			throw new ORPCError("CONFLICT", { message: "班级容量已满。" });
+			throw new ORPCError("CONFLICT", {
+				message: error.details?.affectedLessons
+					? "入班会使部分未来课次超过教室容量。"
+					: "班级容量已满。",
+				data: toErrorData(error.details),
+			});
 		case "CLASS_COURSE_MISMATCH":
 			throw new ORPCError("CONFLICT", {
 				message: "报名课程与目标班级课程不一致。",
@@ -311,6 +316,17 @@ function throwTeachingError(error: unknown): never {
 				message: "存在剩余课时不足的学员，无法完成结课。",
 			});
 	}
+}
+
+function toErrorData(details: TeachingRepositoryError["details"]) {
+	return details?.affectedLessons
+		? {
+				affectedLessons: details.affectedLessons.map((item) => ({
+					...item,
+					startsAt: item.startsAt.toISOString(),
+				})),
+			}
+		: undefined;
 }
 
 export async function listCourses(

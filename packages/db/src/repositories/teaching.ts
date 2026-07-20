@@ -90,7 +90,19 @@ export type TeachingRepositoryErrorCode =
 	| "INVALID_INPUT";
 
 export class TeachingRepositoryError extends Error {
-	constructor(public readonly code: TeachingRepositoryErrorCode) {
+	constructor(
+		public readonly code: TeachingRepositoryErrorCode,
+		public readonly details?: {
+			affectedLessons?: Array<{
+				id: string;
+				className: string;
+				startsAt: Date;
+				roomName: string;
+				occupancy: number;
+				capacity: number;
+			}>;
+		},
+	) {
 		super(code);
 		this.name = "TeachingRepositoryError";
 	}
@@ -1635,9 +1647,19 @@ export async function assignEnrollmentClassRecord(input: {
 				.select({
 					lessonId: lesson.id,
 					roomId: lesson.roomId,
+					className: classGroup.name,
+					startsAt: lesson.startsAt,
+					roomName: lesson.room,
 					capacity: classroom.capacity,
 				})
 				.from(lesson)
+				.innerJoin(
+					classGroup,
+					and(
+						eq(classGroup.id, lesson.classGroupId),
+						eq(classGroup.organizationId, input.organizationId),
+					),
+				)
 				.innerJoin(
 					classroom,
 					and(
@@ -1677,16 +1699,21 @@ export async function assignEnrollmentClassRecord(input: {
 			const makeupCountByLessonId = new Map(
 				makeupCounts.map((item) => [item.lessonId, item.value]),
 			);
-			if (
-				futureRooms.some(
-					(item) =>
+			const affectedLessons = futureRooms
+				.map((item) => ({
+					id: item.lessonId,
+					className: item.className,
+					startsAt: item.startsAt,
+					roomName: item.roomName,
+					occupancy:
 						(occupancy?.value ?? 0) +
-							(makeupCountByLessonId.get(item.lessonId) ?? 0) +
-							1 >
-						item.capacity,
-				)
-			) {
-				throw new TeachingRepositoryError("CLASS_FULL");
+						(makeupCountByLessonId.get(item.lessonId) ?? 0) +
+						1,
+					capacity: item.capacity,
+				}))
+				.filter((item) => item.occupancy > item.capacity);
+			if (affectedLessons.length > 0) {
+				throw new TeachingRepositoryError("CLASS_FULL", { affectedLessons });
 			}
 		}
 		await tx

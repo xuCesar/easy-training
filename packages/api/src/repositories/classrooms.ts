@@ -48,17 +48,32 @@ function throwClassroomError(error: unknown): never {
 		case "CLASSROOM_NOT_FOUND":
 			throw new ORPCError("NOT_FOUND", { message: "目标教室不存在。" });
 		case "INVALID_INPUT":
-			throw new ORPCError("BAD_REQUEST", { message: "请检查教室名称和容量。" });
+			throw new ORPCError("BAD_REQUEST", {
+				message: "降低容量会使部分未来课次超出教室容量。",
+				data: toErrorData(error.details),
+			});
 		case "CLASSROOM_DUPLICATE":
 			throw new ORPCError("CONFLICT", { message: "该校区已存在同名教室。" });
 		case "CLASSROOM_HAS_FUTURE_LESSONS":
 			throw new ORPCError("CONFLICT", {
 				message: "该教室仍有未来待上课次，请先调课或取消相关课次。",
+				data: toErrorData(error.details),
 			});
 		case "CLASSROOM_INACTIVE":
 		case "CAMPUS_INACTIVE":
 			throw new ORPCError("CONFLICT", { message: "校区或教室已停用。" });
 	}
+}
+
+function toErrorData(details: ClassroomRepositoryError["details"]) {
+	return details?.affectedLessons
+		? {
+				affectedLessons: details.affectedLessons.map((item) => ({
+					...item,
+					startsAt: item.startsAt.toISOString(),
+				})),
+			}
+		: undefined;
 }
 
 export async function listClassrooms(

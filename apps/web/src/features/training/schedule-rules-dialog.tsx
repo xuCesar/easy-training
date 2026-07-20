@@ -943,6 +943,9 @@ function RoomSelectField({
 	fallbackLabel?: string;
 	onValueChange?: (value: string) => void;
 }) {
+	const selectedRoom = rooms.find(
+		(room) => room.id === (value ?? defaultValue),
+	);
 	return (
 		<div className="grid gap-1 text-sm">
 			<span>教室</span>
@@ -957,7 +960,13 @@ function RoomSelectField({
 						placeholder={
 							fallbackLabel ? `历史教室：${fallbackLabel}` : "选择教室"
 						}
-					/>
+					>
+						{() =>
+							selectedRoom
+								? `${selectedRoom.name} · ${selectedRoom.capacity} 人`
+								: undefined
+						}
+					</SelectValue>
 				</SelectTrigger>
 				<SelectContent>
 					{rooms.map((room) => (

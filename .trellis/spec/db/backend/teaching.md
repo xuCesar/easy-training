@@ -200,6 +200,7 @@ const preview = await buildBulkLessonUpdatePreview(tx, {
 - 教室写入统一采用“机构 advisory lock / 当前权限重验 → classroom 行锁”的顺序。更新、启停不得先锁教室再获取机构锁，避免与排课、补课或其他教室写入形成锁顺序反转。
 - 教室容量占用人数为目标班级不同 `studentId` 的 active 报名人数，加目标课次不同学员的 `scheduled` 补课人数；排课、规则生成/同步、批量调课、补课创建都使用该口径。
 - 教室降容必须检查该教室全部未来 `scheduled` 课次；任一课次按上述口径超容时整笔更新失败。停用教室时，只要仍有未来 `scheduled` 引用就拒绝，已完成、已取消或已开始课次不阻止停用。
+- 教室停用、教室降容和入班容量拒绝的 API 错误必须在 `data.affectedLessons` 返回受影响的 `{ id, className, startsAt, roomName, occupancy?, capacity? }`；`startsAt` 在 API 层序列化为 ISO 字符串。前端须展示至少班级、时间、教室，并引导教务到课次管理调课或取消，不得只显示泛化容量错误。
 - 入班除班级容量外，还必须检查目标班级全部未来、已绑定 `roomId` 的 `scheduled` 课次；新增学员会造成任一课次超容时拒绝。若该学员已作为 `scheduled` 补课成员存在于目标班未来课次，也必须拒绝入班，防止点名名单重复。
 - 停课仅允许 `running -> paused`，必须携带原因、处理策略和 requestId。`keep` 不改写未来课次；`cancel` 在同一事务取消提交时仍未开始的 `scheduled` 课次，并把对应 scheduled 补课标为 `needs_reschedule`。复课仅允许 `paused -> running`，不自动恢复或生成课次。
 - 暂停班级冻结所有未来变更入口：单次排课、规则创建/更新/预览停用/停用/删除、规则生成/同步、批量调课、点名和结课都必须由服务端拒绝；已完成、已取消及已开始课次保持历史事实不变。
@@ -221,6 +222,7 @@ const preview = await buildBulkLessonUpdatePreview(tx, {
 | 补课来源、目标、课程、校区、状态或名单不合法 | `MAKEUP_LESSON_INVALID` | `CONFLICT` |
 | 同一来源已有有效补课或目标课次重复学员 | `MAKEUP_LESSON_DUPLICATE` / `CLASS_STUDENT_DUPLICATE` | `CONFLICT` |
 | 已完成来源再次安排，或取消已开始/非待上目标的补课 | `MAKEUP_LESSON_DUPLICATE` / `MAKEUP_LESSON_INVALID` | `CONFLICT` |
+| 停用/降容教室或入班影响未来课次 | `CLASSROOM_HAS_FUTURE_LESSONS` / `INVALID_INPUT` / `CLASS_FULL`，并带 `data.affectedLessons` | `CONFLICT` / `BAD_REQUEST` |
 | 相同 requestId 的载荷不同 | `IDEMPOTENCY_CONFLICT` | `CONFLICT` |
 
 ### 5. Good / Base / Bad Cases
@@ -240,6 +242,7 @@ const preview = await buildBulkLessonUpdatePreview(tx, {
 - 覆盖停课 keep/cancel、复课、幂等重放/载荷冲突、历史课次冻结，以及暂停期间规则变更、调课、点名和结课均被拒绝。
 - 覆盖补课资格、课程/校区一致性、目标容量、并发唯一、取消、目标课次取消后重排，以及结课后 `fulfilled/needs_reschedule`、课消幂等和来源事实不变。
 - 覆盖 `fulfilled` 来源不可再次安排、已开始目标不可取消，以及跨校区权限不足时不能通过相同 requestId 重放读取既有停复课或补课结果。
+- 覆盖教室停用、降容和入班未来容量拒绝均返回受影响课次的班级、ISO 时间、教室与容量明细；前端错误提示不得丢失这些处理信息。
 - 并发测试需验证教室写入与排课/补课使用一致锁顺序，不出现死锁或越过更新后的容量、启停状态。
 
 ### 7. Wrong vs Correct

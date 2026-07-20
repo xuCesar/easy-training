@@ -71,6 +71,15 @@ export function MakeupLessonDialog({
 	const relatedMakeups = (makeupsQuery.data?.items ?? []).filter(
 		(item) => item.sourceLessonId === sourceLesson.id,
 	);
+	const memberPlaceholder = attendanceQuery.isPending
+		? "正在加载考勤…"
+		: attendanceQuery.isError
+			? "加载失败"
+			: eligibleMembers.length === 0
+				? "暂无数据"
+				: "选择缺勤/请假学员";
+	const targetPlaceholder =
+		targetLessons.length === 0 ? "暂无数据" : "选择未来课次";
 
 	async function refresh() {
 		await Promise.all([
@@ -133,80 +142,83 @@ export function MakeupLessonDialog({
 							{sourceLesson.campusName} / {sourceLesson.room}
 						</p>
 					</div>
-					<div className="grid gap-3 sm:grid-cols-2">
-						<div className="grid min-w-0 gap-1 text-sm">
-							<span>补课学员</span>
-							<Select
-								value={sourceEnrollmentId}
-								onValueChange={(value) => value && setSourceEnrollmentId(value)}
-							>
-								<SelectTrigger>
-									<SelectValue
-										placeholder={
-											attendanceQuery.isPending
-												? "正在加载考勤…"
-												: "选择缺勤/请假学员"
-										}
+					<section className="mt-4 grid gap-3">
+						<div className="grid gap-3 sm:grid-cols-2">
+							<div className="grid min-w-0 content-start gap-1.5 text-sm">
+								<span className="font-medium">补课学员</span>
+								<Select
+									value={sourceEnrollmentId}
+									disabled={
+										attendanceQuery.isPending ||
+										attendanceQuery.isError ||
+										eligibleMembers.length === 0
+									}
+									onValueChange={(value) =>
+										value && setSourceEnrollmentId(value)
+									}
+								>
+									<SelectTrigger>
+										<SelectValue placeholder={memberPlaceholder} />
+									</SelectTrigger>
+									<SelectContent>
+										{eligibleMembers.map((member) => (
+											<SelectItem
+												key={member.enrollmentId}
+												value={member.enrollmentId}
+											>
+												{member.studentName} ·{" "}
+												{member.status === "absent" ? "缺勤" : "请假"}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+								{attendanceQuery.isError ? (
+									<QueryError
+										message="考勤名单加载失败，无法安排补课。"
+										onRetry={() => void attendanceQuery.refetch()}
 									/>
-								</SelectTrigger>
-								<SelectContent>
-									{eligibleMembers.map((member) => (
-										<SelectItem
-											key={member.enrollmentId}
-											value={member.enrollmentId}
-										>
-											{member.studentName} ·{" "}
-											{member.status === "absent" ? "缺勤" : "请假"}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+								) : !attendanceQuery.isPending &&
+									eligibleMembers.length === 0 ? (
+									<p className="text-muted-foreground text-xs">
+										该课次没有可安排补课的缺勤或请假学员。
+									</p>
+								) : null}
+							</div>
+							<div className="grid min-w-0 content-start gap-1.5 text-sm">
+								<span className="font-medium">目标课次</span>
+								<Select
+									value={targetLessonId}
+									disabled={targetLessons.length === 0}
+									onValueChange={(value) => value && setTargetLessonId(value)}
+								>
+									<SelectTrigger>
+										<SelectValue placeholder={targetPlaceholder} />
+									</SelectTrigger>
+									<SelectContent>
+										{targetLessons.map((lesson) => (
+											<SelectItem key={lesson.id} value={lesson.id}>
+												{formatDateTime(lesson.startsAt)} · {lesson.className} /{" "}
+												{lesson.room}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+								{targetLessons.length === 0 ? (
+									<p className="text-muted-foreground text-xs">
+										当前没有同校区、同课程且已关联启用教室资源的未来课次。
+									</p>
+								) : null}
+							</div>
 						</div>
-						<div className="grid min-w-0 gap-1 text-sm">
-							<span>目标课次</span>
-							<Select
-								value={targetLessonId}
-								onValueChange={(value) => value && setTargetLessonId(value)}
-							>
-								<SelectTrigger>
-									<SelectValue placeholder="选择未来课次" />
-								</SelectTrigger>
-								<SelectContent>
-									{targetLessons.map((lesson) => (
-										<SelectItem key={lesson.id} value={lesson.id}>
-											{formatDateTime(lesson.startsAt)} · {lesson.className} /{" "}
-											{lesson.room}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
-					</div>
-					{attendanceQuery.isError ? (
-						<QueryError
-							message="考勤名单加载失败，无法安排补课。"
-							onRetry={() => void attendanceQuery.refetch()}
-						/>
-					) : null}
-					{makeupsQuery.isError ? (
-						<QueryError
-							message="已有补课安排加载失败。"
-							onRetry={() => void makeupsQuery.refetch()}
-						/>
-					) : null}
-					{!attendanceQuery.isPending && eligibleMembers.length === 0 ? (
-						<p className="text-muted-foreground text-sm">
-							该课次没有可安排补课的缺勤或请假学员。
-						</p>
-					) : null}
-					{targetLessons.length === 0 ? (
-						<p className="text-muted-foreground text-sm">
-							当前没有同校区、同课程且已关联启用教室资源的未来课次。
-						</p>
-					) : null}
-					<section className="grid gap-2 border-t pt-3">
+					</section>
+					<section className="grid gap-2">
 						<p className="font-medium text-sm">已有补课安排</p>
-						{makeupsQuery.isPending ? (
+						{makeupsQuery.isError ? (
+							<QueryError
+								message="已有补课安排加载失败。"
+								onRetry={() => void makeupsQuery.refetch()}
+							/>
+						) : makeupsQuery.isPending ? (
 							<p className="text-muted-foreground text-sm">正在加载…</p>
 						) : relatedMakeups.length === 0 ? (
 							<p className="text-muted-foreground text-sm">暂无安排</p>

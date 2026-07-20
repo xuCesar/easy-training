@@ -28,6 +28,7 @@ import {
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { orpc } from "@/utils/orpc";
+import { formatDateTime } from "./format";
 
 export function RoomsPanel({
 	campuses,
@@ -61,7 +62,14 @@ export function RoomsPanel({
 						onValueChange={(value) => value && setCampusId(value)}
 					>
 						<SelectTrigger>
-							<SelectValue />
+							<SelectValue>
+								{() =>
+									campusId === "all"
+										? "全部校区"
+										: (campuses.find((campus) => campus.id === campusId)
+												?.name ?? "选择校区")
+								}
+							</SelectValue>
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="all">全部校区</SelectItem>
@@ -174,6 +182,7 @@ function RoomEditorDialog({
 	const updateMutation = useMutation(
 		orpc.training.teaching.classrooms.update.mutationOptions(),
 	);
+	const [campusId, setCampusId] = useState(campuses[0]?.id ?? "");
 	const pending = createMutation.isPending || updateMutation.isPending;
 	function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -193,7 +202,7 @@ function RoomEditorDialog({
 				await onSaved();
 				onClose();
 			})
-			.catch((error: Error) => toast.error(error.message));
+			.catch((error: Error) => showAffectedLessonError(error));
 	}
 	return (
 		<Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
@@ -208,9 +217,18 @@ function RoomEditorDialog({
 					{room ? null : (
 						<div className="grid gap-1 text-sm">
 							<span>校区</span>
-							<Select name="campusId" defaultValue={campuses[0]?.id}>
+							<Select
+								name="campusId"
+								value={campusId}
+								onValueChange={(value) => value && setCampusId(value)}
+							>
 								<SelectTrigger>
-									<SelectValue placeholder="选择校区" />
+									<SelectValue placeholder="选择校区">
+										{() =>
+											campuses.find((campus) => campus.id === campusId)?.name ??
+											"选择校区"
+										}
+									</SelectValue>
 								</SelectTrigger>
 								<SelectContent>
 									{campuses.map((campus) => (
@@ -284,7 +302,7 @@ function RoomActiveConfirmationDialog({
 				await onSaved();
 				onClose();
 			})
-			.catch((error: Error) => toast.error(error.message));
+			.catch((error: Error) => showAffectedLessonError(error));
 	}
 	return (
 		<Dialog
@@ -324,5 +342,45 @@ function RoomActiveConfirmationDialog({
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+type AffectedLesson = {
+	className: string;
+	startsAt: string;
+	roomName: string;
+	occupancy?: number;
+	capacity?: number;
+};
+
+function showAffectedLessonError(error: Error) {
+	const affectedLessons = getAffectedLessons(error);
+	toast.error(error.message, {
+		description: affectedLessons.length
+			? `${affectedLessons
+					.slice(0, 2)
+					.map(
+						(item) =>
+							`${item.className} · ${formatDateTime(item.startsAt)} · ${item.roomName}${item.occupancy !== undefined ? `（${item.occupancy}/${item.capacity} 人）` : ""}`,
+					)
+					.join("；")}。请前往课次管理调课或取消。`
+			: undefined,
+	});
+}
+
+function getAffectedLessons(error: unknown): AffectedLesson[] {
+	if (!error || typeof error !== "object") return [];
+	const data = (error as { data?: unknown }).data;
+	if (!data || typeof data !== "object") return [];
+	const values = (data as { affectedLessons?: unknown }).affectedLessons;
+	if (!Array.isArray(values)) return [];
+	return values.filter((value): value is AffectedLesson =>
+		Boolean(
+			value &&
+				typeof value === "object" &&
+				typeof (value as AffectedLesson).className === "string" &&
+				typeof (value as AffectedLesson).startsAt === "string" &&
+				typeof (value as AffectedLesson).roomName === "string",
+		),
 	);
 }
