@@ -9,13 +9,12 @@ import {
 	enrollmentTransfer,
 	invoice,
 	invoiceFollowUp,
-	organizationMember,
-	organizationMemberCampus,
 	refund,
 	student,
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import { getCurrentFinanceWriteCampusAccess } from "./finance-access";
 import type { CampusAccess } from "./organization";
 
 export type EnrollmentFinanceAdjustmentErrorCode =
@@ -45,15 +44,6 @@ export class EnrollmentFinanceAdjustmentError extends Error {
 }
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-type MemberRole = (typeof organizationMember.$inferSelect)["role"];
-
-const financeWriteRoles = new Set<MemberRole>([
-	"owner",
-	"admin",
-	"campus_manager",
-	"finance",
-]);
-
 function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
 	return (
 		access.kind === "all" ||
@@ -72,42 +62,11 @@ async function getCurrentWriteCampusAccess(
 	tx: Transaction,
 	input: { organizationId: string; userId: string },
 ): Promise<CampusAccess> {
-	await tx.execute(
-		sql`SELECT pg_advisory_xact_lock(hashtext(${input.organizationId}))`,
+	return getCurrentFinanceWriteCampusAccess(
+		tx,
+		input,
+		() => new EnrollmentFinanceAdjustmentError("MEMBER_FORBIDDEN"),
 	);
-	const [member] = await tx
-		.select({
-			id: organizationMember.id,
-			role: organizationMember.role,
-			campusAccessMode: organizationMember.campusAccessMode,
-		})
-		.from(organizationMember)
-		.where(
-			and(
-				eq(organizationMember.organizationId, input.organizationId),
-				eq(organizationMember.userId, input.userId),
-			),
-		)
-		.limit(1)
-		.for("update");
-	if (!member || !financeWriteRoles.has(member.role)) {
-		throw new EnrollmentFinanceAdjustmentError("MEMBER_FORBIDDEN");
-	}
-	if (
-		member.role === "owner" ||
-		member.role === "admin" ||
-		member.campusAccessMode === "all"
-	) {
-		return { kind: "all" };
-	}
-	const scopes = await tx
-		.select({ campusId: organizationMemberCampus.campusId })
-		.from(organizationMemberCampus)
-		.where(eq(organizationMemberCampus.organizationMemberId, member.id))
-		.orderBy(asc(organizationMemberCampus.campusId));
-	return scopes.length > 0
-		? { kind: "selected", campusIds: scopes.map((item) => item.campusId) }
-		: { kind: "none" };
 }
 
 async function assertActiveAccessibleCampus(
@@ -314,14 +273,26 @@ export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 				campusId: source.campusId,
 				campusAccess: access,
 			});
+			const [operator] = await tx
+				.select({ name: user.name })
+				.from(user)
+				.where(eq(user.id, input.operatorUserId))
+				.limit(1);
+			if (!operator)
+				throw new EnrollmentFinanceAdjustmentError("RESOURCE_UNAVAILABLE");
 			const [createdInvoice] = await tx
 				.insert(invoice)
 				.values({
 					organizationId: input.organizationId,
 					studentId: source.studentId,
 					enrollmentId: source.id,
+					source: "renewal",
+					businessActivityType: "course_renewal",
+					summary: "课程续费费用",
 					amountInCents: input.amountInCents,
 					dueDate: input.dueDate,
+					createdByUserId: input.operatorUserId,
+					createdByName: operator.name,
 				})
 				.returning({ id: invoice.id });
 			if (!createdInvoice)
@@ -590,6 +561,7 @@ async function updateEnrollmentPaidAmount(
 			and(
 				eq(invoice.organizationId, organizationId),
 				eq(invoice.enrollmentId, enrollmentId),
+				inArray(invoice.source, ["enrollment", "renewal"]),
 			),
 		);
 	const refunds = await tx
@@ -603,6 +575,7 @@ async function updateEnrollmentPaidAmount(
 			and(
 				eq(refund.organizationId, organizationId),
 				eq(invoice.enrollmentId, enrollmentId),
+				inArray(invoice.source, ["enrollment", "renewal"]),
 			),
 		);
 	const refundedByInvoice = new Map<string, number>();
@@ -811,6 +784,8 @@ export type ArrearsRecord = {
 	invoiceId: string;
 	studentName: string;
 	courseName: string | null;
+	source: (typeof invoice.$inferSelect)["source"];
+	summary: string;
 	amountInCents: number;
 	paidAmountInCents: number;
 	outstandingAmountInCents: number;
@@ -832,6 +807,8 @@ export async function listArrearsRecords(input: {
 			invoiceId: invoice.id,
 			studentName: student.name,
 			courseName: course.name,
+			source: invoice.source,
+			summary: invoice.summary,
 			amountInCents: invoice.amountInCents,
 			paidAmountInCents: invoice.paidAmountInCents,
 			dueDate: invoice.dueDate,

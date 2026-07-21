@@ -146,6 +146,8 @@ export async function getTrainingDashboardSnapshot(
 				id: item.id,
 				studentName: item.studentName,
 				courseName: item.courseName,
+				source: item.source,
+				summary: item.summary,
 				outstandingAmountInCents: item.outstandingAmountInCents,
 				status:
 					item.status === "overdue" || item.isPastDue ? "overdue" : "pending",

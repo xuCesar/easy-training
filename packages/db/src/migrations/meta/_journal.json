@@ -183,6 +183,13 @@
       "when": 1784603347103,
       "tag": "0025_fair_scarlet_spider",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1784613305947,
+      "tag": "0026_sleepy_stingray",
+      "breakpoints": true
     }
   ]
 }

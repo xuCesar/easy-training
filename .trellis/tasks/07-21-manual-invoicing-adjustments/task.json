@@ -1,0 +1,36 @@
+{
+  "id": "manual-invoicing-adjustments",
+  "name": "manual-invoicing-adjustments",
+  "title": "通用手工开单与账单调整",
+  "description": "实现 GitHub Issue #28：在现有财务闭环中提供可扩展的手工开单、受控账单调整、并发保护与完整审计。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "db-api-web",
+  "package": "server",
+  "priority": "P1",
+  "creator": "xuCesar",
+  "assignee": "xuCesar",
+  "createdAt": "2026-07-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "develop",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "07-20-p1-core-business-loop",
+  "relatedFiles": [
+    "packages/db/src/schema/training.ts",
+    "packages/db/src/repositories/finance.ts",
+    "packages/api/src/contracts/training.ts",
+    "packages/api/src/repositories/finance.ts",
+    "packages/api/src/routers/index.ts",
+    "apps/web/src/features/training/finance-workspace.tsx",
+    "packages/db/tests/finance.integration.ts"
+  ],
+  "notes": "",
+  "meta": {
+    "githubIssue": 28
+  }
+}

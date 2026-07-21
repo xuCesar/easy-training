@@ -61,6 +61,8 @@ export type DashboardReceivableSummaryRow = {
 	id: string;
 	studentName: string;
 	courseName: string | null;
+	source: (typeof invoice.$inferSelect)["source"];
+	summary: string;
 	outstandingAmountInCents: number;
 	status: "pending" | "partial" | "overdue";
 	isPastDue: boolean;
@@ -368,6 +370,8 @@ export async function getDashboardReceivableSummary(
 			id: invoice.id,
 			studentName: student.name,
 			courseName: course.name,
+			source: invoice.source,
+			summary: invoice.summary,
 			outstandingAmountInCents: outstandingAmount.mapWith(Number),
 			status: invoice.status,
 			isPastDue,
@@ -415,6 +419,8 @@ export async function getDashboardReceivableSummary(
 			id: row.id,
 			studentName: row.studentName,
 			courseName: row.courseName,
+			source: row.source,
+			summary: row.summary,
 			outstandingAmountInCents: row.outstandingAmountInCents,
 			status: toDashboardReceivableStatus(row.status),
 			isPastDue: row.isPastDue,

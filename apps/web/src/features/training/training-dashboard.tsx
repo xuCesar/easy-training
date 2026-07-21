@@ -269,8 +269,10 @@ export function TrainingDashboard({ snapshot }: TrainingDashboardProps) {
 												{receivable.studentName}
 											</p>
 											<p className="mt-0.5 break-words text-muted-foreground text-xs">
-												{receivable.courseName ?? "课程待确认"} · 到期日{" "}
-												{formatDate(receivable.dueDate)}
+												{receivable.source === "manual"
+													? receivable.summary
+													: (receivable.courseName ?? receivable.summary)}{" "}
+												· 到期日 {formatDate(receivable.dueDate)}
 											</p>
 										</div>
 										<div className="col-start-2 flex flex-wrap items-center gap-2 sm:col-start-3 sm:row-start-1 sm:flex-nowrap sm:justify-end">

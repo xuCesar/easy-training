@@ -457,6 +457,8 @@ const auditActionSchema = z.enum([
 	"lead_exported",
 	"notification_read",
 	"notifications_marked_read",
+	"manual_invoice_created",
+	"invoice_adjusted",
 ]);
 
 export const auditEventListInputSchema = z.object({
@@ -785,6 +787,21 @@ export type CreateIndependentEnrollmentResult = z.infer<
 >;
 
 const invoiceSettlementStatusSchema = z.enum(["pending", "partial", "paid"]);
+export const invoiceSourceSchema = z.enum(["enrollment", "renewal", "manual"]);
+export const invoiceBusinessActivityTypeSchema = z.enum([
+	"course_enrollment",
+	"course_renewal",
+	"material_fee",
+	"exam_fee",
+	"price_difference",
+	"other",
+]);
+export const manualInvoiceBusinessActivityTypeSchema = z.enum([
+	"material_fee",
+	"exam_fee",
+	"price_difference",
+	"other",
+]);
 const paymentMethodSchema = z.enum([
 	"cash",
 	"wechat",
@@ -801,9 +818,13 @@ export const invoiceListInputSchema = z.object({
 
 const invoiceSummarySchema = z.object({
 	id: z.uuid(),
+	enrollmentId: z.uuid().nullable(),
 	studentId: z.uuid(),
 	studentName: z.string(),
 	courseName: z.string().nullable(),
+	source: invoiceSourceSchema,
+	businessActivityType: invoiceBusinessActivityTypeSchema,
+	summary: z.string(),
 	amountInCents: z.number().int().nonnegative(),
 	paidAmountInCents: z.number().int().nonnegative(),
 	outstandingAmountInCents: z.number().int().nonnegative(),
@@ -811,6 +832,8 @@ const invoiceSummarySchema = z.object({
 	isOverdue: z.boolean(),
 	dueDate: z.iso.date(),
 	issuedAt: z.iso.datetime({ offset: true }),
+	createdByName: z.string().nullable(),
+	version: z.number().int().positive(),
 });
 
 const paymentRecordSchema = z.object({
@@ -845,7 +868,104 @@ export const invoiceDetailSchema = z.object({
 	invoice: invoiceSummarySchema,
 	payments: z.array(paymentRecordSchema),
 	refunds: z.array(refundRecordSchema),
+	adjustments: z.array(
+		z.object({
+			id: z.uuid(),
+			beforeVersion: z.number().int().positive(),
+			afterVersion: z.number().int().positive(),
+			before: z.object({
+				amountInCents: z.number().int().nonnegative(),
+				dueDate: z.iso.date(),
+				summary: z.string(),
+			}),
+			after: z.object({
+				amountInCents: z.number().int().nonnegative(),
+				dueDate: z.iso.date(),
+				summary: z.string(),
+			}),
+			reason: z.string(),
+			operatorName: z.string(),
+			createdAt: z.iso.datetime({ offset: true }),
+		}),
+	),
+	capabilities: z.object({
+		canAdjustAmount: z.boolean(),
+		canAdjustDueDate: z.boolean(),
+		canAdjustSummary: z.boolean(),
+	}),
 	historicalPaidAmountInCents: z.number().int().nonnegative(),
+});
+
+export const manualInvoiceOptionsInputSchema = z.object({
+	query: z.string().trim().min(1).max(100).optional(),
+	cursor: z.string().min(1).max(256).optional(),
+	pageSize: z.number().int().min(1).max(50).default(20),
+});
+
+export const manualInvoiceOptionsSchema = z.object({
+	students: z.array(
+		z.object({
+			id: z.uuid(),
+			name: z.string(),
+			campusId: z.uuid(),
+			campusName: z.string(),
+			enrollments: z.array(
+				z.object({
+					id: z.uuid(),
+					courseId: z.uuid(),
+					courseName: z.string(),
+					status: z.enum(["active", "frozen"]),
+				}),
+			),
+		}),
+	),
+	nextCursor: z.string().nullable(),
+});
+
+export const createManualInvoiceInputSchema = z.object({
+	studentId: z.uuid(),
+	enrollmentId: z.uuid().nullable().default(null),
+	businessActivityType: manualInvoiceBusinessActivityTypeSchema,
+	summary: z.string().trim().min(1).max(200),
+	amountInCents: z.number().int().min(1).max(100_000_000),
+	dueDate: z.iso.date(),
+	requestId: z.uuid(),
+});
+
+export const createManualInvoiceResultSchema = z.object({
+	invoiceId: z.uuid(),
+	replayed: z.boolean(),
+});
+
+export const adjustInvoiceInputSchema = z
+	.object({
+		invoiceId: z.uuid(),
+		amountInCents: z.number().int().min(1).max(100_000_000).optional(),
+		dueDate: z.iso.date().optional(),
+		summary: z.string().trim().min(1).max(200).optional(),
+		reason: z.string().trim().min(1).max(500),
+		expectedVersion: z.number().int().positive(),
+		requestId: z.uuid(),
+	})
+	.refine(
+		(input) =>
+			input.amountInCents !== undefined ||
+			input.dueDate !== undefined ||
+			input.summary !== undefined,
+		{ message: "请至少修改一个账单字段" },
+	);
+
+const invoiceAdjustmentResultRecordSchema = z.object({
+	id: z.uuid(),
+	invoiceId: z.uuid(),
+	beforeVersion: z.number().int().positive(),
+	afterVersion: z.number().int().positive(),
+	createdAt: z.iso.datetime({ offset: true }),
+});
+
+export const adjustInvoiceResultSchema = z.object({
+	adjustment: invoiceAdjustmentResultRecordSchema,
+	replayed: z.boolean(),
 });
 
 export const createPaymentInputSchema = z
@@ -933,6 +1053,8 @@ const arrearsRecordSchema = z.object({
 	invoiceId: z.uuid(),
 	studentName: z.string(),
 	courseName: z.string().nullable(),
+	source: invoiceSourceSchema,
+	summary: z.string(),
 	amountInCents: z.number().int().nonnegative(),
 	paidAmountInCents: z.number().int().nonnegative(),
 	outstandingAmountInCents: z.number().int().positive(),
@@ -965,6 +1087,18 @@ export type InvoiceListInput = z.infer<typeof invoiceListInputSchema>;
 export type InvoiceListResult = z.infer<typeof invoiceListResultSchema>;
 export type InvoiceDetailInput = z.infer<typeof invoiceDetailInputSchema>;
 export type InvoiceDetail = z.infer<typeof invoiceDetailSchema>;
+export type ManualInvoiceOptionsInput = z.infer<
+	typeof manualInvoiceOptionsInputSchema
+>;
+export type ManualInvoiceOptions = z.infer<typeof manualInvoiceOptionsSchema>;
+export type CreateManualInvoiceInput = z.infer<
+	typeof createManualInvoiceInputSchema
+>;
+export type CreateManualInvoiceResult = z.infer<
+	typeof createManualInvoiceResultSchema
+>;
+export type AdjustInvoiceInput = z.infer<typeof adjustInvoiceInputSchema>;
+export type AdjustInvoiceResult = z.infer<typeof adjustInvoiceResultSchema>;
 export type CreatePaymentInput = z.infer<typeof createPaymentInputSchema>;
 export type CreatePaymentResult = z.infer<typeof createPaymentResultSchema>;
 export type EnrollmentAdjustmentListResult = z.infer<
@@ -1098,6 +1232,8 @@ const studentTimelineItemSchema = z.object({
 	actorName: z.string().nullable(),
 	courseName: z.string().nullable(),
 	className: z.string().nullable(),
+	invoiceSummary: z.string().nullable(),
+	invoiceSource: invoiceSourceSchema.nullable(),
 	amountInCents: z.number().int().nullable(),
 	lessonCount: z.number().int().nullable(),
 	previousRemainingLessons: z.number().int().nullable(),
@@ -1876,6 +2012,8 @@ const dashboardReceivableSchema = z.object({
 	id: z.uuid(),
 	studentName: z.string(),
 	courseName: z.string().nullable(),
+	source: invoiceSourceSchema,
+	summary: z.string(),
 	outstandingAmountInCents: z.number().int().nonnegative(),
 	status: z.enum(["pending", "overdue"]),
 	dueDate: z.iso.date(),

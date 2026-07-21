@@ -133,3 +133,45 @@ await db.transaction(async (tx) => {
 ```
 
 把建档、报名、账单、幂等和审计作为一个原子操作，并在写入点重读授权。
+
+## Scenario: 手工开单与账单条款调整
+
+### 1. Scope / Trigger
+
+- 财务角色为学员创建材料费、考试费、补差价或其他手工应收，以及调整账单金额、到期日或摘要时使用。
+- 手工账单继续使用统一 `invoice` 投影；`manualInvoiceCreation` 与 `invoiceAdjustment` 是不可变的幂等/调整事实。
+
+### 2. Signatures
+
+- `listManualInvoiceOptions({ organizationId, operatorUserId, query?, cursor?, pageSize })`
+- `createManualInvoiceRecord({ studentId, enrollmentId?, businessActivityType, summary, amountInCents, dueDate, requestId })`
+- `adjustInvoiceRecord({ invoiceId, amountInCents?, dueDate?, summary?, reason, expectedVersion, requestId })`
+
+### 3. Contracts
+
+- 账单来源 `enrollment | renewal | manual` 与可扩展业务活动类型分离；客户端不能指定来源，手工入口只接受手工活动类型子集。
+- 手工账单必须关联可访问校区内的学员；可选报名必须属于同一学员且状态为 active/frozen，transferred 不可关联。
+- 手工报名关联只用于追溯；报名累计已收只聚合 enrollment/renewal 来源账单，不能因手工账单收款而增加。
+- 未收款允许调整金额、日期、摘要；部分收款仅允许日期/摘要；paid/refunded 全部冻结。金额冻结同时检查 `paidAmountInCents`、账单状态和资金流水。
+- 调整与收款锁定同一 invoice 行；调整使用 `expectedVersion` 防丢失更新，幂等重放在重新授权后、版本比较前返回原结果。
+- 相同 requestId/相同规范化载荷返回原结果且不重复审计；不同载荷返回 `IDEMPOTENCY_CONFLICT`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 领域错误 | API 语义 |
+| --- | --- | --- |
+| 成员撤销、角色不允许或校区越权 | `MEMBER_FORBIDDEN` / `CAMPUS_OUT_OF_SCOPE` | `FORBIDDEN` |
+| 学员、账单或报名不可见 | `STUDENT_NOT_FOUND` / `INVOICE_NOT_FOUND` / `ENROLLMENT_NOT_FOUND` | `NOT_FOUND` |
+| 校区停用或报名已转出 | `CAMPUS_INACTIVE` / `ENROLLMENT_NOT_LINKABLE` | `CONFLICT` |
+| 报名与学员不匹配、没有实际变化 | `ENROLLMENT_STUDENT_MISMATCH` / `NO_ADJUSTMENT_CHANGES` | `BAD_REQUEST` |
+| 学员选项游标无法解析或结构无效 | `INVALID_CURSOR` | `BAD_REQUEST`，前端从第一页重新加载 |
+| 金额冻结、账单冻结或版本陈旧 | `INVOICE_AMOUNT_LOCKED` / `INVOICE_NOT_ADJUSTABLE` / `INVOICE_VERSION_CONFLICT` | `CONFLICT` |
+| requestId 已用于不同载荷 | `IDEMPOTENCY_CONFLICT` | `CONFLICT` |
+
+### 5. Tests Required
+
+- PostgreSQL 集成测试覆盖四种财务角色、事务内撤权、租户/校区、停用校区和报名关联状态。
+- 学员选项分页覆盖同名学员的 `name + id` 稳定排序、跨页不重复、末页空游标和非法游标拒绝。
+- 覆盖创建/调整串行与并发重放、不同载荷冲突、版本竞争和调整/收款竞态。
+- 覆盖部分收款字段边界、历史 paidAmount 无 payment、结清/退款冻结，以及失败零领域副作用/零审计。
+- 覆盖手工账单进入机构应收和欠费，但收款不改变报名课程累计已收。

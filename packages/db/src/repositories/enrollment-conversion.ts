@@ -648,10 +648,15 @@ export async function convertLeadRecord(
 					organizationId: input.organizationId,
 					studentId,
 					enrollmentId: createdEnrollment.id,
+					source: "enrollment",
+					businessActivityType: "course_enrollment",
+					summary: "课程报名费用",
 					amountInCents: input.amountInCents,
 					dueDate: input.invoiceDueDate,
 					status: isComplimentaryEnrollment ? "paid" : "pending",
 					paidAt: isComplimentaryEnrollment ? new Date() : null,
+					createdByUserId: input.operatorUserId,
+					createdByName: operator.name,
 				})
 				.returning({ id: invoice.id });
 

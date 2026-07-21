@@ -29,6 +29,8 @@ export type StudentTimelineRecord = {
 	actorName: string | null;
 	courseName: string | null;
 	className: string | null;
+	invoiceSummary: string | null;
+	invoiceSource: "enrollment" | "renewal" | "manual" | null;
 	invoiceId: string | null;
 	lessonId: string | null;
 	amountInCents: number | null;
@@ -76,6 +78,8 @@ const timelineRowSchema = z.object({
 	actorName: z.string().nullable(),
 	courseName: z.string().nullable(),
 	className: z.string().nullable(),
+	invoiceSummary: z.string().nullable(),
+	invoiceSource: z.enum(["enrollment", "renewal", "manual"]).nullable(),
 	invoiceId: uuidSchema.nullable(),
 	lessonId: uuidSchema.nullable(),
 	amountInCents: z.coerce.number().int().nullable(),
@@ -151,6 +155,8 @@ export async function listStudentTimelineRecords(input: {
 				u.name as actor_name,
 				c.name as course_name,
 				cg.name as class_name,
+				null::text as invoice_summary,
+				null::text as invoice_source,
 				case when ${financialPredicate} then er.invoice_id else null::uuid end as invoice_id,
 				null::uuid as lesson_id,
 				case when ${financialPredicate} then e.amount_in_cents else null::integer end as amount_in_cents,
@@ -170,7 +176,8 @@ export async function listStudentTimelineRecords(input: {
 			union all
 			select
 				'enrollment_lifecycle', 80, ele.id, ele.effective_at, ele.created_at,
-				u.name, c.name, coalesce(to_cg.name, from_cg.name), null::uuid, null::uuid,
+				u.name, c.name, coalesce(to_cg.name, from_cg.name), null::text, null::text,
+				null::uuid, null::uuid,
 				null::integer, null::integer, null::integer, e.remaining_lessons,
 				ele.kind::text, ele.before_status::text, ele.after_status::text
 			from enrollment_lifecycle_event ele
@@ -184,7 +191,7 @@ export async function listStudentTimelineRecords(input: {
 			union all
 			select
 				'invoice_issued', 30, i.id, i.issued_at, i.issued_at, null::text,
-				c.name, null::text, i.id, null::uuid, i.amount_in_cents,
+				c.name, null::text, i.summary, i.source::text, i.id, null::uuid, i.amount_in_cents,
 				null::integer, null::integer, null::integer, i.status::text, null::text, null::text
 			from invoice i
 			left join enrollment e on e.id = i.enrollment_id and e.organization_id = ${input.organizationId}::uuid
@@ -194,7 +201,7 @@ export async function listStudentTimelineRecords(input: {
 			union all
 			select
 				'payment_received', 60, p.id, p.received_at, p.created_at, p.operator_name,
-				c.name, null::text, p.invoice_id, null::uuid, p.amount_in_cents,
+				c.name, null::text, i.summary, i.source::text, p.invoice_id, null::uuid, p.amount_in_cents,
 				null::integer, null::integer, null::integer, p.method::text, null::text, null::text
 			from payment p
 			join invoice i on i.id = p.invoice_id and i.organization_id = ${input.organizationId}::uuid
@@ -205,7 +212,7 @@ export async function listStudentTimelineRecords(input: {
 			union all
 			select
 				'enrollment_renewed', 50, er.id, er.created_at, er.created_at, u.name,
-				c.name, null::text, er.invoice_id, null::uuid, er.amount_in_cents,
+				c.name, null::text, null::text, null::text, er.invoice_id, null::uuid, er.amount_in_cents,
 				er.added_lessons, null::integer, e.remaining_lessons, null::text, null::text, null::text
 			from enrollment_renewal er
 			join enrollment e on e.id = er.enrollment_id and e.organization_id = ${input.organizationId}::uuid
@@ -216,7 +223,8 @@ export async function listStudentTimelineRecords(input: {
 			union all
 			select
 				'enrollment_transferred', 40, et.id, et.created_at, et.created_at, u.name,
-				source_course.name || ' → ' || target_course.name, null::text, null::uuid, null::uuid,
+				source_course.name || ' → ' || target_course.name, null::text,
+				null::text, null::text, null::uuid, null::uuid,
 				null::integer, et.transferred_lessons, null::integer, null::integer,
 				null::text, null::text, null::text
 			from enrollment_transfer et
@@ -229,7 +237,7 @@ export async function listStudentTimelineRecords(input: {
 			union all
 			select
 				'refund_created', 70, r.id, r.refunded_at, r.created_at, r.operator_name,
-				c.name, null::text, r.invoice_id, null::uuid, r.amount_in_cents,
+				c.name, null::text, i.summary, i.source::text, r.invoice_id, null::uuid, r.amount_in_cents,
 				null::integer, null::integer, null::integer, r.method::text, null::text, null::text
 			from refund r
 			join invoice i on i.id = r.invoice_id and i.organization_id = ${input.organizationId}::uuid
@@ -240,7 +248,7 @@ export async function listStudentTimelineRecords(input: {
 			union all
 			select
 				'attendance_recorded', 90, a.id, l.starts_at, a.updated_at, u.name,
-				c.name, cg.name, null::uuid, l.id, null::integer,
+				c.name, cg.name, null::text, null::text, null::uuid, l.id, null::integer,
 				null::integer, null::integer, null::integer, a.status::text, null::text, null::text
 			from attendance a
 			join lesson l on l.id = a.lesson_id and l.organization_id = ${input.organizationId}::uuid
@@ -252,7 +260,7 @@ export async function listStudentTimelineRecords(input: {
 			union all
 			select
 				'lesson_consumed', 100, lc.id, l.starts_at, lc.consumed_at, u.name,
-				c.name, cg.name, null::uuid, l.id, null::integer,
+				c.name, cg.name, null::text, null::text, null::uuid, l.id, null::integer,
 				1, lc.previous_remaining_lessons, lc.remaining_lessons,
 				lc.attendance_status::text, null::text, null::text
 			from lesson_consumption lc
@@ -266,7 +274,8 @@ export async function listStudentTimelineRecords(input: {
 			union all
 			select
 				'student_status_changed', 110, sse.id, sse.occurred_at, sse.occurred_at,
-				u.name, null::text, null::text, null::uuid, null::uuid, null::integer,
+				u.name, null::text, null::text, null::text, null::text,
+				null::uuid, null::uuid, null::integer,
 				null::integer, null::integer, null::integer, null::text,
 				sse.before_status::text, sse.after_status::text
 			from student_status_event sse
@@ -282,6 +291,8 @@ export async function listStudentTimelineRecords(input: {
 			actor_name as "actorName",
 			course_name as "courseName",
 			class_name as "className",
+			invoice_summary as "invoiceSummary",
+			invoice_source as "invoiceSource",
 			invoice_id as "invoiceId",
 			lesson_id as "lessonId",
 			amount_in_cents as "amountInCents",

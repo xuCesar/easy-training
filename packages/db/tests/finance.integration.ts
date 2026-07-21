@@ -5,9 +5,12 @@ import { and, eq, inArray } from "drizzle-orm";
 import { createRouterClient } from "../../api/node_modules/@orpc/server/dist/index.mjs";
 import type { Context } from "../../api/src/context";
 import {
+	adjustInvoiceResultSchema,
+	createManualInvoiceResultSchema,
 	createPaymentResultSchema,
 	invoiceDetailSchema,
 	invoiceListResultSchema,
+	studentTimelineResultSchema,
 } from "../../api/src/contracts/training";
 import {
 	createInvoiceFollowUp,
@@ -18,10 +21,14 @@ import {
 	transferEnrollment,
 } from "../../api/src/repositories/enrollment-finance-adjustments";
 import {
+	adjustInvoice,
+	createManualInvoice,
 	createPayment,
 	getInvoiceDetail,
+	getManualInvoiceOptions,
 	listInvoices,
 } from "../../api/src/repositories/finance";
+import { getStudentTimeline } from "../../api/src/repositories/students";
 import { getTrainingDashboardSnapshot } from "../../api/src/repositories/training-dashboard";
 import { appRouter } from "../../api/src/routers";
 import { db } from "../src";
@@ -33,7 +40,9 @@ import {
 	enrollmentRenewal,
 	enrollmentTransfer,
 	invoice,
+	invoiceAdjustment,
 	invoiceFollowUp,
+	manualInvoiceCreation,
 	organization,
 	organizationAuditEvent,
 	organizationMember,
@@ -100,6 +109,12 @@ function getSessionId(userId: string) {
 
 async function cleanupFixture(ids: FixtureIds) {
 	const organizationIds = [ids.organizationA, ids.organizationB];
+	await db
+		.delete(invoiceAdjustment)
+		.where(inArray(invoiceAdjustment.organizationId, organizationIds));
+	await db
+		.delete(manualInvoiceCreation)
+		.where(inArray(manualInvoiceCreation.organizationId, organizationIds));
 	await db
 		.delete(invoiceFollowUp)
 		.where(inArray(invoiceFollowUp.organizationId, organizationIds));
@@ -771,6 +786,321 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 				status: "open",
 			}),
 			"CONFLICT",
+		);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("手工开单与账单调整保持幂等、版本和报名金额隔离", async () => {
+	const ids = createFixtureIds();
+	const financeScope = {
+		organizationId: ids.organizationA,
+		userId: ids.finance,
+		campusAccess: { kind: "all" } as const,
+	};
+
+	try {
+		await seedFixture(ids);
+		const sameNameStudentIds = [randomUUID(), randomUUID()].sort();
+		await db.insert(student).values(
+			sameNameStudentIds.map((id, index) => ({
+				id,
+				organizationId: ids.organizationA,
+				campusId: ids.campusA,
+				name: "同名分页学员",
+				guardianName: `分页家长 ${index}`,
+				guardianPhone: `1370000000${index}`,
+				status: "active" as const,
+			})),
+		);
+		const firstOptionsPage = await getManualInvoiceOptions(financeScope, {
+			query: "同名分页学员",
+			pageSize: 1,
+		});
+		assert.equal(firstOptionsPage.students.length, 1);
+		assert.equal(firstOptionsPage.students[0]?.id, sameNameStudentIds[0]);
+		assert.ok(firstOptionsPage.nextCursor);
+		const secondOptionsPage = await getManualInvoiceOptions(financeScope, {
+			query: "同名分页学员",
+			cursor: firstOptionsPage.nextCursor ?? undefined,
+			pageSize: 1,
+		});
+		assert.equal(secondOptionsPage.students.length, 1);
+		assert.equal(secondOptionsPage.students[0]?.id, sameNameStudentIds[1]);
+		assert.equal(secondOptionsPage.nextCursor, null);
+		assert.notEqual(
+			firstOptionsPage.students[0]?.id,
+			secondOptionsPage.students[0]?.id,
+		);
+		await expectOrpcError(
+			getManualInvoiceOptions(financeScope, {
+				cursor: "not-a-valid-cursor",
+				pageSize: 1,
+			}),
+			"BAD_REQUEST",
+		);
+		const options = await getManualInvoiceOptions(financeScope, {
+			query: "A 学员",
+			pageSize: 20,
+		});
+		const option = options.students.find((item) => item.id === ids.studentA);
+		assert.ok(option);
+		assert.ok(
+			option.enrollments.some((item) => item.id === ids.enrollmentIdempotent),
+		);
+
+		const createRequestId = randomUUID();
+		const createInput = {
+			studentId: ids.studentA,
+			enrollmentId: ids.enrollmentIdempotent,
+			businessActivityType: "material_fee" as const,
+			summary: "秋季教材费",
+			amountInCents: 5_000,
+			dueDate: "2099-03-01",
+			requestId: createRequestId,
+		};
+		const created = createManualInvoiceResultSchema.parse(
+			await createManualInvoice(financeScope, createInput),
+		);
+		const replay = createManualInvoiceResultSchema.parse(
+			await createManualInvoice(financeScope, createInput),
+		);
+		assert.equal(replay.invoiceId, created.invoiceId);
+		assert.equal(replay.replayed, true);
+		await expectOrpcError(
+			createManualInvoice(financeScope, {
+				...createInput,
+				summary: "不同教材费",
+			}),
+			"CONFLICT",
+		);
+
+		const initialDetail = invoiceDetailSchema.parse(
+			await getInvoiceDetail(financeScope, { id: created.invoiceId }),
+		);
+		assert.equal(initialDetail.invoice.source, "manual");
+		assert.equal(initialDetail.invoice.businessActivityType, "material_fee");
+		assert.equal(initialDetail.invoice.summary, "秋季教材费");
+		assert.equal(initialDetail.invoice.createdByName, "财务测试用户 3");
+		assert.equal(initialDetail.invoice.version, 1);
+		assert.equal(initialDetail.capabilities.canAdjustAmount, true);
+
+		const adjustmentRequestId = randomUUID();
+		const firstAdjustmentInput = {
+			invoiceId: created.invoiceId,
+			amountInCents: 6_000,
+			dueDate: "2099-03-15",
+			summary: "秋季教材及资料费",
+			reason: "补充资料包",
+			expectedVersion: 1,
+			requestId: adjustmentRequestId,
+		};
+		const firstAdjustment = adjustInvoiceResultSchema.parse(
+			await adjustInvoice(financeScope, firstAdjustmentInput),
+		);
+		assert.equal(firstAdjustment.adjustment.afterVersion, 2);
+		assert.equal(
+			adjustInvoiceResultSchema.parse(
+				await adjustInvoice(financeScope, firstAdjustmentInput),
+			).replayed,
+			true,
+		);
+		await expectOrpcError(
+			adjustInvoice(financeScope, {
+				invoiceId: created.invoiceId,
+				dueDate: "2099-03-20",
+				reason: "陈旧版本尝试",
+				expectedVersion: 1,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+
+		await createPayment(financeScope, {
+			invoiceId: created.invoiceId,
+			amountInCents: 1_000,
+			receivedAt: minutesAgo(5),
+			method: "wechat",
+			referenceNo: null,
+			note: null,
+			requestId: randomUUID(),
+		});
+		const [enrollmentAfterManualPayment] = await db
+			.select({ paidAmountInCents: enrollment.paidAmountInCents })
+			.from(enrollment)
+			.where(eq(enrollment.id, ids.enrollmentIdempotent));
+		assert.equal(enrollmentAfterManualPayment?.paidAmountInCents, 0);
+
+		adjustInvoiceResultSchema.parse(
+			await adjustInvoice(financeScope, {
+				invoiceId: created.invoiceId,
+				dueDate: "2099-04-01",
+				summary: "秋季教材及资料费（延期）",
+				reason: "家长申请延期",
+				expectedVersion: 2,
+				requestId: randomUUID(),
+			}),
+		);
+		await expectOrpcError(
+			adjustInvoice(financeScope, {
+				invoiceId: created.invoiceId,
+				amountInCents: 7_000,
+				reason: "错误尝试调整金额",
+				expectedVersion: 3,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+
+		const detail = invoiceDetailSchema.parse(
+			await getInvoiceDetail(financeScope, { id: created.invoiceId }),
+		);
+		assert.equal(detail.invoice.amountInCents, 6_000);
+		assert.equal(detail.invoice.dueDate, "2099-04-01");
+		assert.equal(detail.invoice.version, 3);
+		assert.equal(detail.invoice.status, "partial");
+		assert.equal(detail.capabilities.canAdjustAmount, false);
+		assert.equal(detail.capabilities.canAdjustDueDate, true);
+		assert.equal(detail.adjustments.length, 2);
+		assert.equal(detail.adjustments[0]?.reason, "家长申请延期");
+
+		const matchingList = await listInvoices(financeScope, {
+			query: "秋季教材",
+			status: "all",
+		});
+		assert.ok(matchingList.items.some((item) => item.id === created.invoiceId));
+		const manualArrears = (await listArrears(financeScope)).items.find(
+			(item) => item.invoiceId === created.invoiceId,
+		);
+		assert.equal(manualArrears?.source, "manual");
+		assert.equal(manualArrears?.summary, "秋季教材及资料费（延期）");
+		const dashboard = await getTrainingDashboardSnapshot({
+			...financeScope,
+			role: "finance",
+		});
+		assert.equal(dashboard.metrics.pendingInvoiceCount, 6);
+		assert.equal(dashboard.metrics.outstandingAmountInCents, 36_000);
+		const timeline = studentTimelineResultSchema.parse(
+			await getStudentTimeline(
+				{
+					organizationId: ids.organizationA,
+					userId: ids.owner,
+					role: "owner",
+					campusAccess: { kind: "all" },
+				},
+				{ studentId: ids.studentA, pageSize: 50 },
+			),
+		);
+		const manualTimelineItem = timeline.items.find(
+			(item) =>
+				item.kind === "invoice_issued" &&
+				item.source.type === "invoice" &&
+				item.source.invoiceId === created.invoiceId,
+		);
+		assert.equal(manualTimelineItem?.invoiceSource, "manual");
+		assert.equal(
+			manualTimelineItem?.invoiceSummary,
+			"秋季教材及资料费（延期）",
+		);
+
+		const creationRows = await db
+			.select({ id: manualInvoiceCreation.id })
+			.from(manualInvoiceCreation)
+			.where(eq(manualInvoiceCreation.requestId, createRequestId));
+		assert.equal(creationRows.length, 1);
+		const adjustmentRows = await db
+			.select({ id: invoiceAdjustment.id })
+			.from(invoiceAdjustment)
+			.where(eq(invoiceAdjustment.invoiceId, created.invoiceId));
+		assert.equal(adjustmentRows.length, 2);
+		const auditRows = await db
+			.select({
+				action: organizationAuditEvent.action,
+				after: organizationAuditEvent.after,
+			})
+			.from(organizationAuditEvent)
+			.where(
+				and(
+					eq(organizationAuditEvent.organizationId, ids.organizationA),
+					inArray(organizationAuditEvent.action, [
+						"manual_invoice_created",
+						"invoice_adjusted",
+					]),
+				),
+			);
+		assert.equal(auditRows.length, 3);
+		assert.ok(
+			auditRows.every(
+				(item) =>
+					!JSON.stringify(item.after).includes("家长申请延期") &&
+					!JSON.stringify(item.after).includes("秋季教材"),
+			),
+		);
+
+		await db
+			.update(enrollment)
+			.set({ status: "frozen" })
+			.where(eq(enrollment.id, ids.enrollmentConcurrent));
+		createManualInvoiceResultSchema.parse(
+			await createManualInvoice(financeScope, {
+				...createInput,
+				enrollmentId: ids.enrollmentConcurrent,
+				requestId: randomUUID(),
+			}),
+		);
+		await db
+			.update(enrollment)
+			.set({ status: "transferred" })
+			.where(eq(enrollment.id, ids.enrollmentConcurrent));
+		await expectOrpcError(
+			createManualInvoice(financeScope, {
+				...createInput,
+				enrollmentId: ids.enrollmentConcurrent,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+		await expectOrpcError(
+			createManualInvoice(financeScope, {
+				...createInput,
+				studentId: ids.studentB,
+				enrollmentId: null,
+				requestId: randomUUID(),
+			}),
+			"NOT_FOUND",
+		);
+		await db
+			.update(campus)
+			.set({ isActive: false })
+			.where(eq(campus.id, ids.campusA));
+		await expectOrpcError(
+			createManualInvoice(financeScope, {
+				...createInput,
+				enrollmentId: null,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+		await db
+			.update(campus)
+			.set({ isActive: true })
+			.where(eq(campus.id, ids.campusA));
+		await db
+			.delete(organizationMember)
+			.where(
+				and(
+					eq(organizationMember.organizationId, ids.organizationA),
+					eq(organizationMember.userId, ids.finance),
+				),
+			);
+		await expectOrpcError(
+			createManualInvoice(financeScope, {
+				...createInput,
+				enrollmentId: null,
+				requestId: randomUUID(),
+			}),
+			"FORBIDDEN",
 		);
 	} finally {
 		await cleanupFixture(ids);

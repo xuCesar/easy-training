@@ -2,6 +2,8 @@ import type { RouterClient } from "@orpc/server";
 
 import {
 	addLeadFollowUpInputSchema,
+	adjustInvoiceInputSchema,
+	adjustInvoiceResultSchema,
 	arrearsListResultSchema,
 	assignEnrollmentClassInputSchema,
 	assignEnrollmentClassResultSchema,
@@ -43,6 +45,8 @@ import {
 	createLeadResultSchema,
 	createLessonInputSchema,
 	createMakeupLessonInputSchema,
+	createManualInvoiceInputSchema,
+	createManualInvoiceResultSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
 	createRefundInputSchema,
@@ -85,6 +89,8 @@ import {
 	makeupLessonListInputSchema,
 	makeupLessonListResultSchema,
 	makeupLessonMutationResultSchema,
+	manualInvoiceOptionsInputSchema,
+	manualInvoiceOptionsSchema,
 	markNotificationReadInputSchema,
 	markNotificationsReadResultSchema,
 	memberListResultSchema,
@@ -185,8 +191,11 @@ import {
 	getIndependentEnrollmentOptions,
 } from "../repositories/enrollment-registration";
 import {
+	adjustInvoice,
+	createManualInvoice,
 	createPayment,
 	getInvoiceDetail,
+	getManualInvoiceOptions,
 	listInvoices,
 } from "../repositories/finance";
 import {
@@ -1457,6 +1466,45 @@ export const appRouter = {
 					.output(invoiceDetailSchema)
 					.handler(({ context, input }) =>
 						getInvoiceDetail(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				manualOptions: financeProcedure
+					.input(manualInvoiceOptionsInputSchema)
+					.output(manualInvoiceOptionsSchema)
+					.handler(({ context, input }) =>
+						getManualInvoiceOptions(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				createManual: financeProcedure
+					.input(createManualInvoiceInputSchema)
+					.output(createManualInvoiceResultSchema)
+					.handler(({ context, input }) =>
+						createManualInvoice(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				adjust: financeProcedure
+					.input(adjustInvoiceInputSchema)
+					.output(adjustInvoiceResultSchema)
+					.handler(({ context, input }) =>
+						adjustInvoice(
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,

@@ -210,6 +210,8 @@ export async function getStudentTimeline(
 				actorName: item.actorName,
 				courseName: item.courseName,
 				className: item.className,
+				invoiceSummary: item.invoiceSummary,
+				invoiceSource: item.invoiceSource,
 				amountInCents: item.amountInCents,
 				lessonCount: item.lessonCount,
 				previousRemainingLessons: item.previousRemainingLessons,

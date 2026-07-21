@@ -167,8 +167,10 @@ export function FinanceAdjustments({
 												{item.studentName}
 											</p>
 											<p className="mt-1 truncate text-muted-foreground text-xs">
-												{item.courseName ?? "课程待确认"} · 到期{" "}
-												{formatDate(item.dueDate)}
+												{item.source === "manual"
+													? item.summary
+													: (item.courseName ?? item.summary)}{" "}
+												· 到期 {formatDate(item.dueDate)}
 											</p>
 										</div>
 										<span className="shrink-0 font-semibold text-sm tabular-nums">

@@ -71,6 +71,8 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"lead_exported",
 	"notification_read",
 	"notifications_marked_read",
+	"manual_invoice_created",
+	"invoice_adjusted",
 ]);
 export const organizationNotificationType = pgEnum(
 	"organization_notification_type",
@@ -165,6 +167,22 @@ export const invoiceStatus = pgEnum("invoice_status", [
 	"overdue",
 	"refunded",
 ]);
+export const invoiceSource = pgEnum("invoice_source", [
+	"enrollment",
+	"renewal",
+	"manual",
+]);
+export const invoiceBusinessActivityType = pgEnum(
+	"invoice_business_activity_type",
+	[
+		"course_enrollment",
+		"course_renewal",
+		"material_fee",
+		"exam_fee",
+		"price_difference",
+		"other",
+	],
+);
 export const paymentMethod = pgEnum("payment_method", [
 	"cash",
 	"wechat",
@@ -1410,6 +1428,11 @@ export const invoice = pgTable(
 		enrollmentId: uuid("enrollment_id").references(() => enrollment.id, {
 			onDelete: "set null",
 		}),
+		source: invoiceSource("source").default("enrollment").notNull(),
+		businessActivityType: invoiceBusinessActivityType("business_activity_type")
+			.default("course_enrollment")
+			.notNull(),
+		summary: text("summary").default("课程报名费用").notNull(),
 		amountInCents: integer("amount_in_cents").notNull(),
 		paidAmountInCents: integer("paid_amount_in_cents").default(0).notNull(),
 		status: invoiceStatus("status").default("pending").notNull(),
@@ -1418,14 +1441,110 @@ export const invoice = pgTable(
 			.defaultNow()
 			.notNull(),
 		paidAt: timestamp("paid_at", { withTimezone: true }),
+		createdByUserId: text("created_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		createdByName: text("created_by_name"),
+		version: integer("version").default(1).notNull(),
 	},
 	(table) => [
+		check("invoice_version_positive_check", sql`${table.version} > 0`),
 		index("invoice_org_status_due_idx").on(
 			table.organizationId,
 			table.status,
 			table.dueDate,
 		),
 		index("invoice_student_idx").on(table.studentId),
+	],
+);
+
+export const manualInvoiceCreation = pgTable(
+	"manual_invoice_creation",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		requestId: uuid("request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id),
+		enrollmentId: uuid("enrollment_id").references(() => enrollment.id, {
+			onDelete: "set null",
+		}),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		operatorName: text("operator_name").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("manual_invoice_creation_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("manual_invoice_creation_org_invoice_idx").on(
+			table.organizationId,
+			table.invoiceId,
+		),
+	],
+);
+
+export const invoiceAdjustment = pgTable(
+	"invoice_adjustment",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		requestId: uuid("request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		beforeVersion: integer("before_version").notNull(),
+		afterVersion: integer("after_version").notNull(),
+		beforeAmountInCents: integer("before_amount_in_cents").notNull(),
+		afterAmountInCents: integer("after_amount_in_cents").notNull(),
+		beforeDueDate: date("before_due_date").notNull(),
+		afterDueDate: date("after_due_date").notNull(),
+		beforeSummary: text("before_summary").notNull(),
+		afterSummary: text("after_summary").notNull(),
+		reason: text("reason").notNull(),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		operatorName: text("operator_name").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		check(
+			"invoice_adjustment_version_order_check",
+			sql`${table.afterVersion} = ${table.beforeVersion} + 1`,
+		),
+		uniqueIndex("invoice_adjustment_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("invoice_adjustment_org_invoice_created_idx").on(
+			table.organizationId,
+			table.invoiceId,
+			table.createdAt,
+		),
 	],
 );
 
@@ -1645,7 +1764,29 @@ export const invoiceRelations = relations(invoice, ({ many }) => ({
 	payments: many(payment),
 	refunds: many(refund),
 	followUps: many(invoiceFollowUp),
+	manualCreations: many(manualInvoiceCreation),
+	adjustments: many(invoiceAdjustment),
 }));
+
+export const manualInvoiceCreationRelations = relations(
+	manualInvoiceCreation,
+	({ one }) => ({
+		invoice: one(invoice, {
+			fields: [manualInvoiceCreation.invoiceId],
+			references: [invoice.id],
+		}),
+	}),
+);
+
+export const invoiceAdjustmentRelations = relations(
+	invoiceAdjustment,
+	({ one }) => ({
+		invoice: one(invoice, {
+			fields: [invoiceAdjustment.invoiceId],
+			references: [invoice.id],
+		}),
+	}),
+);
 
 export const paymentRelations = relations(payment, ({ one }) => ({
 	invoice: one(invoice, {

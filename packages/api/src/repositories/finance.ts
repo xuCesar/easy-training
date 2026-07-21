@@ -1,19 +1,29 @@
 import {
+	adjustInvoiceRecord,
+	createManualInvoiceRecord,
 	createPaymentRecord,
 	FinanceError,
 	getInvoiceDetailRecord,
+	type InvoiceAdjustmentRecord,
 	type InvoiceRecord,
 	listInvoiceRecords,
+	listManualInvoiceOptionRecords,
 	type PaymentRecord,
 } from "@easy-training/db";
 import { ORPCError } from "@orpc/server";
 import type {
+	AdjustInvoiceInput,
+	AdjustInvoiceResult,
+	CreateManualInvoiceInput,
+	CreateManualInvoiceResult,
 	CreatePaymentInput,
 	CreatePaymentResult,
 	InvoiceDetail,
 	InvoiceDetailInput,
 	InvoiceListInput,
 	InvoiceListResult,
+	ManualInvoiceOptions,
+	ManualInvoiceOptionsInput,
 } from "../contracts/training";
 import { getInvoiceRefunds } from "./enrollment-finance-adjustments";
 
@@ -51,9 +61,13 @@ function toInvoiceSummary(record: InvoiceRecord, today: string) {
 
 	return {
 		id: record.id,
+		enrollmentId: record.enrollmentId,
 		studentId: record.studentId,
 		studentName: record.studentName,
 		courseName: record.courseName,
+		source: record.source,
+		businessActivityType: record.businessActivityType,
+		summary: record.summary,
 		amountInCents: record.amountInCents,
 		paidAmountInCents,
 		outstandingAmountInCents: Math.max(
@@ -66,6 +80,29 @@ function toInvoiceSummary(record: InvoiceRecord, today: string) {
 			(record.status === "overdue" || record.dueDate < today),
 		dueDate: record.dueDate,
 		issuedAt: record.issuedAt.toISOString(),
+		createdByName: record.createdByName,
+		version: record.version,
+	};
+}
+
+function toInvoiceAdjustment(record: InvoiceAdjustmentRecord) {
+	return {
+		id: record.id,
+		beforeVersion: record.beforeVersion,
+		afterVersion: record.afterVersion,
+		before: {
+			amountInCents: record.beforeAmountInCents,
+			dueDate: record.beforeDueDate,
+			summary: record.beforeSummary,
+		},
+		after: {
+			amountInCents: record.afterAmountInCents,
+			dueDate: record.afterDueDate,
+			summary: record.afterSummary,
+		},
+		reason: record.reason,
+		operatorName: record.operatorName,
+		createdAt: record.createdAt.toISOString(),
 	};
 }
 
@@ -128,6 +165,47 @@ function throwFinanceError(error: unknown): never {
 			throw new ORPCError("CONFLICT", {
 				message: "校区已停用，不能继续收款。",
 			});
+		case "MEMBER_FORBIDDEN":
+		case "CAMPUS_OUT_OF_SCOPE":
+			throw new ORPCError("FORBIDDEN", {
+				message: "你没有权限操作该校区的财务数据。",
+			});
+		case "STUDENT_NOT_FOUND":
+			throw new ORPCError("NOT_FOUND", { message: "学员不存在。" });
+		case "ENROLLMENT_NOT_FOUND":
+			throw new ORPCError("NOT_FOUND", { message: "报名不存在。" });
+		case "ENROLLMENT_STUDENT_MISMATCH":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "所选报名不属于该学员。",
+			});
+		case "ENROLLMENT_NOT_LINKABLE":
+			throw new ORPCError("CONFLICT", {
+				message: "该报名当前不能关联新账单。",
+			});
+		case "INVALID_INVOICE_INPUT":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "请检查账单金额、日期和文字内容。",
+			});
+		case "INVOICE_NOT_ADJUSTABLE":
+			throw new ORPCError("CONFLICT", {
+				message: "已结清或已退款账单不能再调整。",
+			});
+		case "INVOICE_AMOUNT_LOCKED":
+			throw new ORPCError("CONFLICT", {
+				message: "该账单已有收款，金额不能直接调整。",
+			});
+		case "INVOICE_VERSION_CONFLICT":
+			throw new ORPCError("CONFLICT", {
+				message: "账单已被其他人更新，请加载最新内容后重试。",
+			});
+		case "NO_ADJUSTMENT_CHANGES":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "账单内容没有发生变化。",
+			});
+		case "INVALID_CURSOR":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "分页位置无效，请重新加载学员列表。",
+			});
 	}
 
 	throw new ORPCError("INTERNAL_SERVER_ERROR", {
@@ -175,6 +253,14 @@ export async function getInvoiceDetail(
 			invoice: invoiceSummary,
 			payments: result.payments.map(toPayment),
 			refunds: await getInvoiceRefunds(scope, input.id),
+			adjustments: result.adjustments.map(toInvoiceAdjustment),
+			capabilities: {
+				canAdjustAmount:
+					invoiceSummary.status === "pending" &&
+					invoiceSummary.paidAmountInCents === 0,
+				canAdjustDueDate: invoiceSummary.status !== "paid",
+				canAdjustSummary: invoiceSummary.status !== "paid",
+			},
 			historicalPaidAmountInCents: Math.max(
 				invoiceSummary.paidAmountInCents -
 					result.payments.reduce(
@@ -183,6 +269,67 @@ export async function getInvoiceDetail(
 					),
 				0,
 			),
+		};
+	} catch (error) {
+		return throwFinanceError(error);
+	}
+}
+
+export async function getManualInvoiceOptions(
+	scope: FinanceScope,
+	input: ManualInvoiceOptionsInput,
+): Promise<ManualInvoiceOptions> {
+	try {
+		const result = await listManualInvoiceOptionRecords({
+			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess ?? { kind: "all" },
+			query: input.query,
+			cursor: input.cursor,
+			pageSize: input.pageSize,
+		});
+		return {
+			students: result.items,
+			nextCursor: result.nextCursor,
+		};
+	} catch (error) {
+		return throwFinanceError(error);
+	}
+}
+
+export async function createManualInvoice(
+	scope: FinanceScope,
+	input: CreateManualInvoiceInput,
+): Promise<CreateManualInvoiceResult> {
+	try {
+		return await createManualInvoiceRecord({
+			organizationId: scope.organizationId,
+			operatorUserId: scope.userId,
+			...input,
+		});
+	} catch (error) {
+		return throwFinanceError(error);
+	}
+}
+
+export async function adjustInvoice(
+	scope: FinanceScope,
+	input: AdjustInvoiceInput,
+): Promise<AdjustInvoiceResult> {
+	try {
+		const result = await adjustInvoiceRecord({
+			organizationId: scope.organizationId,
+			operatorUserId: scope.userId,
+			...input,
+		});
+		return {
+			adjustment: {
+				id: result.adjustment.id,
+				invoiceId: result.adjustment.invoiceId,
+				beforeVersion: result.adjustment.beforeVersion,
+				afterVersion: result.adjustment.afterVersion,
+				createdAt: result.adjustment.createdAt.toISOString(),
+			},
+			replayed: result.replayed,
 		};
 	} catch (error) {
 		return throwFinanceError(error);

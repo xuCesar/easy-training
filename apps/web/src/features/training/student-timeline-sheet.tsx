@@ -82,6 +82,16 @@ function labelStatus(value: string | null): string | null {
 
 function describeEvent(item: TimelineItem): string {
 	const course = item.courseName ?? "未命名课程";
+	const invoiceSubject =
+		item.invoiceSource === "manual"
+			? (item.invoiceSummary ?? "手工账单")
+			: (item.courseName ?? item.invoiceSummary ?? "账单");
+	const invoiceSource =
+		item.invoiceSource === "manual"
+			? "手工开单"
+			: item.invoiceSource === "renewal"
+				? "续费开单"
+				: "报名开单";
 	const className = item.className ? ` · ${item.className}` : "";
 	switch (item.kind) {
 		case "enrollment_created":
@@ -89,15 +99,15 @@ function describeEvent(item: TimelineItem): string {
 		case "enrollment_lifecycle":
 			return `${course}${className} · ${labelStatus(item.status) ?? "状态变更"}`;
 		case "invoice_issued":
-			return `${course}${item.amountInCents === null ? "" : ` · ${formatCentsToCurrency(item.amountInCents)}`}`;
+			return `${invoiceSource} · ${invoiceSubject}${item.amountInCents === null ? "" : ` · ${formatCentsToCurrency(item.amountInCents)}`}`;
 		case "payment_received":
-			return `${course} · ${item.amountInCents === null ? "" : formatCentsToCurrency(item.amountInCents)}${labelStatus(item.status) ? ` · ${labelStatus(item.status)}` : ""}`;
+			return `${invoiceSubject} · ${item.amountInCents === null ? "" : formatCentsToCurrency(item.amountInCents)}${labelStatus(item.status) ? ` · ${labelStatus(item.status)}` : ""}`;
 		case "enrollment_renewed":
 			return `${course}${item.lessonCount === null ? "" : ` · 增加 ${item.lessonCount} 课时`}`;
 		case "enrollment_transferred":
 			return `${course}${item.lessonCount === null ? "" : ` · 转移 ${item.lessonCount} 课时`}`;
 		case "refund_created":
-			return `${course} · ${item.amountInCents === null ? "" : formatCentsToCurrency(item.amountInCents)}`;
+			return `${invoiceSubject} · ${item.amountInCents === null ? "" : formatCentsToCurrency(item.amountInCents)}`;
 		case "attendance_recorded":
 			return `${course}${className} · ${labelStatus(item.status) ?? "已登记"}`;
 		case "lesson_consumed":

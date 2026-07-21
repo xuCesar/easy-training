@@ -16,6 +16,7 @@ import {
 	organizationMember,
 	student,
 	studentContact,
+	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
@@ -705,16 +706,28 @@ export async function createIndependentEnrollmentRecord(
 				throw new EnrollmentRegistrationError("RESOURCE_UNAVAILABLE");
 
 			const isComplimentary = input.amountInCents === 0;
+			const [operator] = await tx
+				.select({ name: user.name })
+				.from(user)
+				.where(eq(user.id, input.operatorUserId))
+				.limit(1);
+			if (!operator)
+				throw new EnrollmentRegistrationError("RESOURCE_UNAVAILABLE");
 			const [createdInvoice] = await tx
 				.insert(invoice)
 				.values({
 					organizationId: input.organizationId,
 					studentId,
 					enrollmentId: createdEnrollment.id,
+					source: "enrollment",
+					businessActivityType: "course_enrollment",
+					summary: "课程报名费用",
 					amountInCents: input.amountInCents,
 					dueDate: input.invoiceDueDate,
 					status: isComplimentary ? "paid" : "pending",
 					paidAt: isComplimentary ? new Date() : null,
+					createdByUserId: input.operatorUserId,
+					createdByName: operator.name,
 				})
 				.returning({ id: invoice.id });
 			if (!createdInvoice)

@@ -51,7 +51,9 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
 	CircleDollarSignIcon,
 	ClockAlertIcon,
+	FilePlus2Icon,
 	LoaderCircleIcon,
+	PencilLineIcon,
 	ReceiptTextIcon,
 	RotateCcwIcon,
 	SearchIcon,
@@ -62,7 +64,15 @@ import { toast } from "sonner";
 
 import { orpc, queryClient } from "@/utils/orpc";
 import { FinanceAdjustments } from "./finance-adjustments";
+import {
+	formatCentsAsYuan,
+	getActivityTypeLabel,
+	getInvoiceSourceLabel,
+	parseYuanToCents,
+} from "./finance-form-utils";
 import { formatCentsToCurrency, formatDate, formatDateTime } from "./format";
+import { InvoiceAdjustmentDialog } from "./invoice-adjustment-dialog";
+import { ManualInvoiceDialog } from "./manual-invoice-dialog";
 
 type InvoiceSummary = InvoiceListResult["items"][number];
 type InvoiceStatusFilter = InvoiceListInput["status"];
@@ -105,6 +115,7 @@ export function FinanceWorkspace({
 }) {
 	const [search, setSearch] = useState("");
 	const [status, setStatus] = useState<InvoiceStatusFilter>("open");
+	const [manualInvoiceOpen, setManualInvoiceOpen] = useState(false);
 	const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(
 		initialInvoiceId ?? null,
 	);
@@ -135,6 +146,10 @@ export function FinanceWorkspace({
 						</p>
 					) : null}
 				</div>
+				<Button onClick={() => setManualInvoiceOpen(true)}>
+					<FilePlus2Icon data-icon="inline-start" />
+					手工开单
+				</Button>
 			</section>
 
 			<section className="flex min-w-0 flex-col gap-3 sm:flex-row">
@@ -145,7 +160,7 @@ export function FinanceWorkspace({
 						className="w-full pl-8"
 						value={search}
 						onChange={(event) => setSearch(event.target.value)}
-						placeholder="搜索学员或课程"
+						placeholder="搜索学员、课程或摘要"
 					/>
 				</div>
 				<Select
@@ -174,7 +189,7 @@ export function FinanceWorkspace({
 				isPending={listQuery.isPending}
 				isError={listQuery.isError}
 				errorMessage={listQuery.error?.message}
-				isFiltered={Boolean(deferredSearch || status !== "all")}
+				isFiltered={Boolean(deferredSearch || status !== "open")}
 				onRetry={() => listQuery.refetch()}
 				onSelect={(invoiceId) => {
 					setSelectedInvoiceId(invoiceId);
@@ -190,6 +205,21 @@ export function FinanceWorkspace({
 					onClose={() => {
 						setSelectedInvoiceId(null);
 						onInvoiceIdChange?.(null);
+					}}
+				/>
+			) : null}
+
+			{manualInvoiceOpen ? (
+				<ManualInvoiceDialog
+					organizationId={organizationId}
+					onClose={() => setManualInvoiceOpen(false)}
+					onCreated={(invoiceId) => {
+						setManualInvoiceOpen(false);
+						setSelectedInvoiceId(invoiceId);
+						onInvoiceIdChange?.(invoiceId);
+						void invalidateFinanceQueries().catch(() => {
+							toast.warning("账单已创建，部分列表刷新失败，请稍后手动刷新。");
+						});
 					}}
 				/>
 			) : null}
@@ -244,7 +274,7 @@ function InvoiceResults({
 					<EmptyDescription>
 						{isFiltered
 							? "请调整搜索词或结算状态后重试。"
-							: "报名产生的应收账单会显示在这里。"}
+							: "报名、续费或手工创建的应收账单会显示在这里。"}
 					</EmptyDescription>
 				</EmptyHeader>
 			</Empty>
@@ -258,7 +288,7 @@ function InvoiceResults({
 					<TableCaption className="sr-only">应收账单列表</TableCaption>
 					<TableHeader>
 						<TableRow>
-							<TableHead>学员 / 课程</TableHead>
+							<TableHead>学员 / 摘要</TableHead>
 							<TableHead className="text-right">应收</TableHead>
 							<TableHead className="text-right">已收</TableHead>
 							<TableHead className="text-right">未收</TableHead>
@@ -287,7 +317,7 @@ function InvoiceResults({
 											{invoice.studentName}
 										</span>
 										<span className="mt-0.5 block truncate text-muted-foreground">
-											{invoice.courseName ?? "课程待确认"}
+											{invoice.summary}
 										</span>
 									</div>
 								</TableCell>
@@ -318,7 +348,7 @@ function InvoiceResults({
 									{invoice.studentName}
 								</span>
 								<span className="mt-0.5 block truncate text-muted-foreground text-xs">
-									{invoice.courseName ?? "课程待确认"}
+									{invoice.summary}
 								</span>
 							</span>
 							<InvoiceBadges invoice={invoice} />
@@ -353,6 +383,7 @@ function InvoiceDetailSheet({
 }) {
 	const [paymentFormGeneration, setPaymentFormGeneration] = useState(0);
 	const [paymentPending, setPaymentPending] = useState(false);
+	const [adjustmentOpen, setAdjustmentOpen] = useState(false);
 	const detailOptions = orpc.training.finance.invoices.detail.queryOptions({
 		input: { id: invoiceId },
 	});
@@ -365,7 +396,7 @@ function InvoiceDetailSheet({
 		<Sheet
 			open
 			onOpenChange={(open) => {
-				if (!open && !paymentPending) onClose();
+				if (!open && !paymentPending && !adjustmentOpen) onClose();
 			}}
 		>
 			<SheetContent
@@ -411,6 +442,7 @@ function InvoiceDetailSheet({
 						detail={detailQuery.data}
 						paymentFormGeneration={paymentFormGeneration}
 						onClose={onClose}
+						onAdjust={() => setAdjustmentOpen(true)}
 						onPaymentCreated={() =>
 							setPaymentFormGeneration((current) => current + 1)
 						}
@@ -418,6 +450,18 @@ function InvoiceDetailSheet({
 					/>
 				)}
 			</SheetContent>
+			{adjustmentOpen && detailQuery.data ? (
+				<InvoiceAdjustmentDialog
+					detail={detailQuery.data}
+					onClose={() => setAdjustmentOpen(false)}
+					onAdjusted={() => {
+						setAdjustmentOpen(false);
+						void invalidateFinanceQueries().catch(() => {
+							toast.warning("账单已调整，部分列表刷新失败，请稍后手动刷新。");
+						});
+					}}
+				/>
+			) : null}
 		</Sheet>
 	);
 }
@@ -426,12 +470,14 @@ function InvoiceDetailContent({
 	detail,
 	paymentFormGeneration,
 	onClose,
+	onAdjust,
 	onPaymentCreated,
 	onPaymentPendingChange,
 }: {
 	detail: InvoiceDetail;
 	paymentFormGeneration: number;
 	onClose: () => void;
+	onAdjust: () => void;
 	onPaymentCreated: () => void;
 	onPaymentPendingChange: (pending: boolean) => void;
 }) {
@@ -449,6 +495,10 @@ function InvoiceDetailContent({
 		invoice.paidAmountInCents - refundedAmountInCents,
 		0,
 	);
+	const canAdjust =
+		detail.capabilities.canAdjustAmount ||
+		detail.capabilities.canAdjustDueDate ||
+		detail.capabilities.canAdjustSummary;
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 sm:p-5">
@@ -459,7 +509,7 @@ function InvoiceDetailContent({
 							{invoice.studentName}
 						</h2>
 						<p className="mt-1 break-words text-muted-foreground text-sm">
-							{invoice.courseName ?? "课程待确认"}
+							{invoice.summary}
 						</p>
 					</div>
 					<InvoiceBadges invoice={invoice} />
@@ -477,8 +527,49 @@ function InvoiceDetailContent({
 						<dt className="text-muted-foreground text-xs">付款到期日</dt>
 						<dd className="mt-1 tabular-nums">{formatDate(invoice.dueDate)}</dd>
 					</div>
+					<TextDefinition
+						label="账单来源"
+						value={getInvoiceSourceLabel(invoice.source)}
+					/>
+					<TextDefinition
+						label="业务类型"
+						value={getActivityTypeLabel(invoice.businessActivityType)}
+					/>
+					<TextDefinition
+						label="关联课程"
+						value={invoice.courseName ?? "未关联课程"}
+					/>
+					<TextDefinition
+						label="创建人"
+						value={invoice.createdByName ?? "历史数据"}
+					/>
+					<TextDefinition
+						label="创建时间"
+						value={formatDateTime(invoice.issuedAt)}
+					/>
+					<TextDefinition label="当前版本" value={`V${invoice.version}`} />
 				</dl>
+				<div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-4">
+					<p className="text-muted-foreground text-xs">
+						{canAdjust
+							? "允许按当前收款状态调整账单条款。"
+							: "该账单条款已冻结，不能继续调整。"}
+					</p>
+					{canAdjust ? (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							onClick={onAdjust}
+						>
+							<PencilLineIcon data-icon="inline-start" />
+							调整账单
+						</Button>
+					) : null}
+				</div>
 			</section>
+
+			<InvoiceAdjustmentHistory adjustments={detail.adjustments} />
 
 			{invoice.outstandingAmountInCents > 0 ? (
 				<PaymentForm
@@ -983,6 +1074,9 @@ function PaymentForm({
 function InvoiceBadges({ invoice }: { invoice: InvoiceSummary }) {
 	return (
 		<span className="flex shrink-0 flex-wrap justify-end gap-1">
+			<Badge variant="outline">
+				{getActivityTypeLabel(invoice.businessActivityType)}
+			</Badge>
 			<Badge variant={invoice.status === "paid" ? "outline" : "secondary"}>
 				{getInvoiceStatusLabel(invoice.status)}
 			</Badge>
@@ -1054,6 +1148,80 @@ function AmountDefinition({
 	);
 }
 
+function TextDefinition({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="min-w-0">
+			<dt className="text-muted-foreground text-xs">{label}</dt>
+			<dd className="mt-1 break-words">{value}</dd>
+		</div>
+	);
+}
+
+function InvoiceAdjustmentHistory({
+	adjustments,
+}: {
+	adjustments: InvoiceDetail["adjustments"];
+}) {
+	return (
+		<section className="min-w-0" aria-labelledby="adjustment-history-title">
+			<div className="flex items-baseline justify-between gap-3">
+				<h2 id="adjustment-history-title" className="font-semibold text-sm">
+					账单调整记录
+				</h2>
+				<span className="text-muted-foreground text-xs">
+					共 {adjustments.length} 次调整
+				</span>
+			</div>
+			{adjustments.length > 0 ? (
+				<ol className="mt-3 divide-y border">
+					{adjustments.map((adjustment) => (
+						<li key={adjustment.id} className="min-w-0 p-3 text-sm">
+							<div className="flex flex-wrap items-start justify-between gap-2">
+								<p className="font-medium">
+									V{adjustment.beforeVersion} → V{adjustment.afterVersion}
+								</p>
+								<p className="text-muted-foreground text-xs">
+									{formatDateTime(adjustment.createdAt)} ·{" "}
+									{adjustment.operatorName}
+								</p>
+							</div>
+							<ul className="mt-2 space-y-1 text-muted-foreground text-xs">
+								{adjustment.before.amountInCents !==
+								adjustment.after.amountInCents ? (
+									<li>
+										金额：
+										{formatCentsToCurrency(adjustment.before.amountInCents)} →{" "}
+										{formatCentsToCurrency(adjustment.after.amountInCents)}
+									</li>
+								) : null}
+								{adjustment.before.dueDate !== adjustment.after.dueDate ? (
+									<li>
+										到期日：{formatDate(adjustment.before.dueDate)} →{" "}
+										{formatDate(adjustment.after.dueDate)}
+									</li>
+								) : null}
+								{adjustment.before.summary !== adjustment.after.summary ? (
+									<li className="break-words">
+										摘要：{adjustment.before.summary} →{" "}
+										{adjustment.after.summary}
+									</li>
+								) : null}
+							</ul>
+							<p className="mt-2 break-words border-t pt-2 text-xs">
+								调整原因：{adjustment.reason}
+							</p>
+						</li>
+					))}
+				</ol>
+			) : (
+				<div className="mt-3 border p-6 text-center text-muted-foreground text-sm">
+					暂无调整记录
+				</div>
+			)}
+		</section>
+	);
+}
+
 function InvoiceListSkeleton() {
 	return (
 		<div className="border" role="status" aria-label="正在加载应收账单">
@@ -1099,23 +1267,6 @@ function getPaymentMethodLabel(method: PaymentMethod): string {
 	return paymentMethods.find((item) => item.value === method)?.label ?? "其他";
 }
 
-function formatCentsAsYuan(value: number): string {
-	const yuan = Math.floor(value / 100);
-	const cents = String(value % 100).padStart(2, "0");
-	return `${yuan}.${cents}`;
-}
-
-function parseYuanToCents(value: string): number | null {
-	const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
-	if (!match) return null;
-	const yuan = Number(match[1]);
-	const cents = Number((match[2] ?? "").padEnd(2, "0"));
-	const result = yuan * 100 + cents;
-	return Number.isSafeInteger(result) && result > 0 && result <= 100_000_000
-		? result
-		: null;
-}
-
 function getShanghaiCurrentDateTime(now = new Date()): string {
 	const shanghaiOffsetInMilliseconds = 8 * 60 * 60 * 1000;
 	return new Date(now.getTime() + shanghaiOffsetInMilliseconds)
@@ -1156,6 +1307,9 @@ function invalidateFinanceQueries() {
 		}),
 		queryClient.invalidateQueries({
 			queryKey: orpc.training.snapshot.key(),
+		}),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.students.timeline.key(),
 		}),
 	]);
 }
