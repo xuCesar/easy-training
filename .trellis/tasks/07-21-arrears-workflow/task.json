@@ -3,7 +3,7 @@
   "name": "arrears-workflow",
   "title": "欠费处理工作流",
   "description": "实现欠费状态、操作历史、权限与校区隔离。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",

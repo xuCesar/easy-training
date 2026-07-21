@@ -204,6 +204,13 @@
       "when": 1784631431791,
       "tag": "0028_handy_angel",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1784643467928,
+      "tag": "0029_hard_molten_man",
+      "breakpoints": true
     }
   ]
 }

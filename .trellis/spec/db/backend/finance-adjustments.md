@@ -88,6 +88,73 @@ await decideRefundRequestRecord({
 
 以不可变业务流水表达变更，并由机构内唯一请求 ID 和资源锁保证重试安全。
 
+## Scenario: 欠费周期与跟进历史
+
+### 1. Scope / Trigger
+
+- 适用于真实未收账单（非 `refunded` 且 `amountInCents > paidAmountInCents`）的人工跟进、收款结清和冲正后重新待收。
+- 新账单、收款、冲正必须在原财务事务内同步维护欠费周期，禁止由前端或异步任务事后补写。
+
+### 2. Signatures
+
+- `startArrearsCycleIfNeeded(tx, { organizationId, invoiceId, sourceType, sourceId, occurredAt })`
+- `resolveArrearsCycleIfNeeded(tx, { organizationId, invoiceId, sourceType, sourceId, occurredAt })`
+- `transitionArrearsCycleRecord({ invoiceId, toStatus, promisedPaymentDate?, resumeDate?, reason?, note?, expectedVersion, requestId })`
+- `addArrearsNoteRecord({ invoiceId, note, expectedVersion, requestId })`
+- API：`training.finance.arrears.list/detail/transition/addNote`。
+
+### 3. Contracts
+
+- `invoiceArrearsCycle` 是当前周期投影；每张账单最多一个未解决周期，以 `cycleNumber` 保留结清后重开的历史。`invoiceArrearsEvent` 仅追加，保存状态变化、备注、操作人、来源与请求标识。
+- 状态为 `pending | following_up | promised | paused | resolved`。只有资金事实可自动进入 `resolved`；人工只可设为 `following_up`、`promised` 或 `paused`。
+- `promised` 必须提供不早于上海当天的日期；`paused` 必须提供原因，可选恢复日期也不得早于当天。原因和备注只保存在事件表，不能复制进中央审计。
+- 人工命令在同一事务按 invoice 再 cycle 的顺序锁定、重新验证财务角色与校区，并以 `expectedVersion` 拒绝覆盖。相同 `requestId` 的同载荷重放必须在版本比较前返回原结果，异载荷冲突。
+- 列表只返回授权校区的真实待收账单；支持当前状态和“暂停且未设恢复日期”筛选。详情按轮次倒序、事件正序返回完整历史。
+- 迁移保留 `invoiceFollowUp`，把既有记录按原 UUID、requestId、操作者、时间和内容复制为首轮 `note_added` 事件，不再对旧表写入。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 领域错误 | API 语义 |
+| --- | --- | --- |
+| 账单已结清、已退款或没有开放周期 | `ARREARS_NOT_ACTIVE` / `ARREARS_CYCLE_MISSING` | `CONFLICT` |
+| 机构、校区、角色或停用校区不符合 | `MEMBER_FORBIDDEN` / `CAMPUS_OUT_OF_SCOPE` / `CAMPUS_INACTIVE` | `FORBIDDEN` / `CONFLICT` |
+| 承诺/恢复日期或暂停原因无效 | `INVALID_ARREARS_INPUT` | `BAD_REQUEST` |
+| 版本陈旧或请求标识复用不同载荷 | `ARREARS_VERSION_CONFLICT` / `IDEMPOTENCY_CONFLICT` | `CONFLICT` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：收款使未收归零，在同一事务把开放周期自动标为 `resolved`；之后冲正重新待收时创建下一轮 `pending`，旧轮保持不变。
+- Base：暂停追缴但未填写恢复日期，仍出现在“长期暂停”筛选中；追加备注只新增事件，不改变当前状态。
+- Bad：将已结清周期恢复为跟进中、把自由文本写进 `organizationAuditEvent`，或在版本检查前拒绝同请求重放。
+
+### 6. Tests Required
+
+- 覆盖新账单、结清和冲正各自与周期/事件/审计同事务提交或回滚；部分收款不覆盖人工状态。
+- 覆盖状态与长期暂停筛选、承诺/暂停字段校验、跨机构/校区/停用校区/撤权、陈旧版本、并发与同请求重放。
+- 迁移 fixture 必须核对历史 `invoiceFollowUp` 的数量、UUID、请求标识、操作者、时间和备注均可追溯。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await updateInvoicePaidAmount(invoiceId);
+await startArrearsCycleLater(invoiceId);
+```
+
+这会在第二步失败时留下真实待收却无周期的账单。
+
+#### Correct
+
+```ts
+await db.transaction(async (tx) => {
+	await updateInvoicePaidAmount(tx, invoiceId);
+	await startArrearsCycleIfNeeded(tx, source);
+});
+```
+
+账单资金投影、周期、事件和审计在同一事务内完成。
+
 ## Scenario: 独立报名与原子建档开单
 
 ### 1. Scope / Trigger

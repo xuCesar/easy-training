@@ -11,6 +11,7 @@ import {
 	student,
 	user,
 } from "../schema";
+import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
 import { updateEnrollmentPaidAmount } from "./enrollment-finance-adjustments";
 import {
@@ -500,6 +501,13 @@ export async function createPaymentReversalRecord(
 					invoiceRecord.enrollmentId,
 				);
 			}
+			await startArrearsCycleIfNeeded(tx, {
+				organizationId: input.organizationId,
+				invoiceId: invoiceRecord.id,
+				sourceType: "payment_reversal",
+				sourceId: created.id,
+				occurredAt: input.reversedAt,
+			});
 
 			await writeOrganizationAuditEvent(tx, {
 				organizationId: input.organizationId,

@@ -15,6 +15,8 @@ import {
 	enrollment,
 	enrollmentRegistration,
 	invoice,
+	invoiceArrearsCycle,
+	invoiceArrearsEvent,
 	organization,
 	organizationAuditEvent,
 	organizationMember,
@@ -132,6 +134,12 @@ async function seed(ids: Ids) {
 }
 
 async function cleanup(ids: Ids) {
+	await db
+		.delete(invoiceArrearsEvent)
+		.where(eq(invoiceArrearsEvent.organizationId, ids.organizationId));
+	await db
+		.delete(invoiceArrearsCycle)
+		.where(eq(invoiceArrearsCycle.organizationId, ids.organizationId));
 	await db
 		.delete(organizationAuditEvent)
 		.where(eq(organizationAuditEvent.organizationId, ids.organizationId));

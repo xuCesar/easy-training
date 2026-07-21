@@ -1,10 +1,15 @@
 import type { RouterClient } from "@orpc/server";
 
 import {
+	addArrearsNoteInputSchema,
 	addLeadFollowUpInputSchema,
 	adjustInvoiceInputSchema,
 	adjustInvoiceResultSchema,
+	arrearsDetailInputSchema,
+	arrearsDetailResultSchema,
+	arrearsListInputSchema,
 	arrearsListResultSchema,
+	arrearsMutationResultSchema,
 	assignEnrollmentClassInputSchema,
 	assignEnrollmentClassResultSchema,
 	auditEventListInputSchema,
@@ -41,8 +46,6 @@ import {
 	createIndependentEnrollmentResultSchema,
 	createInvitationInputSchema,
 	createInvitationResultSchema,
-	createInvoiceFollowUpInputSchema,
-	createInvoiceFollowUpResultSchema,
 	createLeadInputSchema,
 	createLeadResultSchema,
 	createLessonInputSchema,
@@ -148,6 +151,7 @@ import {
 	teacherWorkspaceResultSchema,
 	transferEnrollmentInputSchema,
 	transferEnrollmentResultSchema,
+	transitionArrearsInputSchema,
 	updateCampusInputSchema,
 	updateClassGroupInputSchema,
 	updateClassroomInputSchema,
@@ -186,11 +190,13 @@ import {
 	getLeadConversionOptions,
 } from "../repositories/enrollment-conversion";
 import {
-	createInvoiceFollowUp,
+	addArrearsNote,
+	getArrearsDetail,
 	listArrears,
 	listEnrollmentAdjustments,
 	renewEnrollment,
 	transferEnrollment,
+	transitionArrears,
 } from "../repositories/enrollment-finance-adjustments";
 import { updateEnrollmentLifecycle } from "../repositories/enrollment-lifecycle";
 import {
@@ -1650,19 +1656,49 @@ export const appRouter = {
 			},
 			arrears: {
 				list: financeProcedure
+					.input(arrearsListInputSchema)
 					.output(arrearsListResultSchema)
-					.handler(({ context }) =>
-						listArrears({
-							organizationId: context.organization.id,
-							userId: context.session.user.id,
-							campusAccess: context.campusAccess,
-						}),
-					),
-				followUp: financeProcedure
-					.input(createInvoiceFollowUpInputSchema)
-					.output(createInvoiceFollowUpResultSchema)
 					.handler(({ context, input }) =>
-						createInvoiceFollowUp(
+						listArrears(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				detail: financeProcedure
+					.input(arrearsDetailInputSchema)
+					.output(arrearsDetailResultSchema)
+					.handler(({ context, input }) =>
+						getArrearsDetail(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				transition: financeProcedure
+					.input(transitionArrearsInputSchema)
+					.output(arrearsMutationResultSchema)
+					.handler(({ context, input }) =>
+						transitionArrears(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				addNote: financeProcedure
+					.input(addArrearsNoteInputSchema)
+					.output(arrearsMutationResultSchema)
+					.handler(({ context, input }) =>
+						addArrearsNote(
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,

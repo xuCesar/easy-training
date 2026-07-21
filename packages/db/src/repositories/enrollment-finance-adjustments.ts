@@ -13,6 +13,7 @@ import {
 	student,
 	user,
 } from "../schema";
+import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
 import { getCurrentFinanceWriteCampusAccess } from "./finance-access";
 import type { CampusAccess } from "./organization";
@@ -312,6 +313,13 @@ export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 				.returning({ id: enrollmentRenewal.id });
 			if (!createdRenewal)
 				throw new EnrollmentFinanceAdjustmentError("RESOURCE_UNAVAILABLE");
+			await startArrearsCycleIfNeeded(tx, {
+				organizationId: input.organizationId,
+				invoiceId: createdInvoice.id,
+				sourceType: "enrollment_renewal",
+				sourceId: createdRenewal.id,
+				occurredAt: new Date(),
+			});
 			await tx
 				.update(enrollment)
 				.set({

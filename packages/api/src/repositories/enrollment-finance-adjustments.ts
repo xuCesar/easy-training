@@ -1,25 +1,32 @@
 import {
-	createInvoiceFollowUpRecord,
+	ArrearsWorkflowError,
+	addArrearsNoteRecord,
 	EnrollmentFinanceAdjustmentError,
-	listArrearsRecords,
+	getArrearsDetailRecord,
+	listArrearsWorkflowRecords,
 	listEnrollmentAdjustmentCourseRecords,
 	listEnrollmentAdjustmentRecords,
 	listRefundRecords,
 	renewEnrollmentRecord,
 	transferEnrollmentRecord,
+	transitionArrearsCycleRecord,
 } from "@easy-training/db";
 import { ORPCError } from "@orpc/server";
 
 import type {
+	AddArrearsNoteInput,
+	ArrearsDetailInput,
+	ArrearsDetailResult,
+	ArrearsListInput,
 	ArrearsListResult,
-	CreateInvoiceFollowUpInput,
-	CreateInvoiceFollowUpResult,
+	ArrearsMutationResult,
 	CreateRefundInput,
 	EnrollmentAdjustmentListResult,
 	RenewEnrollmentInput,
 	RenewEnrollmentResult,
 	TransferEnrollmentInput,
 	TransferEnrollmentResult,
+	TransitionArrearsInput,
 } from "../contracts/training";
 
 const SHANGHAI_OFFSET_IN_MS = 8 * 60 * 60 * 1000;
@@ -101,6 +108,48 @@ function throwAdjustmentError(error: unknown): never {
 	}
 }
 
+function throwArrearsError(error: unknown): never {
+	if (!(error instanceof ArrearsWorkflowError)) {
+		throw new ORPCError("INTERNAL_SERVER_ERROR", {
+			message: "暂时无法处理欠费工作流，请稍后重试。",
+		});
+	}
+	switch (error.code) {
+		case "MEMBER_FORBIDDEN":
+		case "CAMPUS_OUT_OF_SCOPE":
+			throw new ORPCError("FORBIDDEN", { message: "当前账号无权操作该资源。" });
+		case "INVOICE_NOT_FOUND":
+			throw new ORPCError("NOT_FOUND", { message: "目标账单不存在。" });
+		case "INVALID_ARREARS_INPUT":
+			throw new ORPCError("BAD_REQUEST", { message: "请检查欠费状态信息。" });
+		case "CAMPUS_INACTIVE":
+			throw new ORPCError("CONFLICT", {
+				message: "校区已停用，不能继续操作。",
+			});
+		case "ARREARS_NOT_ACTIVE":
+			throw new ORPCError("CONFLICT", {
+				message: "该账单已结清或已退款，不能继续跟进。",
+			});
+		case "ARREARS_CYCLE_MISSING":
+			throw new ORPCError("CONFLICT", {
+				message: "账单欠费周期异常，请刷新后重试。",
+			});
+		case "ARREARS_VERSION_CONFLICT":
+			throw new ORPCError("CONFLICT", {
+				message: "欠费状态已被更新，请刷新后重试。",
+			});
+		case "ARREARS_TRANSITION_INVALID":
+		case "IDEMPOTENCY_CONFLICT":
+			throw new ORPCError("CONFLICT", {
+				message: "本次欠费操作与现有记录冲突。",
+			});
+		case "RESOURCE_UNAVAILABLE":
+			throw new ORPCError("CONFLICT", {
+				message: "相关资源暂不可用，请稍后重试。",
+			});
+	}
+}
+
 export async function listEnrollmentAdjustments(
 	scope: FinanceScope,
 ): Promise<EnrollmentAdjustmentListResult> {
@@ -151,40 +200,89 @@ export async function transferEnrollment(
 
 export async function listArrears(
 	scope: FinanceScope,
+	input: ArrearsListInput,
 ): Promise<ArrearsListResult> {
 	try {
-		const records = await listArrearsRecords({
+		const records = await listArrearsWorkflowRecords({
 			organizationId: scope.organizationId,
 			campusAccess: scope.campusAccess,
 			today: getShanghaiDate(),
+			...input,
 		});
 		return {
 			items: records.map((record) => ({
 				...record,
-				lastFollowUpAt: record.lastFollowUpAt?.toISOString() ?? null,
+				latestEvent: record.latestEvent
+					? {
+							...record.latestEvent,
+							createdAt: record.latestEvent.createdAt.toISOString(),
+						}
+					: null,
 			})),
 		};
 	} catch (error) {
-		return throwAdjustmentError(error);
+		return throwArrearsError(error);
 	}
 }
 
-export async function createInvoiceFollowUp(
+export async function getArrearsDetail(
 	scope: FinanceScope,
-	input: CreateInvoiceFollowUpInput,
-): Promise<CreateInvoiceFollowUpResult> {
+	input: ArrearsDetailInput,
+): Promise<ArrearsDetailResult> {
 	try {
-		const result = await createInvoiceFollowUpRecord({
+		const result = await getArrearsDetailRecord({
+			organizationId: scope.organizationId,
+			invoiceId: input.invoiceId,
+			campusAccess: scope.campusAccess,
+		});
+		return {
+			...result,
+			cycles: result.cycles.map((cycle) => ({
+				...cycle,
+				startedAt: cycle.startedAt.toISOString(),
+				resolvedAt: cycle.resolvedAt?.toISOString() ?? null,
+				createdAt: cycle.createdAt.toISOString(),
+				updatedAt: cycle.updatedAt.toISOString(),
+				events: cycle.events.map((event) => ({
+					...event,
+					createdAt: event.createdAt.toISOString(),
+				})),
+			})),
+		};
+	} catch (error) {
+		return throwArrearsError(error);
+	}
+}
+
+export async function transitionArrears(
+	scope: FinanceScope,
+	input: TransitionArrearsInput,
+): Promise<ArrearsMutationResult> {
+	try {
+		const result = await transitionArrearsCycleRecord({
 			organizationId: scope.organizationId,
 			operatorUserId: scope.userId,
-			invoiceId: input.invoiceId,
-			note: input.note,
-			followedUpAt: new Date(input.followedUpAt),
-			requestId: input.requestId,
+			...input,
 		});
-		return { ...result, followedUpAt: result.followedUpAt.toISOString() };
+		return { cycle: result.cycle, replayed: result.replayed };
 	} catch (error) {
-		return throwAdjustmentError(error);
+		return throwArrearsError(error);
+	}
+}
+
+export async function addArrearsNote(
+	scope: FinanceScope,
+	input: AddArrearsNoteInput,
+): Promise<ArrearsMutationResult> {
+	try {
+		const result = await addArrearsNoteRecord({
+			organizationId: scope.organizationId,
+			operatorUserId: scope.userId,
+			...input,
+		});
+		return { cycle: result.cycle, replayed: result.replayed };
+	} catch (error) {
+		return throwArrearsError(error);
 	}
 }
 

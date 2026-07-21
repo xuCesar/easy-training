@@ -464,6 +464,7 @@ const auditActionSchema = z.enum([
 	"refund_request_approved",
 	"refund_request_rejected",
 	"refund_request_cancelled",
+	"arrears_status_changed",
 ]);
 
 export const auditEventListInputSchema = z.object({
@@ -1179,6 +1180,42 @@ export const cancelRefundRequestInputSchema = z.object({
 
 export const cancelRefundRequestResultSchema = createRefundRequestResultSchema;
 
+export const arrearsStatusSchema = z.enum([
+	"pending",
+	"following_up",
+	"promised",
+	"paused",
+	"resolved",
+]);
+
+const arrearsCycleSchema = z.object({
+	id: z.uuid(),
+	cycleNumber: z.number().int().positive(),
+	status: arrearsStatusSchema,
+	version: z.number().int().positive(),
+	promisedPaymentDate: z.iso.date().nullable(),
+	resumeDate: z.iso.date().nullable(),
+});
+
+const arrearsEventSchema = z.object({
+	id: z.uuid(),
+	eventType: z.enum([
+		"cycle_started",
+		"status_changed",
+		"note_added",
+		"auto_resolved",
+	]),
+	fromStatus: arrearsStatusSchema.nullable(),
+	toStatus: arrearsStatusSchema.nullable(),
+	promisedPaymentDate: z.iso.date().nullable(),
+	resumeDate: z.iso.date().nullable(),
+	reason: z.string().nullable(),
+	note: z.string().nullable(),
+	operatorName: z.string().nullable(),
+	sourceType: z.string(),
+	createdAt: z.iso.datetime({ offset: true }),
+});
+
 const arrearsRecordSchema = z.object({
 	invoiceId: z.uuid(),
 	studentName: z.string(),
@@ -1190,27 +1227,97 @@ const arrearsRecordSchema = z.object({
 	outstandingAmountInCents: z.number().int().positive(),
 	dueDate: z.iso.date(),
 	isOverdue: z.boolean(),
-	lastFollowUpAt: z.iso.datetime({ offset: true }).nullable(),
-	lastFollowUpNote: z.string().nullable(),
-	lastFollowUpOperatorName: z.string().nullable(),
+	cycle: arrearsCycleSchema.pick({
+		id: true,
+		cycleNumber: true,
+		status: true,
+		version: true,
+		promisedPaymentDate: true,
+		resumeDate: true,
+	}),
+	latestEvent: z
+		.object({
+			eventType: arrearsEventSchema.shape.eventType,
+			operatorName: z.string().nullable(),
+			createdAt: z.iso.datetime({ offset: true }),
+		})
+		.nullable(),
+});
+
+export const arrearsListInputSchema = z.object({
+	status: arrearsStatusSchema.exclude(["resolved"]).optional(),
+	pausedWithoutResumeOnly: z.boolean().optional(),
 });
 
 export const arrearsListResultSchema = z.object({
 	items: z.array(arrearsRecordSchema),
 });
 
-export const createInvoiceFollowUpInputSchema = z.object({
+export const arrearsDetailInputSchema = z.object({
+	invoiceId: z.uuid(),
+});
+
+export const arrearsDetailResultSchema = z.object({
+	invoiceId: z.uuid(),
+	cycles: z.array(
+		arrearsCycleSchema.extend({
+			startedAt: z.iso.datetime({ offset: true }),
+			resolvedAt: z.iso.datetime({ offset: true }).nullable(),
+			createdAt: z.iso.datetime({ offset: true }),
+			updatedAt: z.iso.datetime({ offset: true }),
+			events: z.array(arrearsEventSchema),
+		}),
+	),
+});
+
+export const transitionArrearsInputSchema = z
+	.object({
+		invoiceId: z.uuid(),
+		toStatus: z.enum(["following_up", "promised", "paused"]),
+		promisedPaymentDate: z.iso.date().nullable().default(null),
+		resumeDate: z.iso.date().nullable().default(null),
+		reason: z.string().trim().max(500).nullable().default(null),
+		note: z.string().trim().max(500).nullable().default(null),
+		expectedVersion: z.number().int().positive(),
+		requestId: z.uuid(),
+	})
+	.superRefine((input, context) => {
+		if (input.toStatus === "promised" && !input.promisedPaymentDate) {
+			context.addIssue({
+				code: "custom",
+				message: "承诺付款日期不能为空。",
+				path: ["promisedPaymentDate"],
+			});
+		}
+		if (input.toStatus === "paused" && !input.reason?.trim()) {
+			context.addIssue({
+				code: "custom",
+				message: "暂停追缴时必须填写原因。",
+				path: ["reason"],
+			});
+		}
+		if (
+			input.toStatus === "following_up" &&
+			(input.promisedPaymentDate || input.resumeDate || input.reason)
+		) {
+			context.addIssue({
+				code: "custom",
+				message: "跟进中不接受承诺日期、恢复日期或暂停原因。",
+				path: ["toStatus"],
+			});
+		}
+	});
+
+export const addArrearsNoteInputSchema = z.object({
 	invoiceId: z.uuid(),
 	note: z.string().trim().min(1).max(500),
-	followedUpAt: z.iso.datetime({ offset: true }),
+	expectedVersion: z.number().int().positive(),
 	requestId: z.uuid(),
 });
 
-export const createInvoiceFollowUpResultSchema = z.object({
-	invoiceId: z.uuid(),
-	note: z.string(),
-	followedUpAt: z.iso.datetime({ offset: true }),
-	operatorName: z.string(),
+export const arrearsMutationResultSchema = z.object({
+	cycle: arrearsCycleSchema,
+	replayed: z.boolean(),
 });
 
 export type InvoiceListInput = z.infer<typeof invoiceListInputSchema>;
@@ -1276,12 +1383,14 @@ export type CancelRefundRequestResult = z.infer<
 	typeof cancelRefundRequestResultSchema
 >;
 export type ArrearsListResult = z.infer<typeof arrearsListResultSchema>;
-export type CreateInvoiceFollowUpInput = z.infer<
-	typeof createInvoiceFollowUpInputSchema
+export type ArrearsListInput = z.infer<typeof arrearsListInputSchema>;
+export type ArrearsDetailInput = z.infer<typeof arrearsDetailInputSchema>;
+export type ArrearsDetailResult = z.infer<typeof arrearsDetailResultSchema>;
+export type TransitionArrearsInput = z.infer<
+	typeof transitionArrearsInputSchema
 >;
-export type CreateInvoiceFollowUpResult = z.infer<
-	typeof createInvoiceFollowUpResultSchema
->;
+export type AddArrearsNoteInput = z.infer<typeof addArrearsNoteInputSchema>;
+export type ArrearsMutationResult = z.infer<typeof arrearsMutationResultSchema>;
 
 export const studentStatusSchema = z.enum([
 	"active",

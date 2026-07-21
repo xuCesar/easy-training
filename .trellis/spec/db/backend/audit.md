@@ -7,7 +7,7 @@
 ## 2. Signatures
 
 - 统一入口：`writeOrganizationAuditEvent(tx, { organizationId, action, entityType, entityId, actorUserId, targetUserId?, campusId?, before?, after? })`。
-- Action：`payment_created`、`payment_reversed`、`refund_created`、`refund_request_submitted`、`refund_request_approved`、`refund_request_rejected`、`refund_request_cancelled`、`enrollment_renewed`、`enrollment_transferred`、`lesson_completed`、`schedule_rule_created`、`schedule_rule_updated`、`schedule_rule_deactivated`、`schedule_rule_deleted`、`lessons_generated`、`lessons_bulk_rescheduled`、`lessons_bulk_cancelled`、`teacher_binding_changed`、`class_paused`、`class_resumed`、`classroom_created`、`classroom_updated`、`classroom_activated`、`classroom_deactivated`、`makeup_lesson_created`、`makeup_lesson_cancelled`、`makeup_lesson_needs_reschedule`，以及既有成员与机构操作 action。
+- Action：`payment_created`、`payment_reversed`、`refund_created`、`refund_request_submitted`、`refund_request_approved`、`refund_request_rejected`、`refund_request_cancelled`、`arrears_status_changed`、`enrollment_renewed`、`enrollment_transferred`、`lesson_completed`、`schedule_rule_created`、`schedule_rule_updated`、`schedule_rule_deactivated`、`schedule_rule_deleted`、`lessons_generated`、`lessons_bulk_rescheduled`、`lessons_bulk_cancelled`、`teacher_binding_changed`、`class_paused`、`class_resumed`、`classroom_created`、`classroom_updated`、`classroom_activated`、`classroom_deactivated`、`makeup_lesson_created`、`makeup_lesson_cancelled`、`makeup_lesson_needs_reschedule`，以及既有成员与机构操作 action。
 - 审计 action 为 `organization_audit_action` PostgreSQL enum；新增值必须同时修改 Drizzle schema、生成 migration、API `auditActionSchema` 和 Web 审计页筛选/标签。
 - 手工开单与账单调整使用 `manual_invoice_created`、`invoice_adjusted`；实体分别使用 `manualInvoiceCreation` 与 `invoiceAdjustment` UUID。
 
@@ -19,6 +19,7 @@
 - `before`/`after` 仅记录白名单业务字段。允许金额、日期、方法、课时、状态和关联 UUID/requestId；不得记录 token、联系方式、支付参考号、自由文本备注或退款原因。
 - 退款申请的 `reason` 以及批准意见、拒绝原因、取消原因只保存在 `refundRequest/refundRequestEvent`；中央审计仅保存申请/账单/退款 UUID、金额、状态、版本、操作者、校区和 requestId。
 - 收款冲正原因只保存在 `paymentReversal.reason`；中央审计 `payment_reversed` 仅保存原收款、账单、冲正金额、时间和 requestId。
+- 欠费周期使用 `arrears_status_changed`，实体为 `invoiceArrearsCycle` UUID；自动开启/解决使用空操作者，人工迁移记录操作者。中央审计只保存账单 UUID、周期号、前后状态、版本、来源或 requestId，不得复制承诺说明、暂停原因或跟进备注。
 - 班级停复课的原因写入 `classStatusEvent.reason`，审计快照只记录状态、`futureLessonPolicy`、受影响课次数量和 requestId；不得把原因或逐课次明细复制进审计 JSON。
 - 教室审计允许 `campusId/name/capacity/isActive` 快照；补课审计只记录来源课次、来源报名、目标课次、requestId 或状态迁移，不记录学员姓名、考勤备注或完整名单。
 - 目标课次取消、班级停课取消未来课次、规则停用取消未来课次，以及补课学员再次 `absent/leave` 时，从 `scheduled -> needs_reschedule` 的每条补课安排必须写 `makeup_lesson_needs_reschedule`；`after` 只包含状态、目标课次 UUID 与受控原因枚举。

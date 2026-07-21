@@ -13,11 +13,13 @@ import {
 	studentTimelineResultSchema,
 } from "../../api/src/contracts/training";
 import {
-	createInvoiceFollowUp,
+	addArrearsNote,
+	getArrearsDetail,
 	listArrears,
 	listEnrollmentAdjustments,
 	renewEnrollment,
 	transferEnrollment,
+	transitionArrears,
 } from "../../api/src/repositories/enrollment-finance-adjustments";
 import {
 	adjustInvoice,
@@ -37,6 +39,7 @@ import { getStudentTimeline } from "../../api/src/repositories/students";
 import { getTrainingDashboardSnapshot } from "../../api/src/repositories/training-dashboard";
 import { appRouter } from "../../api/src/routers";
 import { db } from "../src";
+import { startArrearsCycleIfNeeded } from "../src/repositories/arrears-workflow";
 import { listOrganizationAuditEvents } from "../src/repositories/operations";
 import {
 	campus,
@@ -46,6 +49,8 @@ import {
 	enrollmentTransfer,
 	invoice,
 	invoiceAdjustment,
+	invoiceArrearsCycle,
+	invoiceArrearsEvent,
 	invoiceFollowUp,
 	manualInvoiceCreation,
 	organization,
@@ -116,6 +121,12 @@ function getSessionId(userId: string) {
 
 async function cleanupFixture(ids: FixtureIds) {
 	const organizationIds = [ids.organizationA, ids.organizationB];
+	await db
+		.delete(invoiceArrearsEvent)
+		.where(inArray(invoiceArrearsEvent.organizationId, organizationIds));
+	await db
+		.delete(invoiceArrearsCycle)
+		.where(inArray(invoiceArrearsCycle.organizationId, organizationIds));
 	await db
 		.delete(refundRequestEvent)
 		.where(inArray(refundRequestEvent.organizationId, organizationIds));
@@ -405,6 +416,27 @@ async function seedFixture(ids: FixtureIds) {
 			dueDate: "2000-01-01",
 		},
 	]);
+	for (const invoiceId of [
+		ids.invoiceMain,
+		ids.invoiceConcurrent,
+		ids.invoiceIdempotent,
+		ids.invoiceLegacyOverdue,
+		ids.invoiceHistoricalPartial,
+		ids.invoiceHistoricalStatusPaid,
+		ids.invoiceB,
+	]) {
+		const organizationId =
+			invoiceId === ids.invoiceB ? ids.organizationB : ids.organizationA;
+		await db.transaction((tx) =>
+			startArrearsCycleIfNeeded(tx, {
+				organizationId,
+				invoiceId,
+				sourceType: "test_fixture",
+				sourceId: invoiceId,
+				occurredAt: new Date(),
+			}),
+		);
+	}
 }
 
 async function expectOrpcError(promise: Promise<unknown>, code: string) {
@@ -985,7 +1017,7 @@ test("手工开单与账单调整保持幂等、版本和报名金额隔离", as
 			status: "all",
 		});
 		assert.ok(matchingList.items.some((item) => item.id === created.invoiceId));
-		const manualArrears = (await listArrears(financeScope)).items.find(
+		const manualArrears = (await listArrears(financeScope, {})).items.find(
 			(item) => item.invoiceId === created.invoiceId,
 		);
 		assert.equal(manualArrears?.source, "manual");
@@ -1410,22 +1442,76 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 			"CONFLICT",
 		);
 
-		const arrears = await listArrears(financeScope);
+		const arrears = await listArrears(financeScope, {});
 		assert.ok(
 			arrears.items.some((item) => item.invoiceId === ids.invoiceIdempotent),
 		);
-		await createInvoiceFollowUp(financeScope, {
+		const arrearsItem = arrears.items.find(
+			(item) => item.invoiceId === ids.invoiceIdempotent,
+		);
+		assert.ok(arrearsItem);
+		const arrearsNoteInput = {
 			invoiceId: ids.invoiceIdempotent,
 			note: "已联系家长，周五前付款",
-			followedUpAt: minutesAgo(5),
+			expectedVersion: arrearsItem.cycle.version,
 			requestId: randomUUID(),
-		});
-		const arrearsAfterFollowUp = await listArrears(financeScope);
+		};
 		assert.equal(
-			arrearsAfterFollowUp.items.find(
-				(item) => item.invoiceId === ids.invoiceIdempotent,
-			)?.lastFollowUpNote,
+			(await addArrearsNote(financeScope, arrearsNoteInput)).replayed,
+			false,
+		);
+		assert.equal(
+			(await addArrearsNote(financeScope, arrearsNoteInput)).replayed,
+			true,
+		);
+		const arrearsAfterFollowUp = await getArrearsDetail(financeScope, {
+			invoiceId: ids.invoiceIdempotent,
+		});
+		assert.equal(
+			arrearsAfterFollowUp.cycles[0]?.events.at(-1)?.note,
 			"已联系家长，周五前付款",
+		);
+		const noteVersion = arrearsAfterFollowUp.cycles[0]?.version;
+		assert.ok(noteVersion);
+		const promisedInput = {
+			invoiceId: ids.invoiceIdempotent,
+			toStatus: "promised",
+			promisedPaymentDate: "2099-01-03",
+			resumeDate: null,
+			reason: null,
+			note: "家长确认付款计划",
+			expectedVersion: noteVersion,
+			requestId: randomUUID(),
+		} as const;
+		assert.equal(
+			(await transitionArrears(financeScope, promisedInput)).replayed,
+			false,
+		);
+		assert.equal(
+			(await transitionArrears(financeScope, promisedInput)).replayed,
+			true,
+		);
+		const promisedArrears = await listArrears(financeScope, {
+			status: "promised",
+		});
+		assert.equal(
+			promisedArrears.items.find(
+				(item) => item.invoiceId === ids.invoiceIdempotent,
+			)?.cycle.promisedPaymentDate,
+			"2099-01-03",
+		);
+		await expectOrpcError(
+			transitionArrears(financeScope, {
+				invoiceId: ids.invoiceIdempotent,
+				toStatus: "following_up",
+				promisedPaymentDate: null,
+				resumeDate: null,
+				reason: null,
+				note: null,
+				expectedVersion: noteVersion,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
 		);
 
 		await expectOrpcError(

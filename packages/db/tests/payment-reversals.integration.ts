@@ -21,6 +21,8 @@ import {
 	course,
 	enrollment,
 	invoice,
+	invoiceArrearsCycle,
+	invoiceArrearsEvent,
 	organization,
 	organizationAuditEvent,
 	organizationMember,
@@ -77,6 +79,12 @@ function userIds(ids: Ids) {
 
 async function cleanup(ids: Ids) {
 	const organizationIds = [ids.organizationA, ids.organizationB];
+	await db
+		.delete(invoiceArrearsEvent)
+		.where(inArray(invoiceArrearsEvent.organizationId, organizationIds));
+	await db
+		.delete(invoiceArrearsCycle)
+		.where(inArray(invoiceArrearsCycle.organizationId, organizationIds));
 	await db
 		.delete(refundRequestEvent)
 		.where(inArray(refundRequestEvent.organizationId, organizationIds));
@@ -509,6 +517,17 @@ test("收款冲正保持不可变流水、金额守恒、权限、幂等与并�
 		assert.equal(fullyReversedDetail.payments[0]?.amountInCents, 10_000);
 		assert.equal(fullyReversedDetail.payments[0]?.effectiveAmountInCents, 0);
 		assert.equal(fullyReversedDetail.payments[0]?.reversals.length, 3);
+		const firstCycleRows = await db
+			.select({
+				id: invoiceArrearsCycle.id,
+				cycleNumber: invoiceArrearsCycle.cycleNumber,
+				status: invoiceArrearsCycle.status,
+			})
+			.from(invoiceArrearsCycle)
+			.where(eq(invoiceArrearsCycle.invoiceId, ids.invoiceMain));
+		assert.equal(firstCycleRows.length, 1);
+		assert.equal(firstCycleRows[0]?.cycleNumber, 1);
+		assert.equal(firstCycleRows[0]?.status, "pending");
 		const [mainEnrollment] = await db
 			.select({ paidAmountInCents: enrollment.paidAmountInCents })
 			.from(enrollment)
@@ -527,6 +546,36 @@ test("收款冲正保持不可变流水、金额守恒、权限、幂等与并�
 		});
 		assert.equal(replacementDetail.invoice.paidAmountInCents, 4_000);
 		assert.equal(replacementDetail.invoice.status, "partial");
+		await pay(ids.organizationA, ids.finance, ids.invoiceMain, 6_000);
+		const [resolvedCycle] = await db
+			.select({
+				id: invoiceArrearsCycle.id,
+				status: invoiceArrearsCycle.status,
+				resolvedAt: invoiceArrearsCycle.resolvedAt,
+			})
+			.from(invoiceArrearsCycle)
+			.where(eq(invoiceArrearsCycle.invoiceId, ids.invoiceMain));
+		assert.equal(resolvedCycle?.status, "resolved");
+		assert.ok(resolvedCycle?.resolvedAt);
+		await createPaymentReversal(financeScope, {
+			paymentId: replacementPayment.payment.id,
+			amountInCents: 100,
+			reason: "结清后再次发现错误收款",
+			reversedAt: minutesAgo(8),
+			requestId: randomUUID(),
+		});
+		const reopenedCycles = await db
+			.select({
+				cycleNumber: invoiceArrearsCycle.cycleNumber,
+				status: invoiceArrearsCycle.status,
+			})
+			.from(invoiceArrearsCycle)
+			.where(eq(invoiceArrearsCycle.invoiceId, ids.invoiceMain))
+			.orderBy(invoiceArrearsCycle.cycleNumber);
+		assert.deepEqual(reopenedCycles, [
+			{ cycleNumber: 1, status: "resolved" },
+			{ cycleNumber: 2, status: "pending" },
+		]);
 
 		const concurrent = await Promise.allSettled([
 			createPaymentReversal(financeScope, {

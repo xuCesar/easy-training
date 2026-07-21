@@ -13,6 +13,7 @@ import {
 	studentContact,
 	user,
 } from "../schema";
+import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import type { CampusAccess } from "./organization";
 import { normalizeStudentPhone } from "./student-phone";
 
@@ -663,6 +664,13 @@ export async function convertLeadRecord(
 			if (!createdInvoice) {
 				throw new Error("Invoice creation did not return a record.");
 			}
+			await startArrearsCycleIfNeeded(tx, {
+				organizationId: input.organizationId,
+				invoiceId: createdInvoice.id,
+				sourceType: "enrollment_conversion",
+				sourceId: createdInvoice.id,
+				occurredAt: new Date(),
+			});
 
 			const [updatedLead] = await tx
 				.update(lead)

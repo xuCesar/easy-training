@@ -78,6 +78,7 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"refund_request_approved",
 	"refund_request_rejected",
 	"refund_request_cancelled",
+	"arrears_status_changed",
 ]);
 export const organizationNotificationType = pgEnum(
 	"organization_notification_type",
@@ -207,6 +208,19 @@ export const refundRequestAction = pgEnum("refund_request_action", [
 	"approved",
 	"rejected",
 	"cancelled",
+]);
+export const arrearsStatus = pgEnum("arrears_status", [
+	"pending",
+	"following_up",
+	"promised",
+	"paused",
+	"resolved",
+]);
+export const arrearsEventType = pgEnum("arrears_event_type", [
+	"cycle_started",
+	"status_changed",
+	"note_added",
+	"auto_resolved",
 ]);
 export const taskPriority = pgEnum("task_priority", ["high", "medium", "low"]);
 export const taskModule = pgEnum("task_module", [
@@ -1815,6 +1829,112 @@ export const invoiceFollowUp = pgTable(
 	],
 );
 
+export const invoiceArrearsCycle = pgTable(
+	"invoice_arrears_cycle",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id, { onDelete: "cascade" }),
+		cycleNumber: integer("cycle_number").notNull(),
+		status: arrearsStatus("status").default("pending").notNull(),
+		version: integer("version").default(1).notNull(),
+		startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+		resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+		promisedPaymentDate: date("promised_payment_date"),
+		resumeDate: date("resume_date"),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		check(
+			"invoice_arrears_cycle_number_positive_check",
+			sql`${table.cycleNumber} > 0`,
+		),
+		check(
+			"invoice_arrears_cycle_version_positive_check",
+			sql`${table.version} > 0`,
+		),
+		check(
+			"invoice_arrears_cycle_resolved_state_check",
+			sql`(${table.status} = 'resolved') = (${table.resolvedAt} IS NOT NULL)`,
+		),
+		uniqueIndex("invoice_arrears_cycle_org_invoice_number_uidx").on(
+			table.organizationId,
+			table.invoiceId,
+			table.cycleNumber,
+		),
+		uniqueIndex("invoice_arrears_cycle_org_invoice_open_uidx")
+			.on(table.organizationId, table.invoiceId)
+			.where(sql`${table.resolvedAt} IS NULL`),
+		index("invoice_arrears_cycle_org_campus_status_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.status,
+			table.updatedAt,
+		),
+	],
+);
+
+export const invoiceArrearsEvent = pgTable(
+	"invoice_arrears_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		cycleId: uuid("cycle_id")
+			.notNull()
+			.references(() => invoiceArrearsCycle.id, { onDelete: "cascade" }),
+		eventType: arrearsEventType("event_type").notNull(),
+		fromStatus: arrearsStatus("from_status"),
+		toStatus: arrearsStatus("to_status"),
+		promisedPaymentDate: date("promised_payment_date"),
+		resumeDate: date("resume_date"),
+		reason: text("reason"),
+		note: text("note"),
+		operatorUserId: text("operator_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		operatorName: text("operator_name"),
+		sourceType: text("source_type").notNull(),
+		sourceId: uuid("source_id"),
+		requestId: uuid("request_id"),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("invoice_arrears_event_org_request_uidx")
+			.on(table.organizationId, table.requestId)
+			.where(sql`${table.requestId} IS NOT NULL`),
+		uniqueIndex("invoice_arrears_event_org_source_uidx")
+			.on(
+				table.organizationId,
+				table.sourceType,
+				table.sourceId,
+				table.eventType,
+			)
+			.where(sql`${table.sourceId} IS NOT NULL`),
+		index("invoice_arrears_event_org_cycle_created_idx").on(
+			table.organizationId,
+			table.cycleId,
+			table.createdAt,
+		),
+	],
+);
+
 export const operationTask = pgTable(
 	"operation_task",
 	{
@@ -1924,6 +2044,7 @@ export const invoiceRelations = relations(invoice, ({ many }) => ({
 	refunds: many(refund),
 	refundRequests: many(refundRequest),
 	followUps: many(invoiceFollowUp),
+	arrearsCycles: many(invoiceArrearsCycle),
 	manualCreations: many(manualInvoiceCreation),
 	adjustments: many(invoiceAdjustment),
 }));
@@ -2008,6 +2129,27 @@ export const invoiceFollowUpRelations = relations(
 		invoice: one(invoice, {
 			fields: [invoiceFollowUp.invoiceId],
 			references: [invoice.id],
+		}),
+	}),
+);
+
+export const invoiceArrearsCycleRelations = relations(
+	invoiceArrearsCycle,
+	({ one, many }) => ({
+		invoice: one(invoice, {
+			fields: [invoiceArrearsCycle.invoiceId],
+			references: [invoice.id],
+		}),
+		events: many(invoiceArrearsEvent),
+	}),
+);
+
+export const invoiceArrearsEventRelations = relations(
+	invoiceArrearsEvent,
+	({ one }) => ({
+		cycle: one(invoiceArrearsCycle, {
+			fields: [invoiceArrearsEvent.cycleId],
+			references: [invoiceArrearsCycle.id],
 		}),
 	}),
 );

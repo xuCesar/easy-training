@@ -1,8 +1,10 @@
 import {
-	createInvoiceFollowUpInputSchema,
+	type ArrearsListResult,
+	addArrearsNoteInputSchema,
 	type EnrollmentAdjustmentListResult,
 	renewEnrollmentInputSchema,
 	transferEnrollmentInputSchema,
+	transitionArrearsInputSchema,
 } from "@easy-training/api/contracts/training";
 import { Button } from "@easy-training/ui/components/button";
 import {
@@ -13,7 +15,11 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@easy-training/ui/components/dialog";
-import { Field, FieldLabel } from "@easy-training/ui/components/field";
+import {
+	Field,
+	FieldError,
+	FieldLabel,
+} from "@easy-training/ui/components/field";
 import { Input } from "@easy-training/ui/components/input";
 import {
 	Select,
@@ -39,10 +45,12 @@ import { orpc, queryClient } from "@/utils/orpc";
 import { formatCentsToCurrency, formatDate, formatDateTime } from "./format";
 
 type Adjustment = EnrollmentAdjustmentListResult["items"][number];
+type ArrearsItem = ArrearsListResult["items"][number];
+type ArrearsFilterStatus = "pending" | "following_up" | "promised" | "paused";
 type Action =
 	| { kind: "renew"; enrollment: Adjustment }
 	| { kind: "transfer"; enrollment: Adjustment }
-	| { kind: "followUp"; invoiceId: string; studentName: string }
+	| { kind: "arrears"; item: ArrearsItem }
 	| null;
 
 export function FinanceAdjustments({
@@ -51,9 +59,18 @@ export function FinanceAdjustments({
 	organizationId: string;
 }) {
 	const [action, setAction] = useState<Action>(null);
+	const [arrearsStatusFilter, setArrearsStatusFilter] =
+		useState<ArrearsFilterStatus | null>(null);
+	const [pausedWithoutResumeOnly, setPausedWithoutResumeOnly] = useState(false);
 	const adjustmentsOptions =
 		orpc.training.finance.adjustments.list.queryOptions();
-	const arrearsOptions = orpc.training.finance.arrears.list.queryOptions();
+	const arrearsInput = {
+		...(arrearsStatusFilter ? { status: arrearsStatusFilter } : {}),
+		...(pausedWithoutResumeOnly ? { pausedWithoutResumeOnly: true } : {}),
+	};
+	const arrearsOptions = orpc.training.finance.arrears.list.queryOptions({
+		input: arrearsInput,
+	});
 	const adjustmentsQuery = useQuery({
 		...adjustmentsOptions,
 		queryKey: [...adjustmentsOptions.queryKey, { organizationId }],
@@ -141,14 +158,53 @@ export function FinanceAdjustments({
 					)}
 				</article>
 				<article className="min-w-0 border" aria-labelledby="arrears-title">
-					<header className="flex min-w-0 items-center justify-between gap-3 border-b px-4 py-3">
-						<div className="min-w-0">
-							<h2 id="arrears-title" className="font-semibold text-sm">
-								欠费跟进
-							</h2>
-							<p className="mt-1 text-muted-foreground text-xs">按到期日排序</p>
+					<header className="border-b px-4 py-3">
+						<div className="flex min-w-0 items-center justify-between gap-3">
+							<div className="min-w-0">
+								<h2 id="arrears-title" className="font-semibold text-sm">
+									欠费跟进
+								</h2>
+								<p className="mt-1 text-muted-foreground text-xs">
+									按到期日排序
+								</p>
+							</div>
+							<ClockAlertIcon className="size-4 text-muted-foreground" />
 						</div>
-						<ClockAlertIcon className="size-4 text-muted-foreground" />
+						<div className="mt-3 flex flex-wrap gap-2">
+							<Select
+								value={arrearsStatusFilter ?? "all"}
+								onValueChange={(value) =>
+									setArrearsStatusFilter(
+										value === "all" ? null : (value as ArrearsFilterStatus),
+									)
+								}
+							>
+								<SelectTrigger
+									aria-label="筛选欠费状态"
+									className="h-8 w-28 text-xs"
+								>
+									<SelectValue>全部状态</SelectValue>
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="all">全部状态</SelectItem>
+									<SelectItem value="pending">待跟进</SelectItem>
+									<SelectItem value="following_up">跟进中</SelectItem>
+									<SelectItem value="promised">承诺付款</SelectItem>
+									<SelectItem value="paused">暂停追缴</SelectItem>
+								</SelectContent>
+							</Select>
+							<Button
+								type="button"
+								variant={pausedWithoutResumeOnly ? "secondary" : "outline"}
+								size="xs"
+								aria-pressed={pausedWithoutResumeOnly}
+								onClick={() =>
+									setPausedWithoutResumeOnly((current) => !current)
+								}
+							>
+								长期暂停
+							</Button>
+						</div>
 					</header>
 					{arrearsQuery.isPending ? (
 						<PanelLoading />
@@ -159,7 +215,7 @@ export function FinanceAdjustments({
 						/>
 					) : (
 						<div className="divide-y">
-							{arrearsQuery.data.items.slice(0, 4).map((item) => (
+							{arrearsQuery.data.items.map((item) => (
 								<div key={item.invoiceId} className="min-w-0 p-3">
 									<div className="flex items-start justify-between gap-3">
 										<div className="min-w-0">
@@ -178,23 +234,38 @@ export function FinanceAdjustments({
 										</span>
 									</div>
 									<div className="mt-2 flex items-center justify-between gap-2">
-										<span className="min-w-0 truncate text-muted-foreground text-xs">
-											{item.lastFollowUpAt
-												? `${formatDateTime(item.lastFollowUpAt)} · ${item.lastFollowUpNote}`
-												: "尚未跟进"}
-										</span>
+										<div className="min-w-0 text-muted-foreground text-xs">
+											<p className="truncate">
+												{getArrearsStatusLabel(item.cycle.status)} ·{" "}
+												{item.latestEvent
+													? `${formatDateTime(item.latestEvent.createdAt)}${item.latestEvent.operatorName ? ` · ${item.latestEvent.operatorName}` : ""}`
+													: "尚未操作"}
+											</p>
+											{item.cycle.promisedPaymentDate ? (
+												<p className="mt-1">
+													承诺付款：{formatDate(item.cycle.promisedPaymentDate)}
+												</p>
+											) : null}
+											{item.cycle.status === "paused" ? (
+												<p className="mt-1">
+													恢复跟进：
+													{item.cycle.resumeDate
+														? formatDate(item.cycle.resumeDate)
+														: "未设置"}
+												</p>
+											) : null}
+										</div>
 										<Button
 											variant="ghost"
 											size="xs"
 											onClick={() =>
 												setAction({
-													kind: "followUp",
-													invoiceId: item.invoiceId,
-													studentName: item.studentName,
+													kind: "arrears",
+													item,
 												})
 											}
 										>
-											记录
+											处理
 										</Button>
 									</div>
 								</div>
@@ -219,12 +290,8 @@ export function FinanceAdjustments({
 					onClose={() => setAction(null)}
 				/>
 			) : null}
-			{action?.kind === "followUp" ? (
-				<FollowUpDialog
-					invoiceId={action.invoiceId}
-					studentName={action.studentName}
-					onClose={() => setAction(null)}
-				/>
+			{action?.kind === "arrears" ? (
+				<ArrearsDialog item={action.item} onClose={() => setAction(null)} />
 			) : null}
 		</>
 	);
@@ -430,79 +497,251 @@ function TransferDialog({
 	);
 }
 
-function FollowUpDialog({
-	invoiceId,
-	studentName,
+function ArrearsDialog({
+	item,
 	onClose,
 }: {
-	invoiceId: string;
-	studentName: string;
+	item: ArrearsItem;
 	onClose: () => void;
 }) {
+	const [mode, setMode] = useState<"status" | "note">("status");
+	const [targetStatus, setTargetStatus] = useState<
+		"following_up" | "promised" | "paused"
+	>("following_up");
+	const [promisedPaymentDate, setPromisedPaymentDate] = useState("");
+	const [resumeDate, setResumeDate] = useState("");
+	const [reason, setReason] = useState("");
 	const [note, setNote] = useState("");
+	const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 	const [requestId] = useState(() => crypto.randomUUID());
-	const mutation = useMutation(
-		orpc.training.finance.arrears.followUp.mutationOptions({
+	const detailOptions = orpc.training.finance.arrears.detail.queryOptions({
+		input: { invoiceId: item.invoiceId },
+	});
+	const detailQuery = useQuery(detailOptions);
+	const transitionMutation = useMutation(
+		orpc.training.finance.arrears.transition.mutationOptions({
 			onSuccess: async () => {
-				toast.success("欠费跟进已记录");
+				toast.success("欠费状态已更新");
+				await invalidateFinanceChangeQueries();
+				onClose();
+			},
+			onError: (error) => toast.error(`更新失败：${error.message}`),
+		}),
+	);
+	const noteMutation = useMutation(
+		orpc.training.finance.arrears.addNote.mutationOptions({
+			onSuccess: async () => {
+				toast.success("欠费记录已保存");
 				await invalidateFinanceChangeQueries();
 				onClose();
 			},
 			onError: (error) => toast.error(`记录失败：${error.message}`),
 		}),
 	);
+	const isPending = transitionMutation.isPending || noteMutation.isPending;
 	function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		const input = createInvoiceFollowUpInputSchema.safeParse({
-			invoiceId,
-			note,
-			followedUpAt: new Date().toISOString(),
+		setFieldErrors({});
+		if (mode === "note") {
+			const result = addArrearsNoteInputSchema.safeParse({
+				invoiceId: item.invoiceId,
+				note,
+				expectedVersion: item.cycle.version,
+				requestId,
+			});
+			if (!result.success) {
+				setFieldErrors(toFieldErrors(result.error));
+				return;
+			}
+			noteMutation.mutate(result.data);
+			return;
+		}
+		const result = transitionArrearsInputSchema.safeParse({
+			invoiceId: item.invoiceId,
+			toStatus: targetStatus,
+			promisedPaymentDate: promisedPaymentDate || null,
+			resumeDate: resumeDate || null,
+			reason: reason || null,
+			note: note || null,
+			expectedVersion: item.cycle.version,
 			requestId,
 		});
-		if (!input.success) return toast.error("请填写跟进记录");
-		mutation.mutate(input.data);
+		if (!result.success) {
+			setFieldErrors(toFieldErrors(result.error));
+			return;
+		}
+		transitionMutation.mutate(result.data);
 	}
 	return (
-		<Dialog
-			open
-			onOpenChange={(open) => !open && !mutation.isPending && onClose()}
-		>
-			<DialogContent>
+		<Dialog open onOpenChange={(open) => !open && !isPending && onClose()}>
+			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
 				<DialogHeader>
-					<DialogTitle>记录欠费跟进</DialogTitle>
-					<DialogDescription>{studentName}</DialogDescription>
+					<DialogTitle>处理欠费</DialogTitle>
+					<DialogDescription>
+						{item.studentName} ·{" "}
+						{formatCentsToCurrency(item.outstandingAmountInCents)}· 当前为
+						{getArrearsStatusLabel(item.cycle.status)}
+					</DialogDescription>
 				</DialogHeader>
+				<div className="flex gap-2">
+					<Button
+						type="button"
+						size="sm"
+						variant={mode === "status" ? "default" : "outline"}
+						disabled={isPending}
+						onClick={() => setMode("status")}
+					>
+						变更状态
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant={mode === "note" ? "default" : "outline"}
+						disabled={isPending}
+						onClick={() => setMode("note")}
+					>
+						追加记录
+					</Button>
+				</div>
 				<form className="grid gap-4" onSubmit={submit}>
-					<Field>
-						<FieldLabel htmlFor="arrears-note">本次记录</FieldLabel>
+					{mode === "status" ? (
+						<>
+							<Field invalid={Boolean(fieldErrors.toStatus)}>
+								<FieldLabel htmlFor="arrears-status">目标状态</FieldLabel>
+								<Select
+									value={targetStatus}
+									onValueChange={(value) =>
+										setTargetStatus(
+											value as "following_up" | "promised" | "paused",
+										)
+									}
+								>
+									<SelectTrigger id="arrears-status" className="w-full">
+										<SelectValue>
+											{getArrearsStatusLabel(targetStatus)}
+										</SelectValue>
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="following_up">跟进中</SelectItem>
+										<SelectItem value="promised">承诺付款</SelectItem>
+										<SelectItem value="paused">暂停追缴</SelectItem>
+									</SelectContent>
+								</Select>
+								<FieldError>{fieldErrors.toStatus}</FieldError>
+							</Field>
+							{targetStatus === "promised" ? (
+								<Field invalid={Boolean(fieldErrors.promisedPaymentDate)}>
+									<FieldLabel htmlFor="arrears-promised-date">
+										承诺付款日期
+									</FieldLabel>
+									<Input
+										id="arrears-promised-date"
+										type="date"
+										min={getShanghaiToday()}
+										value={promisedPaymentDate}
+										onChange={(event) =>
+											setPromisedPaymentDate(event.target.value)
+										}
+										aria-invalid={Boolean(fieldErrors.promisedPaymentDate)}
+									/>
+									<FieldError>{fieldErrors.promisedPaymentDate}</FieldError>
+								</Field>
+							) : null}
+							{targetStatus === "paused" ? (
+								<>
+									<Field invalid={Boolean(fieldErrors.reason)}>
+										<FieldLabel htmlFor="arrears-pause-reason">
+											暂停原因
+										</FieldLabel>
+										<Textarea
+											id="arrears-pause-reason"
+											value={reason}
+											onChange={(event) => setReason(event.target.value)}
+											maxLength={500}
+											aria-invalid={Boolean(fieldErrors.reason)}
+										/>
+										<FieldError>{fieldErrors.reason}</FieldError>
+									</Field>
+									<Field invalid={Boolean(fieldErrors.resumeDate)}>
+										<FieldLabel htmlFor="arrears-resume-date">
+											恢复跟进日期（可选）
+										</FieldLabel>
+										<Input
+											id="arrears-resume-date"
+											type="date"
+											min={getShanghaiToday()}
+											value={resumeDate}
+											onChange={(event) => setResumeDate(event.target.value)}
+											aria-invalid={Boolean(fieldErrors.resumeDate)}
+										/>
+										<FieldError>{fieldErrors.resumeDate}</FieldError>
+									</Field>
+								</>
+							) : null}
+						</>
+					) : null}
+					<Field invalid={Boolean(fieldErrors.note)}>
+						<FieldLabel htmlFor="arrears-note">
+							{mode === "note" ? "本次记录" : "补充说明（可选）"}
+						</FieldLabel>
 						<Textarea
 							id="arrears-note"
 							value={note}
 							onChange={(event) => setNote(event.target.value)}
 							maxLength={500}
-							required
+							aria-invalid={Boolean(fieldErrors.note)}
 						/>
+						<FieldError>{fieldErrors.note}</FieldError>
 					</Field>
 					<DialogFooter>
 						<Button
 							type="button"
 							variant="outline"
 							onClick={onClose}
-							disabled={mutation.isPending}
+							disabled={isPending}
 						>
 							取消
 						</Button>
-						<Button type="submit" disabled={mutation.isPending}>
-							{mutation.isPending ? (
+						<Button type="submit" disabled={isPending}>
+							{isPending ? (
 								<LoaderCircleIcon
 									className="animate-spin"
 									data-icon="inline-start"
 								/>
 							) : null}
-							{mutation.isPending ? "提交中" : "保存记录"}
+							{isPending ? "提交中" : mode === "note" ? "保存记录" : "确认更新"}
 						</Button>
 					</DialogFooter>
 				</form>
+				<div className="border-t pt-4">
+					<h3 className="font-medium text-sm">欠费历史</h3>
+					{detailQuery.isPending ? (
+						<p className="mt-2 text-muted-foreground text-xs">正在加载历史…</p>
+					) : null}
+					{detailQuery.isError ? (
+						<p className="mt-2 text-destructive text-xs">
+							历史加载失败，可关闭后重试。
+						</p>
+					) : null}
+					<div className="mt-2 space-y-3">
+						{detailQuery.data?.cycles.map((cycle) => (
+							<div key={cycle.id} className="border-l pl-3 text-xs">
+								<p className="font-medium">
+									第 {cycle.cycleNumber} 轮 ·{" "}
+									{getArrearsStatusLabel(cycle.status)}
+								</p>
+								{cycle.events.map((entry) => (
+									<p key={entry.id} className="mt-1 text-muted-foreground">
+										{formatDateTime(entry.createdAt)} ·{" "}
+										{getArrearsEventLabel(entry.eventType)}
+										{entry.note ? ` · ${entry.note}` : ""}
+										{entry.reason ? ` · ${entry.reason}` : ""}
+									</p>
+								))}
+							</div>
+						))}
+					</div>
+				</div>
 			</DialogContent>
 		</Dialog>
 	);
@@ -531,6 +770,49 @@ function EmptyRow({ text }: { text: string }) {
 	return (
 		<p className="p-5 text-center text-muted-foreground text-sm">{text}</p>
 	);
+}
+function getArrearsStatusLabel(
+	status: "pending" | "following_up" | "promised" | "paused" | "resolved",
+) {
+	switch (status) {
+		case "pending":
+			return "待跟进";
+		case "following_up":
+			return "跟进中";
+		case "promised":
+			return "承诺付款";
+		case "paused":
+			return "暂停追缴";
+		case "resolved":
+			return "已解决";
+	}
+}
+function getArrearsEventLabel(
+	eventType:
+		| "cycle_started"
+		| "status_changed"
+		| "note_added"
+		| "auto_resolved",
+) {
+	switch (eventType) {
+		case "cycle_started":
+			return "开启欠费周期";
+		case "status_changed":
+			return "变更状态";
+		case "note_added":
+			return "追加记录";
+		case "auto_resolved":
+			return "自动解决";
+	}
+}
+function toFieldErrors(error: {
+	issues: Array<{ path: PropertyKey[]; message: string }>;
+}) {
+	return error.issues.reduce<Record<string, string>>((result, issue) => {
+		const key = issue.path[0];
+		if (typeof key === "string" && !result[key]) result[key] = issue.message;
+		return result;
+	}, {});
 }
 function parseYuanToCents(value: string): number | null {
 	const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());

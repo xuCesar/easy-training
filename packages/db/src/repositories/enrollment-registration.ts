@@ -18,6 +18,7 @@ import {
 	studentContact,
 	user,
 } from "../schema";
+import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
 import { normalizeStudentPhone } from "./student-phone";
@@ -749,6 +750,13 @@ export async function createIndependentEnrollmentRecord(
 				.returning({ id: enrollmentRegistration.id });
 			if (!registration)
 				throw new EnrollmentRegistrationError("RESOURCE_UNAVAILABLE");
+			await startArrearsCycleIfNeeded(tx, {
+				organizationId: input.organizationId,
+				invoiceId: createdInvoice.id,
+				sourceType: "enrollment_registration",
+				sourceId: registration.id,
+				occurredAt: new Date(),
+			});
 
 			await writeOrganizationAuditEvent(tx, {
 				organizationId: input.organizationId,

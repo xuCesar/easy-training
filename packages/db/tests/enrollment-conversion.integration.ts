@@ -18,8 +18,11 @@ import {
 	course,
 	enrollment,
 	invoice,
+	invoiceArrearsCycle,
+	invoiceArrearsEvent,
 	lead,
 	organization,
+	organizationAuditEvent,
 	student,
 	teacher,
 	user,
@@ -76,6 +79,15 @@ type FixtureIds = ReturnType<typeof createFixtureIds>;
 async function cleanupFixture(ids: FixtureIds) {
 	const organizationIds = [ids.organizationA, ids.organizationB];
 
+	await db
+		.delete(invoiceArrearsEvent)
+		.where(inArray(invoiceArrearsEvent.organizationId, organizationIds));
+	await db
+		.delete(invoiceArrearsCycle)
+		.where(inArray(invoiceArrearsCycle.organizationId, organizationIds));
+	await db
+		.delete(organizationAuditEvent)
+		.where(inArray(organizationAuditEvent.organizationId, organizationIds));
 	await db
 		.delete(invoice)
 		.where(inArray(invoice.organizationId, organizationIds));

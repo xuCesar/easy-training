@@ -27,6 +27,10 @@ import {
 	student,
 	user,
 } from "../schema";
+import {
+	resolveArrearsCycleIfNeeded,
+	startArrearsCycleIfNeeded,
+} from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
 import { updateEnrollmentPaidAmount } from "./enrollment-finance-adjustments";
 import {
@@ -637,6 +641,13 @@ export async function createPaymentRecord(
 					invoiceRecord.enrollmentId,
 				);
 			}
+			await resolveArrearsCycleIfNeeded(tx, {
+				organizationId: input.organizationId,
+				invoiceId: invoiceRecord.id,
+				sourceType: "payment",
+				sourceId: createdPayment.id,
+				occurredAt: input.receivedAt,
+			});
 
 			await writeOrganizationAuditEvent(tx, {
 				organizationId: input.organizationId,
@@ -1070,6 +1081,13 @@ export async function createManualInvoiceRecord(
 					dueDate: input.dueDate,
 					requestId: input.requestId,
 				},
+			});
+			await startArrearsCycleIfNeeded(tx, {
+				organizationId: input.organizationId,
+				invoiceId: createdInvoice.id,
+				sourceType: "manual_invoice_creation",
+				sourceId: creation.id,
+				occurredAt: new Date(),
 			});
 			return { invoiceId: createdInvoice.id, replayed: false };
 		});
