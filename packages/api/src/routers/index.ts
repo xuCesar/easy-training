@@ -51,6 +51,8 @@ import {
 	createManualInvoiceResultSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
+	createPaymentReversalInputSchema,
+	createPaymentReversalResultSchema,
 	createRefundRequestInputSchema,
 	createRefundRequestResultSchema,
 	createScheduleRuleInputSchema,
@@ -238,6 +240,7 @@ import {
 	updateCampus,
 	updateMember,
 } from "../repositories/organization-management";
+import { createPaymentReversal } from "../repositories/payment-reversals";
 import {
 	cancelRefundRequest,
 	createRefundRequest,
@@ -1535,6 +1538,20 @@ export const appRouter = {
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
 								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+			paymentReversals: {
+				create: financeProcedure
+					.input(createPaymentReversalInputSchema)
+					.output(createPaymentReversalResultSchema)
+					.handler(({ context, input }) =>
+						createPaymentReversal(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
 							},
 							input,
 						),

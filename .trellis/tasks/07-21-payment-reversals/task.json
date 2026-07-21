@@ -3,7 +3,7 @@
   "name": "payment-reversals",
   "title": "收款冲正闭环",
   "description": "以不可变相反流水实现错误收款冲正及金额重算。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",

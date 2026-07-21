@@ -28,11 +28,16 @@ import {
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import { updateEnrollmentPaidAmount } from "./enrollment-finance-adjustments";
 import {
 	type FinanceTransaction,
 	getCurrentFinanceWriteCampusAccess,
 } from "./finance-access";
 import type { CampusAccess } from "./organization";
+import {
+	listPaymentReversalRecords,
+	type PaymentReversalRecord,
+} from "./payment-reversals";
 
 export type FinanceErrorCode =
 	| "INVOICE_NOT_FOUND"
@@ -129,7 +134,6 @@ export type PaymentRecord = {
 export type CreatePaymentRecordInput = {
 	organizationId: string;
 	operatorUserId: string;
-	campusAccess: CampusAccess;
 	invoiceId: string;
 	amountInCents: number;
 	receivedAt: Date;
@@ -319,6 +323,7 @@ export async function getInvoiceDetailRecord(input: {
 }): Promise<{
 	invoice: InvoiceRecord;
 	payments: PaymentRecord[];
+	paymentReversals: PaymentReversalRecord[];
 	adjustments: InvoiceAdjustmentRecord[];
 } | null> {
 	const [invoiceRecord] = await db
@@ -358,7 +363,7 @@ export async function getInvoiceDetailRecord(input: {
 		return null;
 	}
 
-	const [payments, adjustments] = await Promise.all([
+	const [payments, paymentReversals, adjustments] = await Promise.all([
 		db
 			.select(paymentRecordSelection)
 			.from(payment)
@@ -373,6 +378,10 @@ export async function getInvoiceDetailRecord(input: {
 				desc(payment.createdAt),
 				desc(payment.id),
 			),
+		listPaymentReversalRecords({
+			organizationId: input.organizationId,
+			invoiceId: input.id,
+		}),
 		db
 			.select(invoiceAdjustmentRecordSelection)
 			.from(invoiceAdjustment)
@@ -385,7 +394,7 @@ export async function getInvoiceDetailRecord(input: {
 			.orderBy(desc(invoiceAdjustment.createdAt), desc(invoiceAdjustment.id)),
 	]);
 
-	return { invoice: invoiceRecord, payments, adjustments };
+	return { invoice: invoiceRecord, payments, paymentReversals, adjustments };
 }
 
 function paymentPayloadMatches(
@@ -477,6 +486,14 @@ export async function createPaymentRecord(
 
 	try {
 		const paymentId = await db.transaction(async (tx) => {
+			const currentCampusAccess = await getCurrentFinanceWriteCampusAccess(
+				tx,
+				{
+					organizationId: input.organizationId,
+					userId: input.operatorUserId,
+				},
+				() => new FinanceError("MEMBER_FORBIDDEN"),
+			);
 			const [invoiceRecord] = await tx
 				.select({
 					id: invoice.id,
@@ -506,7 +523,7 @@ export async function createPaymentRecord(
 					and(
 						eq(student.id, invoiceRecord.studentId),
 						eq(student.organizationId, input.organizationId),
-						campusAccessCondition(input.campusAccess),
+						campusAccessCondition(currentCampusAccess),
 					),
 				)
 				.limit(1)
@@ -614,31 +631,11 @@ export async function createPaymentRecord(
 				);
 
 			if (invoiceRecord.enrollmentId) {
-				const [snapshot] = await tx
-					.select({
-						value:
-							sql<number>`coalesce(sum(${invoice.paidAmountInCents}), 0)`.mapWith(
-								Number,
-							),
-					})
-					.from(invoice)
-					.where(
-						and(
-							eq(invoice.organizationId, input.organizationId),
-							eq(invoice.enrollmentId, invoiceRecord.enrollmentId),
-							ne(invoice.status, "refunded"),
-							inArray(invoice.source, ["enrollment", "renewal"]),
-						),
-					);
-				await tx
-					.update(enrollment)
-					.set({ paidAmountInCents: snapshot?.value ?? 0 })
-					.where(
-						and(
-							eq(enrollment.id, invoiceRecord.enrollmentId),
-							eq(enrollment.organizationId, input.organizationId),
-						),
-					);
+				await updateEnrollmentPaidAmount(
+					tx,
+					input.organizationId,
+					invoiceRecord.enrollmentId,
+				);
 			}
 
 			await writeOrganizationAuditEvent(tx, {

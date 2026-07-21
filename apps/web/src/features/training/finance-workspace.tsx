@@ -54,6 +54,7 @@ import {
 	LoaderCircleIcon,
 	PencilLineIcon,
 	ReceiptTextIcon,
+	RotateCcwIcon,
 	SearchIcon,
 	XIcon,
 } from "lucide-react";
@@ -74,6 +75,7 @@ import { invalidateFinanceQueries } from "./finance-query-utils";
 import { formatCentsToCurrency, formatDate, formatDateTime } from "./format";
 import { InvoiceAdjustmentDialog } from "./invoice-adjustment-dialog";
 import { ManualInvoiceDialog } from "./manual-invoice-dialog";
+import { PaymentReversalDialog } from "./payment-reversal-dialog";
 import { RefundApprovalPanel } from "./refund-approval-panel";
 
 type InvoiceSummary = InvoiceListResult["items"][number];
@@ -499,6 +501,9 @@ function InvoiceDetailContent({
 	onPaymentPendingChange: (pending: boolean) => void;
 }) {
 	const { invoice } = detail;
+	const [reversalTarget, setReversalTarget] = useState<
+		InvoiceDetail["payments"][number] | null
+	>(null);
 	const payments = [...detail.payments].sort(
 		(left, right) =>
 			new Date(right.receivedAt).getTime() -
@@ -646,9 +651,25 @@ function InvoiceDetailContent({
 											{payment.operatorName}
 										</p>
 									</div>
-									<span className="shrink-0 font-semibold tabular-nums">
-										{formatCentsToCurrency(payment.amountInCents)}
-									</span>
+									<div className="shrink-0 text-right tabular-nums">
+										<p className="font-semibold">
+											{formatCentsToCurrency(payment.amountInCents)}
+										</p>
+										{payment.reversedAmountInCents > 0 ? (
+											<>
+												<p className="mt-1 text-destructive text-xs">
+													已冲正 -
+													{formatCentsToCurrency(payment.reversedAmountInCents)}
+												</p>
+												<p className="text-muted-foreground text-xs">
+													有效{" "}
+													{formatCentsToCurrency(
+														payment.effectiveAmountInCents,
+													)}
+												</p>
+											</>
+										) : null}
+									</div>
 								</div>
 								{payment.referenceNo ? (
 									<p className="mt-2 break-all text-muted-foreground text-xs">
@@ -660,6 +681,50 @@ function InvoiceDetailContent({
 										备注：{payment.note}
 									</p>
 								) : null}
+								{payment.reversals.length > 0 ? (
+									<ol className="mt-3 divide-y border-t text-xs">
+										{payment.reversals.map((reversal) => (
+											<li key={reversal.id} className="py-2">
+												<div className="flex items-start justify-between gap-3">
+													<div className="min-w-0">
+														<p className="font-medium">冲正记录</p>
+														<p className="mt-1 break-words text-muted-foreground">
+															{reversal.reason}
+														</p>
+														<p className="mt-1 text-muted-foreground">
+															{formatDateTime(reversal.reversedAt)} ·{" "}
+															{reversal.operatorName}
+														</p>
+													</div>
+													<span className="shrink-0 font-medium text-destructive tabular-nums">
+														-{formatCentsToCurrency(reversal.amountInCents)}
+													</span>
+												</div>
+											</li>
+										))}
+									</ol>
+								) : null}
+								<div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+									{payment.effectiveAmountInCents <= 0 ? (
+										<span className="text-muted-foreground text-xs">
+											该收款已全部冲正
+										</span>
+									) : detail.refunds.length > 0 ? (
+										<span className="text-muted-foreground text-xs">
+											账单已有退款，不能冲正
+										</span>
+									) : (
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											onClick={() => setReversalTarget(payment)}
+										>
+											<RotateCcwIcon data-icon="inline-start" />
+											冲正
+										</Button>
+									)}
+								</div>
 							</li>
 						))}
 					</ol>
@@ -713,6 +778,14 @@ function InvoiceDetailContent({
 					</div>
 				)}
 			</section>
+			{reversalTarget ? (
+				<PaymentReversalDialog
+					payment={reversalTarget}
+					onClose={() => setReversalTarget(null)}
+					onReversed={() => setReversalTarget(null)}
+					onPendingChange={onPaymentPendingChange}
+				/>
+			) : null}
 		</div>
 	);
 }

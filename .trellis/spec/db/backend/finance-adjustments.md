@@ -11,10 +11,11 @@
 - `createRefundRequestRecord({ invoiceId, amountInCents, refundedAt, method, reason, requestId })`
 - `decideRefundRequestRecord({ refundRequestId, action, comment, expectedVersion, requestId })`
 - `cancelRefundRequestRecord({ refundRequestId, reason, expectedVersion, requestId })`
+- `createPaymentReversalRecord({ paymentId, amountInCents, reason, reversedAt, requestId })`
 - `listArrearsRecords({ organizationId, campusAccess, today })`
 - `createInvoiceFollowUpRecord({ invoiceId, note, followedUpAt, requestId })`
 
-持久化事实：`enrollmentRenewal`、`enrollmentTransfer`、`refundRequest`、`refundRequestEvent`、批准后生成的 `refund`、`invoiceFollowUp`。所有 request ID 在机构内唯一；`payment` 与 `lessonConsumption` 均不可被这些操作删除或改写。
+持久化事实：`enrollmentRenewal`、`enrollmentTransfer`、`refundRequest`、`refundRequestEvent`、批准后生成的 `refund`、`paymentReversal`、`invoiceFollowUp`。所有 request ID 在机构内唯一；`payment` 与 `lessonConsumption` 均不可被这些操作删除或改写。
 
 ## 3. Contracts
 
@@ -24,6 +25,9 @@
 - 同一账单最多一条待审批申请；待审批不改变或预占余额。批准时重新锁定申请与账单、复核版本/权限/校区/最新余额，并在同一事务创建唯一退款、更新账单与报名累计已收。全额退款才将账单标记为 `refunded`。
 - 申请人可取消自己的待审批申请；`admin/owner` 可取消任意待审批申请。拒绝原因和管理员取消他人的原因必填，终态不可回退。
 - 欠费定义为非 `refunded` 且 `amountInCents > paidAmountInCents` 的账单；跟进是追加记录，列表投影最新一条。
+- 冲正只引用具体 `payment`，允许多次部分冲正但累计不得超过原收款；原收款始终保留，单笔有效金额为原金额减累计冲正。历史只有账单已收快照、没有具体 `payment` 的金额不可冲正。
+- 冲正与实际退款互斥：账单存在任意批准退款事实时禁止冲正；冲正降低账单已收投影并重算状态/`paidAt`，重新产生待收后只能创建新的 `payment`，不得恢复原收款。
+- 收款、冲正和退款批准必须在事务内重读财务角色与校区范围，并共享机构锁、账单锁和报名累计已收重算 helper；相同冲正 requestId 同载荷返回原事实，异载荷冲突。
 - 续费、转课和退款成功时，在相同事务内分别写入 `enrollment_renewed`、`enrollment_transferred`、`refund_created`；退款申请另写 `refund_request_submitted/approved/rejected/cancelled`。审计实体使用对应不可变流水 UUID，且 before/after 不得包含申请原因或操作意见。
 
 ## 4. Validation & Error Matrix
@@ -35,6 +39,8 @@
 | 来源报名已转出、无剩余课时或同课程转课 | `ENROLLMENT_NOT_ACTIVE` / `TRANSFER_NO_REMAINING_LESSONS` / `TRANSFER_SAME_COURSE` | `CONFLICT` |
 | 来源有未结清账单 | `TRANSFER_OUTSTANDING_INVOICE` | `CONFLICT` |
 | 非已结清账单、超额、已有待审批或重复请求 | `INVOICE_NOT_REFUNDABLE` / `REFUND_EXCEEDS_PAID` / `PENDING_REQUEST_EXISTS` / `IDEMPOTENCY_CONFLICT` | `CONFLICT` |
+| 原收款不存在、已全额冲正或本次超额 | `PAYMENT_NOT_FOUND` / `PAYMENT_ALREADY_REVERSED` / `REVERSAL_EXCEEDS_AVAILABLE` | `NOT_FOUND` / `CONFLICT` |
+| 账单已有退款或资金投影陈旧 | `INVOICE_HAS_REFUND` / `REVERSAL_STALE_STATE` | `CONFLICT` |
 | 非管理员审批、申请人自审或无权取消 | `MEMBER_FORBIDDEN` / `SELF_APPROVAL_FORBIDDEN` / `CANCELLATION_FORBIDDEN` | `FORBIDDEN` |
 | 终态、陈旧版本或批准时余额变化 | `REQUEST_NOT_PENDING` / `REQUEST_VERSION_CONFLICT` / `REFUND_EXCEEDS_PAID` | `CONFLICT` |
 | 已结清或已退款账单的跟进 | `FOLLOW_UP_NOT_ALLOWED` | `CONFLICT` |
@@ -50,6 +56,8 @@
 - PostgreSQL 集成测试覆盖续费重放/并发、来源欠费阻断转课、课时守恒、跨机构/角色/校区拒绝。
 - 覆盖四种财务角色申请、仅管理员决策、自审拒绝、取消原因、单待审批、部分/全额退款、退款上限及全额退款后拒绝收款。
 - 覆盖创建/决策幂等、同请求异载荷、并发创建/决策、撤权、跨租户/校区、停用校区、版本陈旧和批准时余额变化完整回滚。
+- 覆盖部分/多次/全部冲正、超额与全额后再次冲正、历史无 payment、退款互斥、撤权、跨租户/校区和停用校区。
+- 覆盖冲正幂等、并发累计上限、冲正与新收款竞态、冲正与退款批准竞态，以及账单/报名/欠费/审计原子一致。
 - API 契约测试应断言时间为 ISO 带时区字符串、金额为整数分、错误映射不泄露内部错误。
 - 断言成功、幂等重放和冲突路径的审计数量分别为一、一、零；退款重放比较还必须覆盖 invoiceId 与 refundedAt。
 

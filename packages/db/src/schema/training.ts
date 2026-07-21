@@ -40,6 +40,7 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"member_access_changed",
 	"member_removed",
 	"payment_created",
+	"payment_reversed",
 	"refund_created",
 	"enrollment_renewed",
 	"enrollment_transferred",
@@ -1602,6 +1603,52 @@ export const payment = pgTable(
 	],
 );
 
+export const paymentReversal = pgTable(
+	"payment_reversal",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		paymentId: uuid("payment_id")
+			.notNull()
+			.references(() => payment.id),
+		amountInCents: integer("amount_in_cents").notNull(),
+		reason: text("reason").notNull(),
+		reversedAt: timestamp("reversed_at", { withTimezone: true }).notNull(),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		operatorName: text("operator_name").notNull(),
+		requestId: uuid("request_id").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		check(
+			"payment_reversal_amount_positive_check",
+			sql`${table.amountInCents} > 0`,
+		),
+		uniqueIndex("payment_reversal_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("payment_reversal_org_payment_reversed_idx").on(
+			table.organizationId,
+			table.paymentId,
+			table.reversedAt,
+			table.id,
+		),
+	],
+);
+
 export const refund = pgTable(
 	"refund",
 	{
@@ -1873,6 +1920,7 @@ export const studentTagAssignmentRelations = relations(
 
 export const invoiceRelations = relations(invoice, ({ many }) => ({
 	payments: many(payment),
+	paymentReversals: many(paymentReversal),
 	refunds: many(refund),
 	refundRequests: many(refundRequest),
 	followUps: many(invoiceFollowUp),
@@ -1900,12 +1948,27 @@ export const invoiceAdjustmentRelations = relations(
 	}),
 );
 
-export const paymentRelations = relations(payment, ({ one }) => ({
+export const paymentRelations = relations(payment, ({ one, many }) => ({
 	invoice: one(invoice, {
 		fields: [payment.invoiceId],
 		references: [invoice.id],
 	}),
+	reversals: many(paymentReversal),
 }));
+
+export const paymentReversalRelations = relations(
+	paymentReversal,
+	({ one }) => ({
+		invoice: one(invoice, {
+			fields: [paymentReversal.invoiceId],
+			references: [invoice.id],
+		}),
+		payment: one(payment, {
+			fields: [paymentReversal.paymentId],
+			references: [payment.id],
+		}),
+	}),
+);
 
 export const refundRelations = relations(refund, ({ one }) => ({
 	invoice: one(invoice, {

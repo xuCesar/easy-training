@@ -426,6 +426,7 @@ const auditActionSchema = z.enum([
 	"member_access_changed",
 	"member_removed",
 	"payment_created",
+	"payment_reversed",
 	"refund_created",
 	"enrollment_renewed",
 	"enrollment_transferred",
@@ -850,12 +851,24 @@ const invoiceSummarySchema = z.object({
 const paymentRecordSchema = z.object({
 	id: z.uuid(),
 	amountInCents: z.number().int().positive(),
+	reversedAmountInCents: z.number().int().nonnegative(),
+	effectiveAmountInCents: z.number().int().nonnegative(),
 	receivedAt: z.iso.datetime({ offset: true }),
 	method: paymentMethodSchema,
 	referenceNo: z.string().nullable(),
 	note: z.string().nullable(),
 	operatorName: z.string(),
 	createdAt: z.iso.datetime({ offset: true }),
+	reversals: z.array(
+		z.object({
+			id: z.uuid(),
+			amountInCents: z.number().int().positive(),
+			reason: z.string(),
+			reversedAt: z.iso.datetime({ offset: true }),
+			operatorName: z.string(),
+			createdAt: z.iso.datetime({ offset: true }),
+		}),
+	),
 });
 
 const refundRecordSchema = z.object({
@@ -996,6 +1009,40 @@ export const createPaymentInputSchema = z
 
 export const createPaymentResultSchema = z.object({
 	payment: paymentRecordSchema,
+});
+
+export const createPaymentReversalInputSchema = z.object({
+	paymentId: z.uuid(),
+	amountInCents: z.number().int().min(1).max(100_000_000),
+	reason: z.string().trim().min(1, "请填写冲正原因").max(500),
+	reversedAt: z.iso.datetime({ offset: true }),
+	requestId: z.uuid(),
+});
+
+export const createPaymentReversalResultSchema = z.object({
+	reversal: z.object({
+		id: z.uuid(),
+		invoiceId: z.uuid(),
+		paymentId: z.uuid(),
+		amountInCents: z.number().int().positive(),
+		reason: z.string(),
+		reversedAt: z.iso.datetime({ offset: true }),
+		operatorName: z.string(),
+		createdAt: z.iso.datetime({ offset: true }),
+	}),
+	payment: z.object({
+		id: z.uuid(),
+		originalAmountInCents: z.number().int().positive(),
+		reversedAmountInCents: z.number().int().nonnegative(),
+		effectiveAmountInCents: z.number().int().nonnegative(),
+	}),
+	invoice: z.object({
+		id: z.uuid(),
+		paidAmountInCents: z.number().int().nonnegative(),
+		status: invoiceSettlementStatusSchema,
+		paidAt: z.iso.datetime({ offset: true }).nullable(),
+	}),
+	replayed: z.boolean(),
 });
 
 const enrollmentAdjustmentSchema = z.object({
@@ -1184,6 +1231,12 @@ export type AdjustInvoiceInput = z.infer<typeof adjustInvoiceInputSchema>;
 export type AdjustInvoiceResult = z.infer<typeof adjustInvoiceResultSchema>;
 export type CreatePaymentInput = z.infer<typeof createPaymentInputSchema>;
 export type CreatePaymentResult = z.infer<typeof createPaymentResultSchema>;
+export type CreatePaymentReversalInput = z.infer<
+	typeof createPaymentReversalInputSchema
+>;
+export type CreatePaymentReversalResult = z.infer<
+	typeof createPaymentReversalResultSchema
+>;
 export type EnrollmentAdjustmentListResult = z.infer<
 	typeof enrollmentAdjustmentListResultSchema
 >;

@@ -19,6 +19,7 @@ export * from "./repositories/leads";
 export * from "./repositories/operations";
 export * from "./repositories/organization";
 export * from "./repositories/organization-management";
+export * from "./repositories/payment-reversals";
 export * from "./repositories/refund-approval";
 export * from "./repositories/scheduling";
 export * from "./repositories/student-merge";

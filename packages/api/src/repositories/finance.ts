@@ -9,6 +9,7 @@ import {
 	listInvoiceRecords,
 	listManualInvoiceOptionRecords,
 	type PaymentRecord,
+	type PaymentReversalRecord,
 } from "@easy-training/db";
 import { ORPCError } from "@orpc/server";
 import type {
@@ -118,16 +119,39 @@ function toDatabasePaymentMethod(
 	return method === "bankTransfer" ? "bank_transfer" : method;
 }
 
-function toPayment(record: PaymentRecord) {
+function toPayment(
+	record: PaymentRecord,
+	reversals: PaymentReversalRecord[] = [],
+) {
+	const paymentReversals = reversals
+		.filter((reversal) => reversal.paymentId === record.id)
+		.map((reversal) => ({
+			id: reversal.id,
+			amountInCents: reversal.amountInCents,
+			reason: reversal.reason,
+			reversedAt: reversal.reversedAt.toISOString(),
+			operatorName: reversal.operatorName,
+			createdAt: reversal.createdAt.toISOString(),
+		}));
+	const reversedAmountInCents = paymentReversals.reduce(
+		(total, reversal) => total + reversal.amountInCents,
+		0,
+	);
 	return {
 		id: record.id,
 		amountInCents: record.amountInCents,
+		reversedAmountInCents,
+		effectiveAmountInCents: Math.max(
+			record.amountInCents - reversedAmountInCents,
+			0,
+		),
 		receivedAt: record.receivedAt.toISOString(),
 		method: toPaymentMethod(record.method),
 		referenceNo: record.referenceNo,
 		note: record.note,
 		operatorName: record.operatorName,
 		createdAt: record.createdAt.toISOString(),
+		reversals: paymentReversals,
 	};
 }
 
@@ -249,9 +273,12 @@ export async function getInvoiceDetail(
 		}
 
 		const invoiceSummary = toInvoiceSummary(result.invoice, getShanghaiDate());
+		const payments = result.payments.map((paymentRecord) =>
+			toPayment(paymentRecord, result.paymentReversals),
+		);
 		return {
 			invoice: invoiceSummary,
-			payments: result.payments.map(toPayment),
+			payments,
 			refunds: await getInvoiceRefunds(scope, input.id),
 			adjustments: result.adjustments.map(toInvoiceAdjustment),
 			capabilities: {
@@ -267,8 +294,9 @@ export async function getInvoiceDetail(
 			},
 			historicalPaidAmountInCents: Math.max(
 				invoiceSummary.paidAmountInCents -
-					result.payments.reduce(
-						(total, paymentRecord) => total + paymentRecord.amountInCents,
+					payments.reduce(
+						(total, paymentRecord) =>
+							total + paymentRecord.effectiveAmountInCents,
 						0,
 					),
 				0,
@@ -348,7 +376,6 @@ export async function createPayment(
 		const result = await createPaymentRecord({
 			organizationId: scope.organizationId,
 			operatorUserId: scope.userId,
-			campusAccess: scope.campusAccess ?? { kind: "all" },
 			invoiceId: input.invoiceId,
 			amountInCents: input.amountInCents,
 			receivedAt: new Date(input.receivedAt),
