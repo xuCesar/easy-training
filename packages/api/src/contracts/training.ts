@@ -465,6 +465,9 @@ const auditActionSchema = z.enum([
 	"refund_request_rejected",
 	"refund_request_cancelled",
 	"arrears_status_changed",
+	"receipt_generated",
+	"receipt_voided",
+	"receipt_reissued",
 ]);
 
 export const auditEventListInputSchema = z.object({
@@ -849,6 +852,13 @@ const invoiceSummarySchema = z.object({
 	version: z.number().int().positive(),
 });
 
+export const receiptSummarySchema = z.object({
+	id: z.uuid(),
+	number: z.string(),
+	status: z.enum(["active", "voided"]),
+	generatedAt: z.iso.datetime({ offset: true }),
+});
+
 const paymentRecordSchema = z.object({
 	id: z.uuid(),
 	amountInCents: z.number().int().positive(),
@@ -870,6 +880,80 @@ const paymentRecordSchema = z.object({
 			createdAt: z.iso.datetime({ offset: true }),
 		}),
 	),
+	receipt: receiptSummarySchema.nullable(),
+});
+
+const receiptDocumentSchema = z.object({
+	id: z.uuid(),
+	number: z.string().regex(/^RCP-\d{6}-\d{6}$/),
+	status: z.enum(["active", "voided"]),
+	snapshotVersion: z.number().int().positive(),
+	organizationName: z.string(),
+	campusName: z.string(),
+	studentId: z.uuid(),
+	studentName: z.string(),
+	invoiceId: z.uuid(),
+	invoiceSummary: z.string(),
+	invoiceAmountInCents: z.number().int().nonnegative(),
+	title: z.string(),
+	note: z.string().nullable(),
+	replacesReceiptId: z.uuid().nullable(),
+	generatedByName: z.string(),
+	generatedAt: z.iso.datetime({ offset: true }),
+	voidReason: z.string().nullable(),
+	voidedByName: z.string().nullable(),
+	voidedAt: z.iso.datetime({ offset: true }).nullable(),
+});
+
+export const receiptDocumentViewSchema = z.object({
+	document: receiptDocumentSchema,
+	payments: z.array(
+		z.object({
+			paymentId: z.uuid(),
+			amountInCents: z.number().int().positive(),
+			receivedAt: z.iso.datetime({ offset: true }),
+			method: paymentMethodSchema,
+			referenceNo: z.string().nullable(),
+		}),
+	),
+	currentFinancialStatus: z.object({
+		payments: z.array(
+			z.object({
+				paymentId: z.uuid(),
+				reversedAmountInCents: z.number().int().nonnegative(),
+				effectiveAmountInCents: z.number().int().nonnegative(),
+			}),
+		),
+		invoiceRefundedAmountInCents: z.number().int().nonnegative(),
+		queriedAt: z.iso.datetime({ offset: true }),
+	}),
+});
+
+export const generateReceiptDocumentInputSchema = z.object({
+	paymentIds: z.array(z.uuid()).length(1),
+	title: z.string().trim().min(1).max(100),
+	note: z.string().trim().max(500).nullable().default(null),
+	requestId: z.uuid(),
+});
+export const receiptDocumentMutationResultSchema = z.object({
+	receiptId: z.uuid(),
+	replayed: z.boolean(),
+});
+export const getReceiptDocumentInputSchema = z.object({ receiptId: z.uuid() });
+export const getReceiptByPaymentInputSchema = z.object({ paymentId: z.uuid() });
+export const getReceiptByPaymentResultSchema = z.object({
+	receipt: receiptSummarySchema.nullable(),
+});
+export const voidReceiptDocumentInputSchema = z.object({
+	receiptId: z.uuid(),
+	reason: z.string().trim().min(1).max(500),
+	requestId: z.uuid(),
+});
+export const reissueReceiptDocumentInputSchema = z.object({
+	replacesReceiptId: z.uuid(),
+	title: z.string().trim().min(1).max(100),
+	note: z.string().trim().max(500).nullable().default(null),
+	requestId: z.uuid(),
 });
 
 const refundRecordSchema = z.object({
@@ -1324,6 +1408,28 @@ export type InvoiceListInput = z.infer<typeof invoiceListInputSchema>;
 export type InvoiceListResult = z.infer<typeof invoiceListResultSchema>;
 export type InvoiceDetailInput = z.infer<typeof invoiceDetailInputSchema>;
 export type InvoiceDetail = z.infer<typeof invoiceDetailSchema>;
+export type ReceiptDocumentView = z.infer<typeof receiptDocumentViewSchema>;
+export type GenerateReceiptDocumentInput = z.infer<
+	typeof generateReceiptDocumentInputSchema
+>;
+export type GetReceiptDocumentInput = z.infer<
+	typeof getReceiptDocumentInputSchema
+>;
+export type GetReceiptByPaymentInput = z.infer<
+	typeof getReceiptByPaymentInputSchema
+>;
+export type GetReceiptByPaymentResult = z.infer<
+	typeof getReceiptByPaymentResultSchema
+>;
+export type VoidReceiptDocumentInput = z.infer<
+	typeof voidReceiptDocumentInputSchema
+>;
+export type ReissueReceiptDocumentInput = z.infer<
+	typeof reissueReceiptDocumentInputSchema
+>;
+export type ReceiptDocumentMutationResult = z.infer<
+	typeof receiptDocumentMutationResultSchema
+>;
 export type ManualInvoiceOptionsInput = z.infer<
 	typeof manualInvoiceOptionsInputSchema
 >;

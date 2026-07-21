@@ -8,6 +8,7 @@ import {
 	type InvoiceRecord,
 	listInvoiceRecords,
 	listManualInvoiceOptionRecords,
+	listReceiptSummariesByPaymentIds,
 	type PaymentRecord,
 	type PaymentReversalRecord,
 } from "@easy-training/db";
@@ -122,6 +123,12 @@ function toDatabasePaymentMethod(
 function toPayment(
 	record: PaymentRecord,
 	reversals: PaymentReversalRecord[] = [],
+	receipt?: {
+		id: string;
+		number: string;
+		status: "active" | "voided";
+		generatedAt: Date;
+	},
 ) {
 	const paymentReversals = reversals
 		.filter((reversal) => reversal.paymentId === record.id)
@@ -152,6 +159,9 @@ function toPayment(
 		operatorName: record.operatorName,
 		createdAt: record.createdAt.toISOString(),
 		reversals: paymentReversals,
+		receipt: receipt
+			? { ...receipt, generatedAt: receipt.generatedAt.toISOString() }
+			: null,
 	};
 }
 
@@ -273,8 +283,16 @@ export async function getInvoiceDetail(
 		}
 
 		const invoiceSummary = toInvoiceSummary(result.invoice, getShanghaiDate());
+		const receiptSummaries = await listReceiptSummariesByPaymentIds({
+			organizationId: scope.organizationId,
+			paymentIds: result.payments.map((item) => item.id),
+		});
 		const payments = result.payments.map((paymentRecord) =>
-			toPayment(paymentRecord, result.paymentReversals),
+			toPayment(
+				paymentRecord,
+				result.paymentReversals,
+				receiptSummaries.get(paymentRecord.id),
+			),
 		);
 		return {
 			invoice: invoiceSummary,

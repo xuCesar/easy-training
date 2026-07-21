@@ -1,1 +1,70 @@
 @import "@easy-training/ui/globals.css";
+
+@media print {
+	@page {
+		size: auto;
+		margin: 12mm;
+	}
+
+	body.receipt-printing {
+		background: #fff;
+	}
+
+	body.receipt-printing * {
+		visibility: hidden;
+	}
+
+	body.receipt-printing .receipt-print-shell {
+		position: static;
+		inset: auto;
+		width: auto;
+		max-width: none;
+		max-height: none;
+		transform: none;
+		overflow: visible;
+		border: 0;
+		background: #fff;
+		padding: 0;
+		box-shadow: none;
+	}
+
+	body.receipt-printing .receipt-print-root,
+	body.receipt-printing .receipt-print-root * {
+		visibility: visible;
+	}
+
+	body.receipt-printing .receipt-print-root {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		color: #000;
+		background: #fff;
+		print-color-adjust: exact;
+	}
+
+	body.receipt-printing .receipt-print-root table {
+		min-width: 0;
+	}
+
+	body.receipt-printing .receipt-payment-table {
+		display: block;
+	}
+
+	body.receipt-printing .receipt-payment-cards {
+		display: none;
+	}
+
+	body.receipt-printing .receipt-print-root thead {
+		display: table-header-group;
+	}
+
+	body.receipt-printing .receipt-print-root tr {
+		break-inside: avoid;
+	}
+
+	body.receipt-printing .receipt-print-controls,
+	body.receipt-printing [data-sonner-toaster] {
+		display: none;
+	}
+}

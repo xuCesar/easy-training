@@ -1,5 +1,6 @@
 import { relations, sql } from "drizzle-orm";
 import {
+	type AnyPgColumn,
 	boolean,
 	check,
 	date,
@@ -8,6 +9,7 @@ import {
 	jsonb,
 	pgEnum,
 	pgTable,
+	primaryKey,
 	text,
 	timestamp,
 	uniqueIndex,
@@ -79,6 +81,9 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"refund_request_rejected",
 	"refund_request_cancelled",
 	"arrears_status_changed",
+	"receipt_generated",
+	"receipt_voided",
+	"receipt_reissued",
 ]);
 export const organizationNotificationType = pgEnum(
 	"organization_notification_type",
@@ -222,6 +227,7 @@ export const arrearsEventType = pgEnum("arrears_event_type", [
 	"note_added",
 	"auto_resolved",
 ]);
+export const receiptStatus = pgEnum("receipt_status", ["active", "voided"]);
 export const taskPriority = pgEnum("task_priority", ["high", "medium", "low"]);
 export const taskModule = pgEnum("task_module", [
 	"enrollment",
@@ -1663,6 +1669,153 @@ export const paymentReversal = pgTable(
 	],
 );
 
+export const receiptNumberCounter = pgTable(
+	"receipt_number_counter",
+	{
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		yearMonth: text("year_month").notNull(),
+		lastSequence: integer("last_sequence").notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.organizationId, table.yearMonth] }),
+		check(
+			"receipt_number_counter_sequence_positive_check",
+			sql`${table.lastSequence} > 0`,
+		),
+		check(
+			"receipt_number_counter_year_month_check",
+			sql`${table.yearMonth} ~ '^[0-9]{6}$'`,
+		),
+	],
+);
+
+export const receiptDocument = pgTable(
+	"receipt_document",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		number: text("number").notNull(),
+		yearMonth: text("year_month").notNull(),
+		sequence: integer("sequence").notNull(),
+		status: receiptStatus("status").default("active").notNull(),
+		generationRequestId: uuid("generation_request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		snapshotVersion: integer("snapshot_version").default(1).notNull(),
+		organizationName: text("organization_name").notNull(),
+		campusName: text("campus_name").notNull(),
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id),
+		studentName: text("student_name").notNull(),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		invoiceSummary: text("invoice_summary").notNull(),
+		invoiceAmountInCents: integer("invoice_amount_in_cents").notNull(),
+		title: text("title").notNull(),
+		note: text("note"),
+		replacesReceiptId: uuid("replaces_receipt_id").references(
+			(): AnyPgColumn => receiptDocument.id,
+		),
+		generatedByUserId: text("generated_by_user_id")
+			.notNull()
+			.references(() => user.id),
+		generatedByName: text("generated_by_name").notNull(),
+		generatedAt: timestamp("generated_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		voidReason: text("void_reason"),
+		voidedByUserId: text("voided_by_user_id").references(() => user.id),
+		voidedByName: text("voided_by_name"),
+		voidedAt: timestamp("voided_at", { withTimezone: true }),
+		voidRequestId: uuid("void_request_id"),
+	},
+	(table) => [
+		check(
+			"receipt_document_sequence_positive_check",
+			sql`${table.sequence} > 0`,
+		),
+		check(
+			"receipt_document_snapshot_version_positive_check",
+			sql`${table.snapshotVersion} > 0`,
+		),
+		check(
+			"receipt_document_void_state_check",
+			sql`(${table.status} = 'active' AND ${table.voidReason} IS NULL AND ${table.voidedByUserId} IS NULL AND ${table.voidedByName} IS NULL AND ${table.voidedAt} IS NULL AND ${table.voidRequestId} IS NULL) OR (${table.status} = 'voided' AND ${table.voidReason} IS NOT NULL AND ${table.voidedByUserId} IS NOT NULL AND ${table.voidedByName} IS NOT NULL AND ${table.voidedAt} IS NOT NULL AND ${table.voidRequestId} IS NOT NULL)`,
+		),
+		uniqueIndex("receipt_document_org_number_uidx").on(
+			table.organizationId,
+			table.number,
+		),
+		uniqueIndex("receipt_document_org_month_sequence_uidx").on(
+			table.organizationId,
+			table.yearMonth,
+			table.sequence,
+		),
+		uniqueIndex("receipt_document_org_generation_request_uidx").on(
+			table.organizationId,
+			table.generationRequestId,
+		),
+		uniqueIndex("receipt_document_org_void_request_uidx")
+			.on(table.organizationId, table.voidRequestId)
+			.where(sql`${table.voidRequestId} IS NOT NULL`),
+		index("receipt_document_org_invoice_generated_idx").on(
+			table.organizationId,
+			table.invoiceId,
+			table.generatedAt,
+		),
+	],
+);
+
+export const receiptDocumentPayment = pgTable(
+	"receipt_document_payment",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		receiptId: uuid("receipt_id")
+			.notNull()
+			.references(() => receiptDocument.id, { onDelete: "cascade" }),
+		paymentId: uuid("payment_id")
+			.notNull()
+			.references(() => payment.id),
+		amountInCents: integer("amount_in_cents").notNull(),
+		receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+		method: paymentMethod("method").notNull(),
+		referenceNo: text("reference_no"),
+		isActive: boolean("is_active").default(true).notNull(),
+	},
+	(table) => [
+		check(
+			"receipt_document_payment_amount_positive_check",
+			sql`${table.amountInCents} > 0`,
+		),
+		uniqueIndex("receipt_document_payment_receipt_payment_uidx").on(
+			table.receiptId,
+			table.paymentId,
+		),
+		uniqueIndex("receipt_document_payment_org_payment_active_uidx")
+			.on(table.organizationId, table.paymentId)
+			.where(sql`${table.isActive} = true`),
+		index("receipt_document_payment_org_receipt_idx").on(
+			table.organizationId,
+			table.receiptId,
+		),
+	],
+);
+
 export const refund = pgTable(
 	"refund",
 	{
@@ -2047,6 +2200,7 @@ export const invoiceRelations = relations(invoice, ({ many }) => ({
 	arrearsCycles: many(invoiceArrearsCycle),
 	manualCreations: many(manualInvoiceCreation),
 	adjustments: many(invoiceAdjustment),
+	receipts: many(receiptDocument),
 }));
 
 export const manualInvoiceCreationRelations = relations(
@@ -2075,7 +2229,38 @@ export const paymentRelations = relations(payment, ({ one, many }) => ({
 		references: [invoice.id],
 	}),
 	reversals: many(paymentReversal),
+	receiptLinks: many(receiptDocumentPayment),
 }));
+
+export const receiptDocumentRelations = relations(
+	receiptDocument,
+	({ one, many }) => ({
+		invoice: one(invoice, {
+			fields: [receiptDocument.invoiceId],
+			references: [invoice.id],
+		}),
+		payments: many(receiptDocumentPayment),
+		replaces: one(receiptDocument, {
+			fields: [receiptDocument.replacesReceiptId],
+			references: [receiptDocument.id],
+			relationName: "receiptReplacement",
+		}),
+	}),
+);
+
+export const receiptDocumentPaymentRelations = relations(
+	receiptDocumentPayment,
+	({ one }) => ({
+		receipt: one(receiptDocument, {
+			fields: [receiptDocumentPayment.receiptId],
+			references: [receiptDocument.id],
+		}),
+		payment: one(payment, {
+			fields: [receiptDocumentPayment.paymentId],
+			references: [payment.id],
+		}),
+	}),
+);
 
 export const paymentReversalRelations = relations(
 	paymentReversal,

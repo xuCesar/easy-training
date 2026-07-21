@@ -15,6 +15,9 @@ export function invalidateFinanceQueries() {
 			queryKey: orpc.training.finance.arrears.list.key(),
 		}),
 		queryClient.invalidateQueries({
+			queryKey: orpc.training.finance.receipts.get.key(),
+		}),
+		queryClient.invalidateQueries({
 			queryKey: orpc.training.snapshot.key(),
 		}),
 		queryClient.invalidateQueries({

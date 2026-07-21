@@ -3,7 +3,7 @@
   "name": "receipt-documents",
   "title": "收据与付款凭证",
   "description": "实现唯一编号、可打印导出的机构内收据与付款凭证。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",

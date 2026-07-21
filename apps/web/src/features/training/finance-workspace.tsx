@@ -76,6 +76,10 @@ import { formatCentsToCurrency, formatDate, formatDateTime } from "./format";
 import { InvoiceAdjustmentDialog } from "./invoice-adjustment-dialog";
 import { ManualInvoiceDialog } from "./manual-invoice-dialog";
 import { PaymentReversalDialog } from "./payment-reversal-dialog";
+import {
+	ReceiptDocumentDialog,
+	type ReceiptDocumentDialogMode,
+} from "./receipt-document-dialog";
 import { RefundApprovalPanel } from "./refund-approval-panel";
 
 type InvoiceSummary = InvoiceListResult["items"][number];
@@ -504,6 +508,10 @@ function InvoiceDetailContent({
 	const [reversalTarget, setReversalTarget] = useState<
 		InvoiceDetail["payments"][number] | null
 	>(null);
+	const [receiptTarget, setReceiptTarget] = useState<{
+		payment: InvoiceDetail["payments"][number];
+		mode: ReceiptDocumentDialogMode;
+	} | null>(null);
 	const payments = [...detail.payments].sort(
 		(left, right) =>
 			new Date(right.receivedAt).getTime() -
@@ -704,26 +712,71 @@ function InvoiceDetailContent({
 										))}
 									</ol>
 								) : null}
-								<div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-									{payment.effectiveAmountInCents <= 0 ? (
-										<span className="text-muted-foreground text-xs">
-											该收款已全部冲正
-										</span>
-									) : detail.refunds.length > 0 ? (
-										<span className="text-muted-foreground text-xs">
-											账单已有退款，不能冲正
-										</span>
-									) : (
+								<div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+									<div className="flex flex-wrap items-center gap-2">
+										<Badge
+											variant={
+												payment.receipt?.status === "voided"
+													? "destructive"
+													: payment.receipt
+														? "outline"
+														: "secondary"
+											}
+										>
+											{payment.receipt?.status === "voided"
+												? "凭证已作废"
+												: payment.receipt
+													? "凭证有效"
+													: "凭证未开具"}
+										</Badge>
 										<Button
 											type="button"
 											variant="outline"
 											size="sm"
-											onClick={() => setReversalTarget(payment)}
+											onClick={() =>
+												setReceiptTarget({
+													payment,
+													mode: payment.receipt ? "view" : "generate",
+												})
+											}
 										>
-											<RotateCcwIcon data-icon="inline-start" />
-											冲正
+											<ReceiptTextIcon data-icon="inline-start" />
+											{payment.receipt ? "查看凭证" : "开具凭证"}
 										</Button>
-									)}
+										{payment.receipt?.status === "voided" ? (
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												onClick={() =>
+													setReceiptTarget({ payment, mode: "reissue" })
+												}
+											>
+												补开
+											</Button>
+										) : null}
+									</div>
+									<div className="flex items-center gap-2">
+										{payment.effectiveAmountInCents <= 0 ? (
+											<span className="text-muted-foreground text-xs">
+												该收款已全部冲正
+											</span>
+										) : detail.refunds.length > 0 ? (
+											<span className="text-muted-foreground text-xs">
+												账单已有退款，不能冲正
+											</span>
+										) : (
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												onClick={() => setReversalTarget(payment)}
+											>
+												<RotateCcwIcon data-icon="inline-start" />
+												冲正
+											</Button>
+										)}
+									</div>
 								</div>
 							</li>
 						))}
@@ -783,6 +836,17 @@ function InvoiceDetailContent({
 					payment={reversalTarget}
 					onClose={() => setReversalTarget(null)}
 					onReversed={() => setReversalTarget(null)}
+					onPendingChange={onPaymentPendingChange}
+				/>
+			) : null}
+			{receiptTarget ? (
+				<ReceiptDocumentDialog
+					organizationId={organizationId}
+					paymentId={receiptTarget.payment.id}
+					studentName={invoice.studentName}
+					initialReceiptId={receiptTarget.payment.receipt?.id ?? null}
+					initialMode={receiptTarget.mode}
+					onClose={() => setReceiptTarget(null)}
 					onPendingChange={onPaymentPendingChange}
 				/>
 			) : null}

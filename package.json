@@ -10,7 +10,7 @@
 		"dev": "turbo run dev",
 		"build": "turbo run build",
 		"check-types": "turbo run check-types",
-		"test:integration": "tsc -p packages/db/tests/tsconfig.json --noEmit && pnpm --filter server exec tsx --test src/app.test.ts ../../packages/db/tests/training-dashboard.integration.ts ../../packages/db/tests/enrollment-conversion.integration.ts ../../packages/db/tests/enrollment-registration.integration.ts ../../packages/db/tests/finance.integration.ts ../../packages/db/tests/payment-reversals.integration.ts ../../packages/db/tests/organization-context.integration.ts ../../packages/db/tests/leads.integration.ts ../../packages/db/tests/operations.integration.ts ../../packages/db/tests/organization-management.integration.ts ../../packages/db/tests/students.integration.ts ../../packages/db/tests/teaching.integration.ts",
+		"test:integration": "tsc -p packages/db/tests/tsconfig.json --noEmit && pnpm --filter server exec tsx --test src/app.test.ts ../../packages/db/tests/training-dashboard.integration.ts ../../packages/db/tests/enrollment-conversion.integration.ts ../../packages/db/tests/enrollment-registration.integration.ts ../../packages/db/tests/finance.integration.ts ../../packages/db/tests/payment-reversals.integration.ts ../../packages/db/tests/receipt-documents.integration.ts ../../packages/db/tests/organization-context.integration.ts ../../packages/db/tests/leads.integration.ts ../../packages/db/tests/operations.integration.ts ../../packages/db/tests/organization-management.integration.ts ../../packages/db/tests/students.integration.ts ../../packages/db/tests/teaching.integration.ts",
 		"dev:web": "turbo run dev -F web",
 		"dev:server": "turbo run dev -F server",
 		"db:push": "turbo run db:push -F @easy-training/db",

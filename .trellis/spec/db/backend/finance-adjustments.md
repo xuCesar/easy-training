@@ -263,3 +263,82 @@ await db.transaction(async (tx) => {
 - 覆盖创建/调整串行与并发重放、不同载荷冲突、版本竞争和调整/收款竞态。
 - 覆盖部分收款字段边界、历史 paidAmount 无 payment、结清/退款冻结，以及失败零领域副作用/零审计。
 - 覆盖手工账单进入机构应收和欠费，但收款不改变报名课程累计已收。
+
+## Scenario: 收款凭证、作废与补开
+
+### 1. Scope / Trigger
+
+- 对具体 `payment` 按需开具机构内部收款凭证，或查看、作废、补开及打印时使用。
+- 凭证是资金事实的不可变展示快照，不替代 `payment`、`paymentReversal` 或 `refund`，也不承担税务发票语义。
+
+### 2. Signatures
+
+- DB：`generateReceiptDocumentRecord({ organizationId, operatorUserId, paymentIds, title, note, requestId })`。
+- DB：`voidReceiptDocumentRecord({ organizationId, operatorUserId, receiptId, reason, requestId })`。
+- DB：`reissueReceiptDocumentRecord({ organizationId, operatorUserId, replacesReceiptId, title, note, requestId })`。
+- DB：`getReceiptDocumentRecord({ organizationId, campusAccess, receiptId })`、`getReceiptSummaryByPaymentId({ organizationId, campusAccess, paymentId })`。
+- API：`training.finance.receipts.getByPayment/get/generate/void/reissue`。
+
+### 3. Contracts
+
+- 编号格式为 `RCP-YYYYMM-NNNNNN`；序号在机构与上海自然月内原子递增，不按校区重置，不回收作废号或事务断号。
+- 首版命令校验 `paymentIds.length === 1`，但凭证关联和 `ReceiptDocumentView.payments[]` 保持数组结构，为未来多笔收款合并开具保留边界。
+- 同一 payment 同时最多一张有效凭证；`generationRequestId` 和 `voidRequestId` 在机构内唯一，相同请求同载荷重放原结果，异载荷或跨凭证复用请求标识冲突。
+- 初次开具保存机构、校区、学员、账单与收款快照。补开复用原凭证及关联表快照，只允许更改 `title/note`，不得重新读取后续变化的名称、摘要或金额覆盖历史。
+- 作废只更新凭证状态和关联 `isActive` 投影，不能修改或删除资金流水；补开分配新编号并通过 `replacesReceiptId` 保留链路。
+- 冲正与退款只影响查询时的 `currentFinancialStatus`：每笔返回累计冲正与有效金额，账单级返回累计退款；不得回写凭证历史快照。
+- 纯展示组件只消费 `ReceiptDocumentView`，不查询数据或调用浏览器 API；浏览器打印由外层触发，为未来服务端 PDF 渲染复用相同输入契约。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 领域错误 | API 语义 |
+| --- | --- | --- |
+| payment、receipt 不存在或不可见 | `PAYMENT_NOT_FOUND` / `RECEIPT_NOT_FOUND` | `NOT_FOUND` |
+| 成员撤权、角色不允许或校区越权 | `MEMBER_FORBIDDEN` / `CAMPUS_OUT_OF_SCOPE` | `FORBIDDEN` |
+| 校区停用 | `CAMPUS_INACTIVE` | `CONFLICT` |
+| payment 已有有效凭证 | `RECEIPT_ALREADY_EXISTS` | `CONFLICT`，携带可定位的既有凭证标识 |
+| 作废非有效凭证、补开非作废凭证 | `RECEIPT_NOT_ACTIVE` / `RECEIPT_NOT_VOIDED` | `CONFLICT` |
+| requestId 异载荷或跨凭证复用 | `IDEMPOTENCY_CONFLICT` | `CONFLICT` |
+| 补开时资金关联与原快照不一致 | `RESOURCE_UNAVAILABLE` | `CONFLICT` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：两个校区同时开具凭证，获得同一机构月序列中的不同编号；作废其中一张后补开得到新编号，旧凭证永久可查。
+- Base：payment 后续发生部分冲正或账单退款，原收款金额和编号不变，查看时单独展示当前有效金额与账单累计退款。
+- Bad：补开时重新读取当前学员名或账单摘要生成新快照，或作废时删除关联 payment。这会改写既定事实并破坏历史追溯。
+
+### 6. Tests Required
+
+- PostgreSQL 集成测试覆盖跨校区机构月序列、并发开具、有效关联唯一、作废断号和补开新编号。
+- 覆盖 generation/void request 同载荷重放、异载荷及跨凭证复用冲突，失败时零凭证、零关联和零审计副作用。
+- 在作废后修改机构、校区、学员和账单展示字段，再补开并断言新旧不可变快照和 payment 关联完全一致。
+- 覆盖校区范围、停用校区、事务中撤权、无凭证的 `getByPayment` 空结果及不可见 payment 的 `NOT_FOUND`。
+- 覆盖部分/全部冲正、账单退款、原始快照不变，以及中央审计不包含抬头、备注和作废原因。
+- Web 真实浏览器验证开具/查看/作废/补开、390px 无横向溢出，以及打印 PDF 仅包含凭证正文、编号和查询时间。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await tx.update(payment).set({ note: "已作废凭证" });
+const currentStudent = await loadStudent(oldReceipt.studentId);
+await insertReissuedReceipt({ studentName: currentStudent.name });
+```
+
+作废不应改写 payment，补开也不能用当前主数据替换原凭证快照。
+
+#### Correct
+
+```ts
+await tx.update(receiptDocument).set({ status: "voided", ...voidFact });
+await tx.update(receiptDocumentPayment).set({ isActive: false });
+await insertReceipt({
+	replacesReceiptId: oldReceipt.id,
+	paymentRecord: snapshotFromOldReceiptAndLink,
+	title,
+	note,
+});
+```
+
+领域事实、有效关联投影和补开快照在同一事务内更新，资金流水保持不可变。

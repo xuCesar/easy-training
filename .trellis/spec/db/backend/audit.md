@@ -7,7 +7,7 @@
 ## 2. Signatures
 
 - 统一入口：`writeOrganizationAuditEvent(tx, { organizationId, action, entityType, entityId, actorUserId, targetUserId?, campusId?, before?, after? })`。
-- Action：`payment_created`、`payment_reversed`、`refund_created`、`refund_request_submitted`、`refund_request_approved`、`refund_request_rejected`、`refund_request_cancelled`、`arrears_status_changed`、`enrollment_renewed`、`enrollment_transferred`、`lesson_completed`、`schedule_rule_created`、`schedule_rule_updated`、`schedule_rule_deactivated`、`schedule_rule_deleted`、`lessons_generated`、`lessons_bulk_rescheduled`、`lessons_bulk_cancelled`、`teacher_binding_changed`、`class_paused`、`class_resumed`、`classroom_created`、`classroom_updated`、`classroom_activated`、`classroom_deactivated`、`makeup_lesson_created`、`makeup_lesson_cancelled`、`makeup_lesson_needs_reschedule`，以及既有成员与机构操作 action。
+- Action：`payment_created`、`payment_reversed`、`receipt_generated`、`receipt_voided`、`receipt_reissued`、`refund_created`、`refund_request_submitted`、`refund_request_approved`、`refund_request_rejected`、`refund_request_cancelled`、`arrears_status_changed`、`enrollment_renewed`、`enrollment_transferred`、`lesson_completed`、`schedule_rule_created`、`schedule_rule_updated`、`schedule_rule_deactivated`、`schedule_rule_deleted`、`lessons_generated`、`lessons_bulk_rescheduled`、`lessons_bulk_cancelled`、`teacher_binding_changed`、`class_paused`、`class_resumed`、`classroom_created`、`classroom_updated`、`classroom_activated`、`classroom_deactivated`、`makeup_lesson_created`、`makeup_lesson_cancelled`、`makeup_lesson_needs_reschedule`，以及既有成员与机构操作 action。
 - 审计 action 为 `organization_audit_action` PostgreSQL enum；新增值必须同时修改 Drizzle schema、生成 migration、API `auditActionSchema` 和 Web 审计页筛选/标签。
 - 手工开单与账单调整使用 `manual_invoice_created`、`invoice_adjusted`；实体分别使用 `manualInvoiceCreation` 与 `invoiceAdjustment` UUID。
 
@@ -19,6 +19,7 @@
 - `before`/`after` 仅记录白名单业务字段。允许金额、日期、方法、课时、状态和关联 UUID/requestId；不得记录 token、联系方式、支付参考号、自由文本备注或退款原因。
 - 退款申请的 `reason` 以及批准意见、拒绝原因、取消原因只保存在 `refundRequest/refundRequestEvent`；中央审计仅保存申请/账单/退款 UUID、金额、状态、版本、操作者、校区和 requestId。
 - 收款冲正原因只保存在 `paymentReversal.reason`；中央审计 `payment_reversed` 仅保存原收款、账单、冲正金额、时间和 requestId。
+- 凭证开具、作废、补开使用 `receipt_generated/receipt_voided/receipt_reissued`，实体为 `receipt_document` UUID。`after` 只允许凭证/账单/payment 标识、编号、状态、替换链和 requestId；抬头、备注、作废原因及学员姓名不得复制进中央审计。
 - 欠费周期使用 `arrears_status_changed`，实体为 `invoiceArrearsCycle` UUID；自动开启/解决使用空操作者，人工迁移记录操作者。中央审计只保存账单 UUID、周期号、前后状态、版本、来源或 requestId，不得复制承诺说明、暂停原因或跟进备注。
 - 班级停复课的原因写入 `classStatusEvent.reason`，审计快照只记录状态、`futureLessonPolicy`、受影响课次数量和 requestId；不得把原因或逐课次明细复制进审计 JSON。
 - 教室审计允许 `campusId/name/capacity/isActive` 快照；补课审计只记录来源课次、来源报名、目标课次、requestId 或状态迁移，不记录学员姓名、考勤备注或完整名单。
@@ -37,11 +38,14 @@
 | campusId 为空的校区归属事件 | 禁止；受限校区管理员将无法追溯事件 |
 | 停复课或补课相同 requestId、相同载荷重放 | 返回既有结果，不新增审计 |
 | 停复课或补课相同 requestId、载荷不同 | `IDEMPOTENCY_CONFLICT`，领域状态和审计均不变 |
+| 凭证 requestId 同载荷重放 | 返回既有凭证，不新增审计或占用新编号 |
+| 凭证 requestId 异载荷或作废 requestId 跨凭证复用 | `IDEMPOTENCY_CONFLICT`，凭证状态、编号 counter 和审计均不变 |
 
 ## 5. Good / Base / Bad Cases
 
 - Good：财务人员在同一事务创建退款和 `refund_created`，审计 after 只保存金额、方法、退款时间、关联 UUID 与 requestId。
 - Base：成员角色/范围变更写入 before/after；`campusAccessMode` 的数据库字段必须与 after 快照一致。
+- Base：作废凭证时审计只记录编号、状态与 requestId；详细原因只保存在 `receiptDocument.voidReason`。
 - Bad：将退款原因、支付参考号或学员名单序列化进 after；或在 transaction 提交后再单独插入审计。
 
 ## 6. Tests Required
@@ -50,6 +54,7 @@
 - 覆盖幂等重放/并发最多一条审计、领域失败零审计，以及审计写入失败时业务事务回滚。
 - 覆盖退款申请和审批 requestId 的重放/异载荷冲突，并断言申请原因、批准意见、拒绝/取消原因不进入中央审计。
 - 覆盖收款冲正成功、重放、超额和并发路径；审计实体为 `paymentReversal` UUID，且中央审计不包含冲正原因。
+- 覆盖凭证开具、作废和补开各恰有一条审计；幂等重放不重复写入，冲突零审计，审计 JSON 不含抬头、备注或作废原因。
 - 覆盖受限校区能筛选本校区事件；成员角色、校区范围、移除成员审计保留正确 before/after 和失败路径不新增事件。
 - 覆盖教室创建/更新/启停、班级停复课和补课创建/取消的 action、entityType、campusId 与白名单快照；权限、容量、状态或审计失败时领域写入全部回滚。
 - 覆盖停复课、补课幂等重放不重复写审计，补课结课只沿用 `lesson_completed` 审计且不得暴露补课学员名单。

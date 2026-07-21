@@ -75,8 +75,12 @@ import {
 	enrollmentAdjustmentListResultSchema,
 	exportLeadsInputSchema,
 	exportLeadsResultSchema,
+	generateReceiptDocumentInputSchema,
 	generateScheduleLessonsInputSchema,
 	generateScheduleLessonsResultSchema,
+	getReceiptByPaymentInputSchema,
+	getReceiptByPaymentResultSchema,
+	getReceiptDocumentInputSchema,
 	independentEnrollmentOptionsInputSchema,
 	independentEnrollmentOptionsSchema,
 	invitationListResultSchema,
@@ -119,8 +123,11 @@ import {
 	previewScheduleRuleDeactivationResultSchema,
 	previewScheduleRuleUpdateInputSchema,
 	previewScheduleRuleUpdateResultSchema,
+	receiptDocumentMutationResultSchema,
+	receiptDocumentViewSchema,
 	refundRequestListInputSchema,
 	refundRequestListResultSchema,
+	reissueReceiptDocumentInputSchema,
 	removeMemberInputSchema,
 	renewEnrollmentInputSchema,
 	renewEnrollmentResultSchema,
@@ -165,6 +172,7 @@ import {
 	updateStudentInputSchema,
 	updateStudentTagInputSchema,
 	updateTeacherInputSchema,
+	voidReceiptDocumentInputSchema,
 } from "../contracts/training";
 import {
 	academicManagementProcedure,
@@ -247,6 +255,13 @@ import {
 	updateMember,
 } from "../repositories/organization-management";
 import { createPaymentReversal } from "../repositories/payment-reversals";
+import {
+	generateReceiptDocument,
+	getReceiptByPayment,
+	getReceiptDocument,
+	reissueReceiptDocument,
+	voidReceiptDocument,
+} from "../repositories/receipt-documents";
 import {
 	cancelRefundRequest,
 	createRefundRequest,
@@ -1558,6 +1573,73 @@ export const appRouter = {
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
+							},
+							input,
+						),
+					),
+			},
+			receipts: {
+				getByPayment: financeProcedure
+					.input(getReceiptByPaymentInputSchema)
+					.output(getReceiptByPaymentResultSchema)
+					.handler(({ context, input }) =>
+						getReceiptByPayment(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				get: financeProcedure
+					.input(getReceiptDocumentInputSchema)
+					.output(receiptDocumentViewSchema)
+					.handler(({ context, input }) =>
+						getReceiptDocument(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				generate: financeProcedure
+					.input(generateReceiptDocumentInputSchema)
+					.output(receiptDocumentMutationResultSchema)
+					.handler(({ context, input }) =>
+						generateReceiptDocument(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				void: financeProcedure
+					.input(voidReceiptDocumentInputSchema)
+					.output(receiptDocumentMutationResultSchema)
+					.handler(({ context, input }) =>
+						voidReceiptDocument(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				reissue: financeProcedure
+					.input(reissueReceiptDocumentInputSchema)
+					.output(receiptDocumentMutationResultSchema)
+					.handler(({ context, input }) =>
+						reissueReceiptDocument(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
 							},
 							input,
 						),
