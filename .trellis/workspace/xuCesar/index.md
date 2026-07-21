@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
+- **Total Sessions**: 17
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~593 | Active |
+| `journal-1.md` | ~627 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-07-21 | 通用手工开单与账单调整 | `5d2e0dd` | `develop` |
 | 16 | 2026-07-21 | 完成学员业务时间线 | `f55afc9` | `develop` |
 | 15 | 2026-07-21 | 报名生命周期与学员合并 | `9c0fb2e` | `develop` |
 | 14 | 2026-07-21 | 独立报名闭环 | `ecd8613` | `develop` |

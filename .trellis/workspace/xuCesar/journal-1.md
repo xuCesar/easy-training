@@ -591,3 +591,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: 通用手工开单与账单调整
+
+**Date**: 2026-07-21
+**Task**: 通用手工开单与账单调整
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+完成手工开单、受控账单调整、并发与幂等保护、审计、财务聚合兼容、Web 交互及学员选项稳定游标分页；全仓类型、集成测试、规范检查与构建通过。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5d2e0dd` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
