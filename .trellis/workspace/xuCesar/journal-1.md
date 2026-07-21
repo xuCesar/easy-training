@@ -557,3 +557,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: 完成学员业务时间线
+
+**Date**: 2026-07-21
+**Task**: 完成学员业务时间线
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+交付学员统一业务时间线、稳定游标与角色裁剪，补齐账单/课次深链接、状态事件、集成测试及桌面移动端验证。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f55afc9` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
