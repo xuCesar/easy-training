@@ -24,11 +24,12 @@
     "07-21-p1-independent-enrollment",
     "07-21-p1-enrollment-lifecycle-student-merge",
     "07-21-student-business-timeline",
-    "07-21-manual-invoicing-adjustments"
+    "07-21-manual-invoicing-adjustments",
+    "07-21-financial-controls-receipts"
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "教务阶段 T1/T2 与学员报名阶段 #25、#26、#27 已完成并关闭；财务闭环仍由 #28-#29 跟踪，父任务保持进行中。",
+  "notes": "P1 教务、学员报名与财务闭环均已完成验收；#24–#29 已关闭，父任务可归档。",
   "meta": {
     "githubIssue": 6,
     "completedIssues": [
@@ -37,11 +38,10 @@
       32,
       25,
       26,
-      27
-    ],
-    "remainingIssues": [
+      27,
       28,
       29
-    ]
+    ],
+    "remainingIssues": []
   }
 }
