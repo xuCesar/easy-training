@@ -693,3 +693,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: 完成欠费处理工作流
+
+**Date**: 2026-07-21
+**Task**: 完成欠费处理工作流
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+新增欠费周期与不可变事件、迁移历史跟进记录，并将开单、收款结清与冲正重新欠费接入同一事务；补齐 API、财务工作台筛选与历史查看、审计和全量集成测试。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6ff580b` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

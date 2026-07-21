@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 19
+- **Total Sessions**: 20
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~695 | Active |
+| `journal-1.md` | ~729 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 20 | 2026-07-21 | 完成欠费处理工作流 | `6ff580b` | `develop` |
 | 19 | 2026-07-21 | 完成收款冲正闭环 | `4729dcc` | `develop` |
 | 18 | 2026-07-21 | 退款审批闭环 | `8d7a3fb` | `develop` |
 | 17 | 2026-07-21 | 通用手工开单与账单调整 | `5d2e0dd` | `develop` |
