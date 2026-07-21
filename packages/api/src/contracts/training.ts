@@ -459,6 +459,10 @@ const auditActionSchema = z.enum([
 	"notifications_marked_read",
 	"manual_invoice_created",
 	"invoice_adjusted",
+	"refund_request_submitted",
+	"refund_request_approved",
+	"refund_request_rejected",
+	"refund_request_cancelled",
 ]);
 
 export const auditEventListInputSchema = z.object({
@@ -786,7 +790,12 @@ export type CreateIndependentEnrollmentResult = z.infer<
 	typeof createIndependentEnrollmentResultSchema
 >;
 
-const invoiceSettlementStatusSchema = z.enum(["pending", "partial", "paid"]);
+const invoiceSettlementStatusSchema = z.enum([
+	"pending",
+	"partial",
+	"paid",
+	"refunded",
+]);
 export const invoiceSourceSchema = z.enum(["enrollment", "renewal", "manual"]);
 export const invoiceBusinessActivityTypeSchema = z.enum([
 	"course_enrollment",
@@ -813,7 +822,9 @@ const paymentMethodSchema = z.enum([
 
 export const invoiceListInputSchema = z.object({
 	query: z.string().trim().min(1).max(100).optional(),
-	status: z.enum(["all", "open", "pending", "partial", "paid"]).default("open"),
+	status: z
+		.enum(["all", "open", "pending", "partial", "paid", "refunded"])
+		.default("open"),
 });
 
 const invoiceSummarySchema = z.object({
@@ -1049,6 +1060,78 @@ export const createRefundResultSchema = z.object({
 	refund: refundRecordSchema,
 });
 
+export const refundRequestStatusSchema = z.enum([
+	"pending",
+	"approved",
+	"rejected",
+	"cancelled",
+]);
+
+const refundRequestEventSchema = z.object({
+	id: z.uuid(),
+	action: z.enum(["submitted", "approved", "rejected", "cancelled"]),
+	fromStatus: refundRequestStatusSchema.nullable(),
+	toStatus: refundRequestStatusSchema,
+	comment: z.string().nullable(),
+	operatorUserId: z.string(),
+	operatorName: z.string(),
+	requestId: z.uuid(),
+	createdAt: z.iso.datetime({ offset: true }),
+});
+
+export const refundRequestSchema = z.object({
+	id: z.uuid(),
+	invoiceId: z.uuid(),
+	campusId: z.uuid(),
+	amountInCents: z.number().int().positive(),
+	refundedAt: z.iso.datetime({ offset: true }),
+	method: paymentMethodSchema,
+	reason: z.string(),
+	applicantUserId: z.string(),
+	applicantName: z.string(),
+	status: refundRequestStatusSchema,
+	version: z.number().int().positive(),
+	refundId: z.uuid().nullable(),
+	createdAt: z.iso.datetime({ offset: true }),
+	updatedAt: z.iso.datetime({ offset: true }),
+	events: z.array(refundRequestEventSchema),
+});
+
+export const refundRequestListInputSchema = z.object({ invoiceId: z.uuid() });
+export const refundRequestListResultSchema = z.object({
+	items: z.array(refundRequestSchema),
+});
+
+export const createRefundRequestInputSchema = createRefundInputSchema;
+export const createRefundRequestResultSchema = z.object({
+	request: refundRequestSchema,
+	replayed: z.boolean(),
+});
+
+export const decideRefundRequestInputSchema = z
+	.object({
+		refundRequestId: z.uuid(),
+		action: z.enum(["approved", "rejected"]),
+		comment: z.string().trim().max(500).nullable().default(null),
+		expectedVersion: z.number().int().positive(),
+		requestId: z.uuid(),
+	})
+	.refine(
+		(input) => input.action !== "rejected" || Boolean(input.comment?.trim()),
+		{ message: "拒绝退款申请时必须填写原因", path: ["comment"] },
+	);
+
+export const decideRefundRequestResultSchema = createRefundRequestResultSchema;
+
+export const cancelRefundRequestInputSchema = z.object({
+	refundRequestId: z.uuid(),
+	reason: z.string().trim().max(500).nullable().default(null),
+	expectedVersion: z.number().int().positive(),
+	requestId: z.uuid(),
+});
+
+export const cancelRefundRequestResultSchema = createRefundRequestResultSchema;
+
 const arrearsRecordSchema = z.object({
 	invoiceId: z.uuid(),
 	studentName: z.string(),
@@ -1114,6 +1197,31 @@ export type TransferEnrollmentResult = z.infer<
 >;
 export type CreateRefundInput = z.infer<typeof createRefundInputSchema>;
 export type CreateRefundResult = z.infer<typeof createRefundResultSchema>;
+export type RefundRequest = z.infer<typeof refundRequestSchema>;
+export type RefundRequestListInput = z.infer<
+	typeof refundRequestListInputSchema
+>;
+export type RefundRequestListResult = z.infer<
+	typeof refundRequestListResultSchema
+>;
+export type CreateRefundRequestInput = z.infer<
+	typeof createRefundRequestInputSchema
+>;
+export type CreateRefundRequestResult = z.infer<
+	typeof createRefundRequestResultSchema
+>;
+export type DecideRefundRequestInput = z.infer<
+	typeof decideRefundRequestInputSchema
+>;
+export type DecideRefundRequestResult = z.infer<
+	typeof decideRefundRequestResultSchema
+>;
+export type CancelRefundRequestInput = z.infer<
+	typeof cancelRefundRequestInputSchema
+>;
+export type CancelRefundRequestResult = z.infer<
+	typeof cancelRefundRequestResultSchema
+>;
 export type ArrearsListResult = z.infer<typeof arrearsListResultSchema>;
 export type CreateInvoiceFollowUpInput = z.infer<
 	typeof createInvoiceFollowUpInputSchema

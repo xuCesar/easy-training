@@ -42,22 +42,21 @@ export function getShanghaiDate(now = new Date()): string {
 }
 
 function getCanonicalPaidAmount(record: InvoiceRecord): number {
-	return record.status === "paid"
+	return record.status === "paid" || record.status === "refunded"
 		? Math.max(record.paidAmountInCents, record.amountInCents)
 		: record.paidAmountInCents;
 }
 
 function toInvoiceSummary(record: InvoiceRecord, today: string) {
-	if (record.status === "refunded") {
-		throw new Error("Excluded invoice status reached the API mapper.");
-	}
 	const paidAmountInCents = getCanonicalPaidAmount(record);
-	const status: "pending" | "partial" | "paid" =
-		paidAmountInCents >= record.amountInCents
-			? "paid"
-			: paidAmountInCents > 0
-				? "partial"
-				: "pending";
+	const status: "pending" | "partial" | "paid" | "refunded" =
+		record.status === "refunded"
+			? "refunded"
+			: paidAmountInCents >= record.amountInCents
+				? "paid"
+				: paidAmountInCents > 0
+					? "partial"
+					: "pending";
 
 	return {
 		id: record.id,
@@ -77,6 +76,7 @@ function toInvoiceSummary(record: InvoiceRecord, today: string) {
 		status,
 		isOverdue:
 			status !== "paid" &&
+			status !== "refunded" &&
 			(record.status === "overdue" || record.dueDate < today),
 		dueDate: record.dueDate,
 		issuedAt: record.issuedAt.toISOString(),
@@ -258,8 +258,12 @@ export async function getInvoiceDetail(
 				canAdjustAmount:
 					invoiceSummary.status === "pending" &&
 					invoiceSummary.paidAmountInCents === 0,
-				canAdjustDueDate: invoiceSummary.status !== "paid",
-				canAdjustSummary: invoiceSummary.status !== "paid",
+				canAdjustDueDate:
+					invoiceSummary.status !== "paid" &&
+					invoiceSummary.status !== "refunded",
+				canAdjustSummary:
+					invoiceSummary.status !== "paid" &&
+					invoiceSummary.status !== "refunded",
 			},
 			historicalPaidAmountInCents: Math.max(
 				invoiceSummary.paidAmountInCents -

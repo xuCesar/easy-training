@@ -40,10 +40,12 @@ function FinanceRoute() {
 			</Empty>
 		);
 	}
+	if (!sessionUserId) return null;
 
 	return (
 		<FinanceWorkspace
 			organizationId={organization.id}
+			organizationRole={organization.role}
 			sessionUserId={sessionUserId}
 			initialInvoiceId={invoiceId}
 			onInvoiceIdChange={(nextInvoiceId) =>

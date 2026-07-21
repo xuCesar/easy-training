@@ -1,6 +1,5 @@
 import {
 	createInvoiceFollowUpRecord,
-	createRefundRecord,
 	EnrollmentFinanceAdjustmentError,
 	listArrearsRecords,
 	listEnrollmentAdjustmentCourseRecords,
@@ -16,7 +15,6 @@ import type {
 	CreateInvoiceFollowUpInput,
 	CreateInvoiceFollowUpResult,
 	CreateRefundInput,
-	CreateRefundResult,
 	EnrollmentAdjustmentListResult,
 	RenewEnrollmentInput,
 	RenewEnrollmentResult,
@@ -39,12 +37,6 @@ type FinanceScope = {
 		typeof listEnrollmentAdjustmentRecords
 	>[0]["campusAccess"];
 };
-
-function toDatabasePaymentMethod(
-	method: CreateRefundInput["method"],
-): "cash" | "wechat" | "alipay" | "bank_transfer" | "pos" | "other" {
-	return method === "bankTransfer" ? "bank_transfer" : method;
-}
 
 function toPaymentMethod(
 	method: "cash" | "wechat" | "alipay" | "bank_transfer" | "pos" | "other",
@@ -152,34 +144,6 @@ export async function transferEnrollment(
 			operatorUserId: scope.userId,
 			...input,
 		});
-	} catch (error) {
-		return throwAdjustmentError(error);
-	}
-}
-
-export async function createRefund(
-	scope: FinanceScope,
-	input: CreateRefundInput,
-): Promise<CreateRefundResult> {
-	try {
-		const result = await createRefundRecord({
-			organizationId: scope.organizationId,
-			operatorUserId: scope.userId,
-			invoiceId: input.invoiceId,
-			amountInCents: input.amountInCents,
-			refundedAt: new Date(input.refundedAt),
-			method: toDatabasePaymentMethod(input.method),
-			reason: input.reason,
-			requestId: input.requestId,
-		});
-		return {
-			refund: {
-				...result.refund,
-				refundedAt: result.refund.refundedAt.toISOString(),
-				method: toPaymentMethod(result.refund.method),
-				createdAt: result.refund.createdAt.toISOString(),
-			},
-		};
 	} catch (error) {
 		return throwAdjustmentError(error);
 	}

@@ -8,19 +8,23 @@
 
 - `renewEnrollmentRecord({ enrollmentId, addedLessons, amountInCents, dueDate, requestId })`
 - `transferEnrollmentRecord({ sourceEnrollmentId, targetCourseId, requestId })`
-- `createRefundRecord({ invoiceId, amountInCents, refundedAt, method, reason, requestId })`
+- `createRefundRequestRecord({ invoiceId, amountInCents, refundedAt, method, reason, requestId })`
+- `decideRefundRequestRecord({ refundRequestId, action, comment, expectedVersion, requestId })`
+- `cancelRefundRequestRecord({ refundRequestId, reason, expectedVersion, requestId })`
 - `listArrearsRecords({ organizationId, campusAccess, today })`
 - `createInvoiceFollowUpRecord({ invoiceId, note, followedUpAt, requestId })`
 
-持久化事实：`enrollmentRenewal`、`enrollmentTransfer`、`refund`、`invoiceFollowUp`。所有 request ID 在机构内唯一；`payment` 与 `lessonConsumption` 均不可被这些操作删除或改写。
+持久化事实：`enrollmentRenewal`、`enrollmentTransfer`、`refundRequest`、`refundRequestEvent`、批准后生成的 `refund`、`invoiceFollowUp`。所有 request ID 在机构内唯一；`payment` 与 `lessonConsumption` 均不可被这些操作删除或改写。
 
 ## 3. Contracts
 
 - 续费仅针对 `enrollment.status = active`，在同一事务新增账单、续费流水并增加 `purchasedLessons` 与 `remainingLessons`。
 - 转课仅转出来源报名的全部剩余课时，来源报名变为 `transferred`、剩余课时归零且解除班级归属；目标报名金额/已收均为零。本期不自动结算课程差价。
-- 退款仅针对已结清账单。退款金额通过 `refund` 流水累计；全额退款才将账单标记为 `refunded`，部分退款仍保留已结清状态。
+- 退款仅针对已结清账单，必须先创建 `pending` 申请；只有非申请人的 `admin/owner` 批准动作可以创建 `refund`。生产代码不得保留或导出直接创建退款的 writer。
+- 同一账单最多一条待审批申请；待审批不改变或预占余额。批准时重新锁定申请与账单、复核版本/权限/校区/最新余额，并在同一事务创建唯一退款、更新账单与报名累计已收。全额退款才将账单标记为 `refunded`。
+- 申请人可取消自己的待审批申请；`admin/owner` 可取消任意待审批申请。拒绝原因和管理员取消他人的原因必填，终态不可回退。
 - 欠费定义为非 `refunded` 且 `amountInCents > paidAmountInCents` 的账单；跟进是追加记录，列表投影最新一条。
-- 续费、转课和退款成功时，在相同事务内分别写入 `enrollment_renewed`、`enrollment_transferred`、`refund_created`；审计实体使用对应不可变流水 UUID，且 after 不得包含退款原因等自由文本。
+- 续费、转课和退款成功时，在相同事务内分别写入 `enrollment_renewed`、`enrollment_transferred`、`refund_created`；退款申请另写 `refund_request_submitted/approved/rejected/cancelled`。审计实体使用对应不可变流水 UUID，且 before/after 不得包含申请原因或操作意见。
 
 ## 4. Validation & Error Matrix
 
@@ -30,19 +34,22 @@
 | 校区或目标课程停用 | `CAMPUS_INACTIVE` / `COURSE_INACTIVE` | `CONFLICT` |
 | 来源报名已转出、无剩余课时或同课程转课 | `ENROLLMENT_NOT_ACTIVE` / `TRANSFER_NO_REMAINING_LESSONS` / `TRANSFER_SAME_COURSE` | `CONFLICT` |
 | 来源有未结清账单 | `TRANSFER_OUTSTANDING_INVOICE` | `CONFLICT` |
-| 非已结清账单、超额或重复退款 | `INVOICE_NOT_REFUNDABLE` / `REFUND_EXCEEDS_PAID` / `IDEMPOTENCY_CONFLICT` | `CONFLICT` |
+| 非已结清账单、超额、已有待审批或重复请求 | `INVOICE_NOT_REFUNDABLE` / `REFUND_EXCEEDS_PAID` / `PENDING_REQUEST_EXISTS` / `IDEMPOTENCY_CONFLICT` | `CONFLICT` |
+| 非管理员审批、申请人自审或无权取消 | `MEMBER_FORBIDDEN` / `SELF_APPROVAL_FORBIDDEN` / `CANCELLATION_FORBIDDEN` | `FORBIDDEN` |
+| 终态、陈旧版本或批准时余额变化 | `REQUEST_NOT_PENDING` / `REQUEST_VERSION_CONFLICT` / `REFUND_EXCEEDS_PAID` | `CONFLICT` |
 | 已结清或已退款账单的跟进 | `FOLLOW_UP_NOT_ALLOWED` | `CONFLICT` |
 
 ## 5. Good / Base / Bad Cases
 
 - Good：财务人员为同校区有效报名续费，重放同一 `requestId` 返回同一账单且不重复加课时。
-- Base：部分退款保留历史收款与已结清账单，净收通过退款流水计算；全额退款后账单不可再收款。
-- Bad：通过删除 `payment` 抵消退款，或将转课来源的历史账单改指向目标报名。两者都会破坏审计历史。
+- Base：申请被拒绝或取消时不产生退款；部分批准保留已结清账单，全额批准后账单转为 `refunded` 且仍可按稳定 ID 查看。
+- Bad：重新导出旧直退 writer、通过删除 `payment` 抵消退款，或将转课来源的历史账单改指向目标报名。这些做法都会绕过审批或破坏审计历史。
 
 ## 6. Tests Required
 
 - PostgreSQL 集成测试覆盖续费重放/并发、来源欠费阻断转课、课时守恒、跨机构/角色/校区拒绝。
-- 覆盖部分与全额退款、退款上限、全额退款后拒绝收款，以及欠费列表的最近跟进投影。
+- 覆盖四种财务角色申请、仅管理员决策、自审拒绝、取消原因、单待审批、部分/全额退款、退款上限及全额退款后拒绝收款。
+- 覆盖创建/决策幂等、同请求异载荷、并发创建/决策、撤权、跨租户/校区、停用校区、版本陈旧和批准时余额变化完整回滚。
 - API 契约测试应断言时间为 ISO 带时区字符串、金额为整数分、错误映射不泄露内部错误。
 - 断言成功、幂等重放和冲突路径的审计数量分别为一、一、零；退款重放比较还必须覆盖 invoiceId 与 refundedAt。
 
@@ -61,8 +68,14 @@ await tx.update(invoice).set({ paidAmountInCents: 0 });
 
 ```ts
 await tx.insert(enrollmentTransfer).values(transferEvent);
-await tx.insert(refund).values(refundEvent);
-// 同一事务内更新来源报名状态或账单状态；收款与课消流水保持不变。
+const request = await createRefundRequestRecord(input);
+await decideRefundRequestRecord({
+  refundRequestId: request.id,
+  action: "approved",
+  expectedVersion: request.version,
+  requestId,
+});
+// 只有批准事务可创建 refund；收款与课消流水保持不变。
 ```
 
 以不可变业务流水表达变更，并由机构内唯一请求 ID 和资源锁保证重试安全。

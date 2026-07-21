@@ -73,6 +73,10 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"notifications_marked_read",
 	"manual_invoice_created",
 	"invoice_adjusted",
+	"refund_request_submitted",
+	"refund_request_approved",
+	"refund_request_rejected",
+	"refund_request_cancelled",
 ]);
 export const organizationNotificationType = pgEnum(
 	"organization_notification_type",
@@ -190,6 +194,18 @@ export const paymentMethod = pgEnum("payment_method", [
 	"bank_transfer",
 	"pos",
 	"other",
+]);
+export const refundRequestStatus = pgEnum("refund_request_status", [
+	"pending",
+	"approved",
+	"rejected",
+	"cancelled",
+]);
+export const refundRequestAction = pgEnum("refund_request_action", [
+	"submitted",
+	"approved",
+	"rejected",
+	"cancelled",
 ]);
 export const taskPriority = pgEnum("task_priority", ["high", "medium", "low"]);
 export const taskModule = pgEnum("task_module", [
@@ -1623,6 +1639,101 @@ export const refund = pgTable(
 	],
 );
 
+export const refundRequest = pgTable(
+	"refund_request",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id),
+		amountInCents: integer("amount_in_cents").notNull(),
+		refundedAt: timestamp("refunded_at", { withTimezone: true }).notNull(),
+		method: paymentMethod("method").notNull(),
+		reason: text("reason").notNull(),
+		applicantUserId: text("applicant_user_id")
+			.notNull()
+			.references(() => user.id),
+		applicantName: text("applicant_name").notNull(),
+		status: refundRequestStatus("status").default("pending").notNull(),
+		version: integer("version").default(1).notNull(),
+		refundId: uuid("refund_id").references(() => refund.id),
+		submissionRequestId: uuid("submission_request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		check(
+			"refund_request_amount_positive_check",
+			sql`${table.amountInCents} > 0`,
+		),
+		check("refund_request_version_positive_check", sql`${table.version} > 0`),
+		uniqueIndex("refund_request_org_submission_request_uidx").on(
+			table.organizationId,
+			table.submissionRequestId,
+		),
+		uniqueIndex("refund_request_org_refund_uidx").on(
+			table.organizationId,
+			table.refundId,
+		),
+		uniqueIndex("refund_request_org_invoice_pending_uidx")
+			.on(table.organizationId, table.invoiceId)
+			.where(sql`${table.status} = 'pending'`),
+		index("refund_request_org_invoice_created_idx").on(
+			table.organizationId,
+			table.invoiceId,
+			table.createdAt,
+		),
+	],
+);
+
+export const refundRequestEvent = pgTable(
+	"refund_request_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		refundRequestId: uuid("refund_request_id")
+			.notNull()
+			.references(() => refundRequest.id),
+		action: refundRequestAction("action").notNull(),
+		fromStatus: refundRequestStatus("from_status"),
+		toStatus: refundRequestStatus("to_status").notNull(),
+		comment: text("comment"),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		operatorName: text("operator_name").notNull(),
+		requestId: uuid("request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("refund_request_event_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("refund_request_event_org_refund_request_created_idx").on(
+			table.organizationId,
+			table.refundRequestId,
+			table.createdAt,
+		),
+	],
+);
+
 export const invoiceFollowUp = pgTable(
 	"invoice_follow_up",
 	{
@@ -1763,6 +1874,7 @@ export const studentTagAssignmentRelations = relations(
 export const invoiceRelations = relations(invoice, ({ many }) => ({
 	payments: many(payment),
 	refunds: many(refund),
+	refundRequests: many(refundRequest),
 	followUps: many(invoiceFollowUp),
 	manualCreations: many(manualInvoiceCreation),
 	adjustments: many(invoiceAdjustment),
@@ -1801,6 +1913,31 @@ export const refundRelations = relations(refund, ({ one }) => ({
 		references: [invoice.id],
 	}),
 }));
+
+export const refundRequestRelations = relations(
+	refundRequest,
+	({ one, many }) => ({
+		invoice: one(invoice, {
+			fields: [refundRequest.invoiceId],
+			references: [invoice.id],
+		}),
+		refund: one(refund, {
+			fields: [refundRequest.refundId],
+			references: [refund.id],
+		}),
+		events: many(refundRequestEvent),
+	}),
+);
+
+export const refundRequestEventRelations = relations(
+	refundRequestEvent,
+	({ one }) => ({
+		request: one(refundRequest, {
+			fields: [refundRequestEvent.refundRequestId],
+			references: [refundRequest.id],
+		}),
+	}),
+);
 
 export const invoiceFollowUpRelations = relations(
 	invoiceFollowUp,

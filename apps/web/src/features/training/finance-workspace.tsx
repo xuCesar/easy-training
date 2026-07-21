@@ -1,8 +1,7 @@
 import {
 	type CreatePaymentInput,
-	type CreateRefundInput,
+	type CurrentOrganization,
 	createPaymentInputSchema,
-	createRefundInputSchema,
 	type InvoiceDetail,
 	type InvoiceListInput,
 	type InvoiceListResult,
@@ -55,24 +54,27 @@ import {
 	LoaderCircleIcon,
 	PencilLineIcon,
 	ReceiptTextIcon,
-	RotateCcwIcon,
 	SearchIcon,
 	XIcon,
 } from "lucide-react";
 import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { orpc, queryClient } from "@/utils/orpc";
+import { orpc } from "@/utils/orpc";
 import { FinanceAdjustments } from "./finance-adjustments";
 import {
 	formatCentsAsYuan,
 	getActivityTypeLabel,
 	getInvoiceSourceLabel,
+	getShanghaiCurrentDateTime,
 	parseYuanToCents,
+	shanghaiDateTimeToIso,
 } from "./finance-form-utils";
+import { invalidateFinanceQueries } from "./finance-query-utils";
 import { formatCentsToCurrency, formatDate, formatDateTime } from "./format";
 import { InvoiceAdjustmentDialog } from "./invoice-adjustment-dialog";
 import { ManualInvoiceDialog } from "./manual-invoice-dialog";
+import { RefundApprovalPanel } from "./refund-approval-panel";
 
 type InvoiceSummary = InvoiceListResult["items"][number];
 type InvoiceStatusFilter = InvoiceListInput["status"];
@@ -91,6 +93,7 @@ const statusFilters: Array<{ value: InvoiceStatusFilter; label: string }> = [
 	{ value: "pending", label: "待收款" },
 	{ value: "partial", label: "部分收款" },
 	{ value: "paid", label: "已结清" },
+	{ value: "refunded", label: "已退款" },
 ];
 
 const paymentMethods: Array<{ value: PaymentMethod; label: string }> = [
@@ -104,12 +107,14 @@ const paymentMethods: Array<{ value: PaymentMethod; label: string }> = [
 
 export function FinanceWorkspace({
 	organizationId,
+	organizationRole,
 	sessionUserId,
 	initialInvoiceId,
 	onInvoiceIdChange,
 }: {
 	organizationId: string;
-	sessionUserId?: string;
+	organizationRole: CurrentOrganization["role"];
+	sessionUserId: string;
 	initialInvoiceId?: string;
 	onInvoiceIdChange?: (invoiceId: string | null) => void;
 }) {
@@ -202,6 +207,8 @@ export function FinanceWorkspace({
 					key={selectedInvoiceId}
 					invoiceId={selectedInvoiceId}
 					organizationId={organizationId}
+					organizationRole={organizationRole}
+					sessionUserId={sessionUserId}
 					onClose={() => {
 						setSelectedInvoiceId(null);
 						onInvoiceIdChange?.(null);
@@ -375,10 +382,14 @@ function InvoiceResults({
 function InvoiceDetailSheet({
 	invoiceId,
 	organizationId,
+	organizationRole,
+	sessionUserId,
 	onClose,
 }: {
 	invoiceId: string;
 	organizationId: string;
+	organizationRole: CurrentOrganization["role"];
+	sessionUserId: string;
 	onClose: () => void;
 }) {
 	const [paymentFormGeneration, setPaymentFormGeneration] = useState(0);
@@ -440,8 +451,10 @@ function InvoiceDetailSheet({
 				) : (
 					<InvoiceDetailContent
 						detail={detailQuery.data}
+						organizationId={organizationId}
+						organizationRole={organizationRole}
+						sessionUserId={sessionUserId}
 						paymentFormGeneration={paymentFormGeneration}
-						onClose={onClose}
 						onAdjust={() => setAdjustmentOpen(true)}
 						onPaymentCreated={() =>
 							setPaymentFormGeneration((current) => current + 1)
@@ -468,15 +481,19 @@ function InvoiceDetailSheet({
 
 function InvoiceDetailContent({
 	detail,
+	organizationId,
+	organizationRole,
+	sessionUserId,
 	paymentFormGeneration,
-	onClose,
 	onAdjust,
 	onPaymentCreated,
 	onPaymentPendingChange,
 }: {
 	detail: InvoiceDetail;
+	organizationId: string;
+	organizationRole: CurrentOrganization["role"];
+	sessionUserId: string;
 	paymentFormGeneration: number;
-	onClose: () => void;
 	onAdjust: () => void;
 	onPaymentCreated: () => void;
 	onPaymentPendingChange: (pending: boolean) => void;
@@ -580,17 +597,20 @@ function InvoiceDetailContent({
 				/>
 			) : (
 				<div className="border border-emerald-600/30 bg-emerald-600/5 p-4 text-sm">
-					该账单已结清，无需继续登记收款。
+					{invoice.status === "refunded"
+						? "该账单已全额退款，资金与审批记录保持可追溯。"
+						: "该账单已结清，无需继续登记收款。"}
 				</div>
 			)}
 
-			{invoice.status === "paid" && refundableAmountInCents > 0 ? (
-				<RefundForm
-					invoice={invoice}
-					maxAmountInCents={refundableAmountInCents}
-					onCreated={onClose}
-				/>
-			) : null}
+			<RefundApprovalPanel
+				invoice={invoice}
+				maxAmountInCents={refundableAmountInCents}
+				organizationId={organizationId}
+				organizationRole={organizationRole}
+				sessionUserId={sessionUserId}
+				onPendingChange={onPaymentPendingChange}
+			/>
 
 			<section className="min-w-0" aria-labelledby="payment-history-title">
 				<div className="flex items-baseline justify-between gap-3">
@@ -662,7 +682,11 @@ function InvoiceDetailContent({
 				{detail.refunds.length > 0 ? (
 					<ol className="mt-3 divide-y border">
 						{detail.refunds.map((refund) => (
-							<li key={refund.id} className="min-w-0 p-3 text-sm">
+							<li
+								id={`refund-${refund.id}`}
+								key={refund.id}
+								className="min-w-0 scroll-mt-20 p-3 text-sm"
+							>
 								<div className="flex min-w-0 items-start justify-between gap-3">
 									<div className="min-w-0">
 										<p className="font-medium">
@@ -690,133 +714,6 @@ function InvoiceDetailContent({
 				)}
 			</section>
 		</div>
-	);
-}
-
-function RefundForm({
-	invoice,
-	maxAmountInCents,
-	onCreated,
-}: {
-	invoice: InvoiceSummary;
-	maxAmountInCents: number;
-	onCreated: () => void;
-}) {
-	const [amountInYuan, setAmountInYuan] = useState("");
-	const [method, setMethod] = useState<CreateRefundInput["method"] | "">("");
-	const [reason, setReason] = useState("");
-	const [requestId] = useState(() => crypto.randomUUID());
-	const refundMutation = useMutation(
-		orpc.training.finance.refunds.create.mutationOptions({
-			onSuccess: async () => {
-				toast.success("退款登记成功");
-				await invalidateFinanceQueries();
-				onCreated();
-			},
-			onError: (error) => toast.error(`退款登记失败：${error.message}`),
-		}),
-	);
-
-	function submit(event: FormEvent<HTMLFormElement>) {
-		event.preventDefault();
-		if (refundMutation.isPending) return;
-		const amountInCents = parseYuanToCents(amountInYuan);
-		if (amountInCents === null || amountInCents > maxAmountInCents || !method) {
-			toast.error("请检查退款金额和方式");
-			return;
-		}
-		const result = createRefundInputSchema.safeParse({
-			invoiceId: invoice.id,
-			amountInCents,
-			refundedAt: new Date().toISOString(),
-			method,
-			reason,
-			requestId,
-		});
-		if (!result.success) {
-			toast.error("请填写退款原因");
-			return;
-		}
-		refundMutation.mutate(result.data);
-	}
-
-	return (
-		<section className="min-w-0 border p-4" aria-labelledby="refund-form-title">
-			<div className="flex items-start justify-between gap-3">
-				<div>
-					<h2 id="refund-form-title" className="font-semibold text-sm">
-						登记退款
-					</h2>
-					<p className="mt-1 text-muted-foreground text-xs">
-						本账单最多可退 {formatCentsToCurrency(maxAmountInCents)}
-					</p>
-				</div>
-				<RotateCcwIcon className="size-4 text-muted-foreground" />
-			</div>
-			<form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={submit}>
-				<Field>
-					<FieldLabel htmlFor="refund-amount">退款金额（元）</FieldLabel>
-					<Input
-						id="refund-amount"
-						inputMode="decimal"
-						value={amountInYuan}
-						onChange={(event) => setAmountInYuan(event.target.value)}
-						required
-					/>
-				</Field>
-				<Field>
-					<FieldLabel htmlFor="refund-method">退款方式</FieldLabel>
-					<Select
-						value={method || null}
-						onValueChange={(value) => setMethod(value ?? "")}
-					>
-						<SelectTrigger id="refund-method" className="w-full">
-							<SelectValue>
-								{() =>
-									method ? getPaymentMethodLabel(method) : "请选择退款方式"
-								}
-							</SelectValue>
-						</SelectTrigger>
-						<SelectContent>
-							<SelectGroup>
-								{paymentMethods.map((item) => (
-									<SelectItem key={item.value} value={item.value}>
-										{item.label}
-									</SelectItem>
-								))}
-							</SelectGroup>
-						</SelectContent>
-					</Select>
-				</Field>
-				<Field className="sm:col-span-2">
-					<FieldLabel htmlFor="refund-reason">退款原因</FieldLabel>
-					<Textarea
-						id="refund-reason"
-						value={reason}
-						onChange={(event) => setReason(event.target.value)}
-						maxLength={500}
-						required
-					/>
-				</Field>
-				<div className="sm:col-span-2 sm:flex sm:justify-end">
-					<Button
-						type="submit"
-						className="w-full sm:w-auto"
-						disabled={refundMutation.isPending}
-					>
-						{refundMutation.isPending ? (
-							<LoaderCircleIcon
-								className="animate-spin"
-								data-icon="inline-start"
-							/>
-						) : (
-							<RotateCcwIcon data-icon="inline-start" />
-						)}
-						{refundMutation.isPending ? "提交中" : "确认退款"}
-					</Button>
-				</div>
-			</form>
-		</section>
 	);
 }
 
@@ -1260,24 +1157,12 @@ function getFilterLabel(status: InvoiceStatusFilter): string {
 function getInvoiceStatusLabel(status: InvoiceSummary["status"]): string {
 	if (status === "partial") return "部分收款";
 	if (status === "paid") return "已结清";
+	if (status === "refunded") return "已退款";
 	return "待收款";
 }
 
 function getPaymentMethodLabel(method: PaymentMethod): string {
 	return paymentMethods.find((item) => item.value === method)?.label ?? "其他";
-}
-
-function getShanghaiCurrentDateTime(now = new Date()): string {
-	const shanghaiOffsetInMilliseconds = 8 * 60 * 60 * 1000;
-	return new Date(now.getTime() + shanghaiOffsetInMilliseconds)
-		.toISOString()
-		.slice(0, 16);
-}
-
-function shanghaiDateTimeToIso(value: string): string | null {
-	const date = new Date(`${value}:00+08:00`);
-	if (Number.isNaN(date.getTime())) return null;
-	return getShanghaiCurrentDateTime(date) === value ? date.toISOString() : null;
 }
 
 function getPaymentFormField(path: PropertyKey[]): PaymentFormField | null {
@@ -1292,24 +1177,4 @@ function getPaymentFormField(path: PropertyKey[]): PaymentFormField | null {
 		return field;
 	}
 	return null;
-}
-
-function invalidateFinanceQueries() {
-	return Promise.all([
-		queryClient.invalidateQueries({
-			queryKey: orpc.training.finance.invoices.list.key(),
-		}),
-		queryClient.invalidateQueries({
-			queryKey: orpc.training.finance.invoices.detail.key(),
-		}),
-		queryClient.invalidateQueries({
-			queryKey: orpc.training.finance.arrears.list.key(),
-		}),
-		queryClient.invalidateQueries({
-			queryKey: orpc.training.snapshot.key(),
-		}),
-		queryClient.invalidateQueries({
-			queryKey: orpc.training.students.timeline.key(),
-		}),
-	]);
 }

@@ -10,6 +10,11 @@ export type FinanceTransaction = Parameters<
 
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
 
+export type FinanceWriteAccess = {
+	role: MemberRole;
+	campusAccess: CampusAccess;
+};
+
 const financeWriteRoles = new Set<MemberRole>([
 	"owner",
 	"admin",
@@ -22,6 +27,15 @@ export async function getCurrentFinanceWriteCampusAccess(
 	input: { organizationId: string; userId: string },
 	createForbiddenError: () => Error,
 ): Promise<CampusAccess> {
+	return (await getCurrentFinanceWriteAccess(tx, input, createForbiddenError))
+		.campusAccess;
+}
+
+export async function getCurrentFinanceWriteAccess(
+	tx: FinanceTransaction,
+	input: { organizationId: string; userId: string },
+	createForbiddenError: () => Error,
+): Promise<FinanceWriteAccess> {
 	await tx.execute(
 		sql`SELECT pg_advisory_xact_lock(hashtext(${input.organizationId}))`,
 	);
@@ -48,14 +62,18 @@ export async function getCurrentFinanceWriteCampusAccess(
 		member.role === "admin" ||
 		member.campusAccessMode === "all"
 	) {
-		return { kind: "all" };
+		return { role: member.role, campusAccess: { kind: "all" } };
 	}
 	const scopes = await tx
 		.select({ campusId: organizationMemberCampus.campusId })
 		.from(organizationMemberCampus)
 		.where(eq(organizationMemberCampus.organizationMemberId, member.id))
 		.orderBy(asc(organizationMemberCampus.campusId));
-	return scopes.length > 0
-		? { kind: "selected", campusIds: scopes.map((item) => item.campusId) }
-		: { kind: "none" };
+	return {
+		role: member.role,
+		campusAccess:
+			scopes.length > 0
+				? { kind: "selected", campusIds: scopes.map((item) => item.campusId) }
+				: { kind: "none" },
+	};
 }

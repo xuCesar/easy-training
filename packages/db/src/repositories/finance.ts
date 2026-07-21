@@ -199,23 +199,24 @@ export async function listInvoiceRecords(input: {
 	organizationId: string;
 	campusAccess: CampusAccess;
 	query?: string;
-	status: "all" | "open" | "pending" | "partial" | "paid";
+	status: "all" | "open" | "pending" | "partial" | "paid" | "refunded";
 }): Promise<{ items: InvoiceRecord[]; total: number }> {
 	const filters = [
 		eq(invoice.organizationId, input.organizationId),
-		ne(invoice.status, "refunded"),
 		campusAccessCondition(input.campusAccess),
 	];
 
 	switch (input.status) {
 		case "open":
 			filters.push(ne(invoice.status, "paid"));
+			filters.push(ne(invoice.status, "refunded"));
 			filters.push(
 				sql`${invoice.amountInCents} > ${invoice.paidAmountInCents}`,
 			);
 			break;
 		case "pending":
 			filters.push(ne(invoice.status, "paid"));
+			filters.push(ne(invoice.status, "refunded"));
 			filters.push(sql`${invoice.paidAmountInCents} <= 0`);
 			filters.push(
 				sql`${invoice.amountInCents} > ${invoice.paidAmountInCents}`,
@@ -223,6 +224,7 @@ export async function listInvoiceRecords(input: {
 			break;
 		case "partial":
 			filters.push(ne(invoice.status, "paid"));
+			filters.push(ne(invoice.status, "refunded"));
 			filters.push(sql`${invoice.paidAmountInCents} > 0`);
 			filters.push(
 				sql`${invoice.amountInCents} > ${invoice.paidAmountInCents}`,
@@ -230,8 +232,11 @@ export async function listInvoiceRecords(input: {
 			break;
 		case "paid":
 			filters.push(
-				sql`${invoice.status} = 'paid' or ${invoice.paidAmountInCents} >= ${invoice.amountInCents}`,
+				sql`(${invoice.status} = 'paid' or ${invoice.paidAmountInCents} >= ${invoice.amountInCents}) and ${invoice.status} <> 'refunded'`,
 			);
+			break;
+		case "refunded":
+			filters.push(eq(invoice.status, "refunded"));
 			break;
 		case "all":
 			break;
@@ -344,7 +349,6 @@ export async function getInvoiceDetailRecord(input: {
 			and(
 				eq(invoice.id, input.id),
 				eq(invoice.organizationId, input.organizationId),
-				ne(invoice.status, "refunded"),
 				campusAccessCondition(input.campusAccess),
 			),
 		)

@@ -1,0 +1,31 @@
+{
+  "id": "financial-controls-receipts",
+  "name": "financial-controls-receipts",
+  "title": "P1 财务闭环深化（Issue #29）",
+  "description": "规划并交付 GitHub Issue #29：退款审批、收款冲正、欠费处理状态与收据凭证四个财务闭环。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "server",
+  "priority": "P1",
+  "creator": "xuCesar",
+  "assignee": "xuCesar",
+  "createdAt": "2026-07-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "develop",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-21-refund-approval",
+    "07-21-payment-reversals",
+    "07-21-arrears-workflow",
+    "07-21-receipt-documents"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

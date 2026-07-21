@@ -14,7 +14,6 @@ import {
 } from "../../api/src/contracts/training";
 import {
 	createInvoiceFollowUp,
-	createRefund,
 	listArrears,
 	listEnrollmentAdjustments,
 	renewEnrollment,
@@ -28,6 +27,12 @@ import {
 	getManualInvoiceOptions,
 	listInvoices,
 } from "../../api/src/repositories/finance";
+import {
+	cancelRefundRequest,
+	createRefundRequest,
+	decideRefundRequest,
+	listRefundRequests,
+} from "../../api/src/repositories/refund-approval";
 import { getStudentTimeline } from "../../api/src/repositories/students";
 import { getTrainingDashboardSnapshot } from "../../api/src/repositories/training-dashboard";
 import { appRouter } from "../../api/src/routers";
@@ -48,6 +53,8 @@ import {
 	organizationMember,
 	payment,
 	refund,
+	refundRequest,
+	refundRequestEvent,
 	session,
 	student,
 	user,
@@ -109,6 +116,12 @@ function getSessionId(userId: string) {
 
 async function cleanupFixture(ids: FixtureIds) {
 	const organizationIds = [ids.organizationA, ids.organizationB];
+	await db
+		.delete(refundRequestEvent)
+		.where(inArray(refundRequestEvent.organizationId, organizationIds));
+	await db
+		.delete(refundRequest)
+		.where(inArray(refundRequest.organizationId, organizationIds));
 	await db
 		.delete(invoiceAdjustment)
 		.where(inArray(invoiceAdjustment.organizationId, organizationIds));
@@ -436,9 +449,9 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 		const initialList = invoiceListResultSchema.parse(
 			await listInvoices(financeScope, { status: "all" }),
 		);
-		assert.equal(initialList.total, 7);
+		assert.equal(initialList.total, 8);
 		assert.ok(
-			initialList.items.every((item) => item.id !== ids.invoiceRefunded),
+			initialList.items.some((item) => item.id === ids.invoiceRefunded),
 		);
 		assert.ok(initialList.items.every((item) => item.id !== ids.invoiceB));
 		assert.deepEqual(
@@ -504,10 +517,12 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 			getInvoiceDetail(financeScope, { id: ids.invoiceB }),
 			"NOT_FOUND",
 		);
-		await expectOrpcError(
-			getInvoiceDetail(financeScope, { id: ids.invoiceRefunded }),
-			"NOT_FOUND",
-		);
+		const refundedDetail = await getInvoiceDetail(financeScope, {
+			id: ids.invoiceRefunded,
+		});
+		assert.equal(refundedDetail.invoice.status, "refunded");
+		const openList = await listInvoices(financeScope, { status: "open" });
+		assert.ok(openList.items.every((item) => item.id !== ids.invoiceRefunded));
 		await expectOrpcError(
 			createPayment(financeScope, {
 				invoiceId: ids.invoiceB,
@@ -1272,26 +1287,45 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 			reason: "转课后退回差额",
 			requestId: refundRequestId,
 		};
-		const firstRefund = await createRefund(financeScope, refundInput);
-		assert.equal(firstRefund.refund.amountInCents, 4_000);
-		assert.deepEqual(
-			await createRefund(financeScope, refundInput),
-			firstRefund,
+		const firstRefundRequest = await createRefundRequest(
+			financeScope,
+			refundInput,
+		);
+		assert.equal(firstRefundRequest.request.amountInCents, 4_000);
+		assert.equal(
+			(await createRefundRequest(financeScope, refundInput)).request.id,
+			firstRefundRequest.request.id,
 		);
 		await expectOrpcError(
-			createRefund(financeScope, {
+			createRefundRequest(financeScope, {
 				...refundInput,
 				invoiceId: ids.invoiceHistoricalStatusPaid,
 			}),
 			"CONFLICT",
 		);
 		await expectOrpcError(
-			createRefund(financeScope, {
+			createRefundRequest(financeScope, {
 				...refundInput,
 				refundedAt: minutesAgo(19),
 			}),
 			"CONFLICT",
 		);
+		const firstApprovalRequestId = randomUUID();
+		const firstApproval = await decideRefundRequest(
+			{
+				organizationId: ids.organizationA,
+				userId: ids.owner,
+				campusAccess: { kind: "all" },
+			},
+			{
+				refundRequestId: firstRefundRequest.request.id,
+				action: "approved",
+				comment: null,
+				expectedVersion: firstRefundRequest.request.version,
+				requestId: firstApprovalRequestId,
+			},
+		);
+		assert.ok(firstApproval.request.refundId);
 		const refundAuditEvents = await db
 			.select({
 				action: organizationAuditEvent.action,
@@ -1302,13 +1336,18 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 				after: organizationAuditEvent.after,
 			})
 			.from(organizationAuditEvent)
-			.where(eq(organizationAuditEvent.entityId, firstRefund.refund.id));
+			.where(
+				eq(
+					organizationAuditEvent.entityId,
+					firstApproval.request.refundId ?? "",
+				),
+			);
 		assert.deepEqual(refundAuditEvents, [
 			{
 				action: "refund_created",
 				entityType: "refund",
-				entityId: firstRefund.refund.id,
-				actorUserId: ids.finance,
+				entityId: firstApproval.request.refundId,
+				actorUserId: ids.owner,
 				campusId: ids.campusA,
 				after: {
 					invoiceId: ids.invoiceMain,
@@ -1316,12 +1355,12 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 					amountInCents: 4_000,
 					method: "wechat",
 					refundedAt: new Date(refundedAt).toISOString(),
-					requestId: refundRequestId,
+					requestId: firstApprovalRequestId,
 				},
 			},
 		]);
 		await expectOrpcError(
-			createRefund(financeScope, {
+			createRefundRequest(financeScope, {
 				invoiceId: ids.invoiceMain,
 				amountInCents: 6_001,
 				refundedAt: minutesAgo(15),
@@ -1331,7 +1370,7 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 			}),
 			"CONFLICT",
 		);
-		await createRefund(financeScope, {
+		const finalRefundRequest = await createRefundRequest(financeScope, {
 			invoiceId: ids.invoiceMain,
 			amountInCents: 6_000,
 			refundedAt: minutesAgo(10),
@@ -1339,6 +1378,20 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 			reason: "完成退款",
 			requestId: randomUUID(),
 		});
+		await decideRefundRequest(
+			{
+				organizationId: ids.organizationA,
+				userId: ids.owner,
+				campusAccess: { kind: "all" },
+			},
+			{
+				refundRequestId: finalRefundRequest.request.id,
+				action: "approved",
+				comment: null,
+				expectedVersion: finalRefundRequest.request.version,
+				requestId: randomUUID(),
+			},
+		);
 		const [refundedInvoice] = await db
 			.select()
 			.from(invoice)
@@ -1381,6 +1434,394 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 				{ ...renewalInput, requestId: randomUUID() },
 			),
 			"FORBIDDEN",
+		);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("退款申请审批保持角色、幂等、并发与资金事务边界", async () => {
+	const ids = createFixtureIds();
+	const scope = (userId: string) => ({
+		organizationId: ids.organizationA,
+		userId,
+		campusAccess: { kind: "all" } as const,
+	});
+	const createInput = (invoiceId: string, amountInCents: number) => ({
+		invoiceId,
+		amountInCents,
+		refundedAt: minutesAgo(1),
+		method: "wechat" as const,
+		reason: "退款申请中的敏感自由文本",
+		requestId: randomUUID(),
+	});
+
+	try {
+		await seedFixture(ids);
+		const financeRouter = (
+			appRouter as unknown as {
+				training: { finance: Record<string, unknown> };
+			}
+		).training.finance;
+		assert.equal("refunds" in financeRouter, false);
+		await createPayment(scope(ids.finance), {
+			invoiceId: ids.invoiceMain,
+			amountInCents: 10_000,
+			receivedAt: minutesAgo(30),
+			method: "wechat",
+			referenceNo: null,
+			note: null,
+			requestId: randomUUID(),
+		});
+
+		const ownerRequest = await createRefundRequest(
+			scope(ids.owner),
+			createInput(ids.invoiceMain, 1_000),
+		);
+		assert.equal(ownerRequest.request.status, "pending");
+		await expectOrpcError(
+			cancelRefundRequest(scope(ids.finance), {
+				refundRequestId: ownerRequest.request.id,
+				reason: null,
+				expectedVersion: ownerRequest.request.version,
+				requestId: randomUUID(),
+			}),
+			"FORBIDDEN",
+		);
+		await expectOrpcError(
+			cancelRefundRequest(scope(ids.admin), {
+				refundRequestId: ownerRequest.request.id,
+				reason: null,
+				expectedVersion: ownerRequest.request.version,
+				requestId: randomUUID(),
+			}),
+			"BAD_REQUEST",
+		);
+		const ownerCancelled = await cancelRefundRequest(scope(ids.admin), {
+			refundRequestId: ownerRequest.request.id,
+			reason: "管理员取消他人申请的敏感原因",
+			expectedVersion: ownerRequest.request.version,
+			requestId: randomUUID(),
+		});
+		assert.equal(ownerCancelled.request.status, "cancelled");
+
+		const adminRequest = await createRefundRequest(
+			scope(ids.admin),
+			createInput(ids.invoiceMain, 1_000),
+		);
+		await expectOrpcError(
+			decideRefundRequest(scope(ids.admin), {
+				refundRequestId: adminRequest.request.id,
+				action: "approved",
+				comment: null,
+				expectedVersion: adminRequest.request.version,
+				requestId: randomUUID(),
+			}),
+			"FORBIDDEN",
+		);
+		const adminCancelled = await cancelRefundRequest(scope(ids.admin), {
+			refundRequestId: adminRequest.request.id,
+			reason: null,
+			expectedVersion: adminRequest.request.version,
+			requestId: randomUUID(),
+		});
+		assert.equal(adminCancelled.request.status, "cancelled");
+
+		const managerRequest = await createRefundRequest(
+			scope(ids.campusManager),
+			createInput(ids.invoiceMain, 1_000),
+		);
+		await expectOrpcError(
+			decideRefundRequest(scope(ids.finance), {
+				refundRequestId: managerRequest.request.id,
+				action: "rejected",
+				comment: "财务无审批权限",
+				expectedVersion: managerRequest.request.version,
+				requestId: randomUUID(),
+			}),
+			"FORBIDDEN",
+		);
+		await expectOrpcError(
+			decideRefundRequest(scope(ids.owner), {
+				refundRequestId: managerRequest.request.id,
+				action: "rejected",
+				comment: null,
+				expectedVersion: managerRequest.request.version,
+				requestId: randomUUID(),
+			}),
+			"BAD_REQUEST",
+		);
+		const rejected = await decideRefundRequest(scope(ids.owner), {
+			refundRequestId: managerRequest.request.id,
+			action: "rejected",
+			comment: "拒绝申请的敏感原因",
+			expectedVersion: managerRequest.request.version,
+			requestId: randomUUID(),
+		});
+		assert.equal(rejected.request.status, "rejected");
+
+		const financeInput = createInput(ids.invoiceMain, 10_000);
+		const financeRequest = await createRefundRequest(
+			scope(ids.finance),
+			financeInput,
+		);
+		assert.equal(
+			(await createRefundRequest(scope(ids.finance), financeInput)).replayed,
+			true,
+		);
+		await expectOrpcError(
+			createRefundRequest(scope(ids.finance), {
+				...financeInput,
+				amountInCents: 9_999,
+			}),
+			"CONFLICT",
+		);
+		await expectOrpcError(
+			createRefundRequest(scope(ids.owner), createInput(ids.invoiceMain, 500)),
+			"CONFLICT",
+		);
+		await expectOrpcError(
+			decideRefundRequest(scope(ids.admin), {
+				refundRequestId: financeRequest.request.id,
+				action: "approved",
+				comment: null,
+				expectedVersion: financeRequest.request.version + 1,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+		const approvalRequestId = randomUUID();
+		const approvalInput = {
+			refundRequestId: financeRequest.request.id,
+			action: "approved" as const,
+			comment: "批准意见中的敏感自由文本",
+			expectedVersion: financeRequest.request.version,
+			requestId: approvalRequestId,
+		};
+		const approved = await decideRefundRequest(scope(ids.admin), approvalInput);
+		assert.equal(approved.request.status, "approved");
+		assert.ok(approved.request.refundId);
+		assert.equal(
+			(await decideRefundRequest(scope(ids.admin), approvalInput)).replayed,
+			true,
+		);
+		await expectOrpcError(
+			decideRefundRequest(scope(ids.admin), {
+				...approvalInput,
+				comment: "同请求不同意见",
+			}),
+			"CONFLICT",
+		);
+
+		const [approvedRefunds, mainInvoice, mainEnrollment] = await Promise.all([
+			db.select().from(refund).where(eq(refund.invoiceId, ids.invoiceMain)),
+			db.select().from(invoice).where(eq(invoice.id, ids.invoiceMain)),
+			db.select().from(enrollment).where(eq(enrollment.id, ids.enrollmentMain)),
+		]);
+		assert.equal(approvedRefunds.length, 1);
+		assert.equal(mainInvoice[0]?.status, "refunded");
+		assert.equal(mainEnrollment[0]?.paidAmountInCents, 0);
+		assert.ok(
+			(
+				await listInvoices(scope(ids.finance), { status: "refunded" })
+			).items.some((item) => item.id === ids.invoiceMain),
+		);
+		assert.equal(
+			(await getInvoiceDetail(scope(ids.finance), { id: ids.invoiceMain }))
+				.invoice.status,
+			"refunded",
+		);
+
+		const requestHistory = await listRefundRequests(scope(ids.finance), {
+			invoiceId: ids.invoiceMain,
+		});
+		assert.equal(requestHistory.items.length, 4);
+		assert.ok(
+			requestHistory.items.some((item) =>
+				item.events.some((event) => event.comment === "拒绝申请的敏感原因"),
+			),
+		);
+		const requestAuditRows = await db
+			.select({
+				action: organizationAuditEvent.action,
+				before: organizationAuditEvent.before,
+				after: organizationAuditEvent.after,
+			})
+			.from(organizationAuditEvent)
+			.where(eq(organizationAuditEvent.entityType, "refund_request"));
+		const serializedAudit = JSON.stringify(requestAuditRows);
+		assert.ok(!serializedAudit.includes("退款申请中的敏感自由文本"));
+		assert.ok(!serializedAudit.includes("管理员取消他人申请的敏感原因"));
+		assert.ok(!serializedAudit.includes("拒绝申请的敏感原因"));
+		assert.ok(!serializedAudit.includes("批准意见中的敏感自由文本"));
+
+		await createPayment(scope(ids.finance), {
+			invoiceId: ids.invoiceConcurrent,
+			amountInCents: 10_000,
+			receivedAt: minutesAgo(20),
+			method: "alipay",
+			referenceNo: null,
+			note: null,
+			requestId: randomUUID(),
+		});
+		const concurrentCreations = await Promise.allSettled([
+			createRefundRequest(
+				scope(ids.finance),
+				createInput(ids.invoiceConcurrent, 2_000),
+			),
+			createRefundRequest(
+				scope(ids.owner),
+				createInput(ids.invoiceConcurrent, 2_000),
+			),
+		]);
+		assert.equal(
+			concurrentCreations.filter((result) => result.status === "fulfilled")
+				.length,
+			1,
+		);
+		const concurrentRequest = concurrentCreations.find(
+			(result) => result.status === "fulfilled",
+		)?.value;
+		assert.ok(concurrentRequest);
+		const concurrentDecisions = await Promise.allSettled([
+			decideRefundRequest(scope(ids.admin), {
+				refundRequestId: concurrentRequest.request.id,
+				action: "approved",
+				comment: null,
+				expectedVersion: concurrentRequest.request.version,
+				requestId: randomUUID(),
+			}),
+			decideRefundRequest(scope(ids.owner), {
+				refundRequestId: concurrentRequest.request.id,
+				action: "approved",
+				comment: null,
+				expectedVersion: concurrentRequest.request.version,
+				requestId: randomUUID(),
+			}),
+		]);
+		assert.equal(
+			concurrentDecisions.filter((result) => result.status === "fulfilled")
+				.length,
+			1,
+		);
+		assert.equal(
+			(
+				await db
+					.select()
+					.from(refund)
+					.where(eq(refund.invoiceId, ids.invoiceConcurrent))
+			).length,
+			1,
+		);
+
+		await createPayment(scope(ids.finance), {
+			invoiceId: ids.invoiceIdempotent,
+			amountInCents: 3_000,
+			receivedAt: minutesAgo(15),
+			method: "cash",
+			referenceNo: null,
+			note: null,
+			requestId: randomUUID(),
+		});
+		const staleBalanceRequest = await createRefundRequest(
+			scope(ids.finance),
+			createInput(ids.invoiceIdempotent, 3_000),
+		);
+		await db
+			.update(campus)
+			.set({ isActive: false })
+			.where(eq(campus.id, ids.campusA));
+		await expectOrpcError(
+			decideRefundRequest(scope(ids.owner), {
+				refundRequestId: staleBalanceRequest.request.id,
+				action: "approved",
+				comment: null,
+				expectedVersion: staleBalanceRequest.request.version,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+		await db
+			.update(campus)
+			.set({ isActive: true })
+			.where(eq(campus.id, ids.campusA));
+		await db
+			.delete(organizationMember)
+			.where(
+				and(
+					eq(organizationMember.organizationId, ids.organizationA),
+					eq(organizationMember.userId, ids.admin),
+				),
+			);
+		await expectOrpcError(
+			decideRefundRequest(scope(ids.admin), {
+				refundRequestId: staleBalanceRequest.request.id,
+				action: "approved",
+				comment: null,
+				expectedVersion: staleBalanceRequest.request.version,
+				requestId: randomUUID(),
+			}),
+			"FORBIDDEN",
+		);
+		await db.insert(organizationMember).values({
+			organizationId: ids.organizationA,
+			userId: ids.admin,
+			role: "admin",
+		});
+		await db.insert(refund).values({
+			organizationId: ids.organizationA,
+			invoiceId: ids.invoiceIdempotent,
+			amountInCents: 1_000,
+			refundedAt: new Date(minutesAgo(10)),
+			method: "cash",
+			reason: "审批期间发生的历史退款余额",
+			operatorUserId: ids.finance,
+			operatorName: "财务测试用户 3",
+			requestId: randomUUID(),
+		});
+		await expectOrpcError(
+			decideRefundRequest(scope(ids.admin), {
+				refundRequestId: staleBalanceRequest.request.id,
+				action: "approved",
+				comment: null,
+				expectedVersion: staleBalanceRequest.request.version,
+				requestId: randomUUID(),
+			}),
+			"CONFLICT",
+		);
+		const staleBalanceHistory = await listRefundRequests(scope(ids.finance), {
+			invoiceId: ids.invoiceIdempotent,
+		});
+		assert.equal(staleBalanceHistory.items[0]?.status, "pending");
+		assert.equal(
+			(
+				await db
+					.select()
+					.from(refund)
+					.where(eq(refund.invoiceId, ids.invoiceIdempotent))
+			).length,
+			1,
+		);
+
+		await db
+			.update(organizationMember)
+			.set({ campusAccessMode: "selected" })
+			.where(
+				and(
+					eq(organizationMember.organizationId, ids.organizationA),
+					eq(organizationMember.userId, ids.campusManager),
+				),
+			);
+		await expectOrpcError(
+			createRefundRequest(
+				scope(ids.campusManager),
+				createInput(ids.invoiceHistoricalStatusPaid, 500),
+			),
+			"FORBIDDEN",
+		);
+		await expectOrpcError(
+			listRefundRequests(scope(ids.owner), { invoiceId: ids.invoiceB }),
+			"NOT_FOUND",
 		);
 	} finally {
 		await cleanupFixture(ids);

@@ -54,3 +54,15 @@ export function getShanghaiToday(now = new Date()): string {
 		.toISOString()
 		.slice(0, 10);
 }
+
+export function getShanghaiCurrentDateTime(now = new Date()): string {
+	return new Date(now.getTime() + 8 * 60 * 60 * 1000)
+		.toISOString()
+		.slice(0, 16);
+}
+
+export function shanghaiDateTimeToIso(value: string): string | null {
+	const date = new Date(`${value}:00+08:00`);
+	if (Number.isNaN(date.getTime())) return null;
+	return getShanghaiCurrentDateTime(date) === value ? date.toISOString() : null;
+}

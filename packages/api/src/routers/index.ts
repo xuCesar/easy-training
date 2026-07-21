@@ -16,6 +16,8 @@ import {
 	campusListResultSchema,
 	cancelLessonInputSchema,
 	cancelMakeupLessonInputSchema,
+	cancelRefundRequestInputSchema,
+	cancelRefundRequestResultSchema,
 	claimInvitationInputSchema,
 	claimInvitationResultSchema,
 	classEnrollmentListInputSchema,
@@ -49,8 +51,8 @@ import {
 	createManualInvoiceResultSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
-	createRefundInputSchema,
-	createRefundResultSchema,
+	createRefundRequestInputSchema,
+	createRefundRequestResultSchema,
 	createScheduleRuleInputSchema,
 	createStudentInputSchema,
 	createStudentTagInputSchema,
@@ -59,6 +61,8 @@ import {
 	dashboardSnapshotSchema,
 	deactivateScheduleRuleInputSchema,
 	deactivateScheduleRuleResultSchema,
+	decideRefundRequestInputSchema,
+	decideRefundRequestResultSchema,
 	deleteScheduleRuleInputSchema,
 	deleteScheduleRuleResultSchema,
 	duplicateStudentCandidatesInputSchema,
@@ -110,6 +114,8 @@ import {
 	previewScheduleRuleDeactivationResultSchema,
 	previewScheduleRuleUpdateInputSchema,
 	previewScheduleRuleUpdateResultSchema,
+	refundRequestListInputSchema,
+	refundRequestListResultSchema,
 	removeMemberInputSchema,
 	renewEnrollmentInputSchema,
 	renewEnrollmentResultSchema,
@@ -179,7 +185,6 @@ import {
 } from "../repositories/enrollment-conversion";
 import {
 	createInvoiceFollowUp,
-	createRefund,
 	listArrears,
 	listEnrollmentAdjustments,
 	renewEnrollment,
@@ -233,6 +238,12 @@ import {
 	updateCampus,
 	updateMember,
 } from "../repositories/organization-management";
+import {
+	cancelRefundRequest,
+	createRefundRequest,
+	decideRefundRequest,
+	listRefundRequests,
+} from "../repositories/refund-approval";
 import {
 	getStudentMergePreview,
 	mergeStudents,
@@ -1566,12 +1577,51 @@ export const appRouter = {
 						),
 					),
 			},
-			refunds: {
-				create: financeProcedure
-					.input(createRefundInputSchema)
-					.output(createRefundResultSchema)
+			refundRequests: {
+				list: financeProcedure
+					.input(refundRequestListInputSchema)
+					.output(refundRequestListResultSchema)
 					.handler(({ context, input }) =>
-						createRefund(
+						listRefundRequests(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				create: financeProcedure
+					.input(createRefundRequestInputSchema)
+					.output(createRefundRequestResultSchema)
+					.handler(({ context, input }) =>
+						createRefundRequest(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				decide: financeProcedure
+					.input(decideRefundRequestInputSchema)
+					.output(decideRefundRequestResultSchema)
+					.handler(({ context, input }) =>
+						decideRefundRequest(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				cancel: financeProcedure
+					.input(cancelRefundRequestInputSchema)
+					.output(cancelRefundRequestResultSchema)
+					.handler(({ context, input }) =>
+						cancelRefundRequest(
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
