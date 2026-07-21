@@ -26,6 +26,7 @@ import {
 	classStatusEvent,
 	course,
 	enrollment,
+	enrollmentLifecycleEvent,
 	lesson,
 	lessonConsumption,
 	makeupLesson,
@@ -915,6 +916,8 @@ export type ClassEnrollmentRecord = {
 	studentId: string;
 	studentName: string;
 	remainingLessons: number;
+	status: "active" | "frozen" | "transferred";
+	version: number;
 	classGroupId: string | null;
 	className: string | null;
 };
@@ -1458,6 +1461,8 @@ export async function listClassEnrollmentRecords(input: {
 			studentId: student.id,
 			studentName: student.name,
 			remainingLessons: enrollment.remainingLessons,
+			status: enrollment.status,
+			version: enrollment.version,
 			classGroupId: enrollment.classGroupId,
 			className: assignedClass.name,
 		})
@@ -1481,7 +1486,7 @@ export async function listClassEnrollmentRecords(input: {
 			and(
 				eq(enrollment.organizationId, input.organizationId),
 				eq(enrollment.courseId, group.courseId),
-				eq(enrollment.status, "active"),
+				inArray(enrollment.status, ["active", "frozen"]),
 			),
 		)
 		.orderBy(asc(student.name), asc(enrollment.id));
@@ -2587,8 +2592,25 @@ type AttendanceMembership = {
 
 async function loadAttendanceMemberships(
 	tx: Transaction,
-	input: { organizationId: string; lessonId: string; classGroupId: string },
+	input: {
+		organizationId: string;
+		lessonId: string;
+		classGroupId: string;
+		startsAt: Date;
+	},
 ): Promise<AttendanceMembership[]> {
+	const [group] = await tx
+		.select({ courseId: classGroup.courseId })
+		.from(classGroup)
+		.where(
+			and(
+				eq(classGroup.id, input.classGroupId),
+				eq(classGroup.organizationId, input.organizationId),
+			),
+		)
+		.limit(1)
+		.for("update");
+	if (!group) throw new TeachingRepositoryError("CLASS_NOT_FOUND");
 	const baseMemberships = await tx
 		.select({
 			id: enrollment.id,
@@ -2596,6 +2618,8 @@ async function loadAttendanceMemberships(
 			studentId: enrollment.studentId,
 			studentName: student.name,
 			remainingLessons: enrollment.remainingLessons,
+			status: enrollment.status,
+			classGroupId: enrollment.classGroupId,
 		})
 		.from(enrollment)
 		.innerJoin(
@@ -2608,11 +2632,55 @@ async function loadAttendanceMemberships(
 		.where(
 			and(
 				eq(enrollment.organizationId, input.organizationId),
-				eq(enrollment.classGroupId, input.classGroupId),
-				eq(enrollment.status, "active"),
+				eq(enrollment.courseId, group.courseId),
+				inArray(enrollment.status, ["active", "frozen"]),
 			),
 		)
 		.for("update");
+	const baseEvents =
+		baseMemberships.length > 0
+			? await tx
+					.select({
+						enrollmentId: enrollmentLifecycleEvent.enrollmentId,
+						beforeStatus: enrollmentLifecycleEvent.beforeStatus,
+						afterStatus: enrollmentLifecycleEvent.afterStatus,
+						fromClassGroupId: enrollmentLifecycleEvent.fromClassGroupId,
+						toClassGroupId: enrollmentLifecycleEvent.toClassGroupId,
+						effectiveAt: enrollmentLifecycleEvent.effectiveAt,
+						id: enrollmentLifecycleEvent.id,
+					})
+					.from(enrollmentLifecycleEvent)
+					.where(
+						and(
+							eq(enrollmentLifecycleEvent.organizationId, input.organizationId),
+							inArray(
+								enrollmentLifecycleEvent.enrollmentId,
+								baseMemberships.map((item) => item.id),
+							),
+						),
+					)
+					.orderBy(
+						asc(enrollmentLifecycleEvent.effectiveAt),
+						asc(enrollmentLifecycleEvent.id),
+					)
+			: [];
+	const eventsByEnrollmentId = new Map<string, typeof baseEvents>();
+	for (const event of baseEvents) {
+		const events = eventsByEnrollmentId.get(event.enrollmentId) ?? [];
+		events.push(event);
+		eventsByEnrollmentId.set(event.enrollmentId, events);
+	}
+	const activeBaseMemberships = baseMemberships.filter((membership) => {
+		const events = eventsByEnrollmentId.get(membership.id) ?? [];
+		let status = events[0]?.beforeStatus ?? membership.status;
+		let classGroupId = events[0]?.fromClassGroupId ?? membership.classGroupId;
+		for (const event of events) {
+			if (event.effectiveAt > input.startsAt) break;
+			status = event.afterStatus;
+			classGroupId = event.toClassGroupId;
+		}
+		return status === "active" && classGroupId === input.classGroupId;
+	});
 	const makeupMemberships = await tx
 		.select({
 			id: enrollment.id,
@@ -2620,6 +2688,7 @@ async function loadAttendanceMemberships(
 			studentId: enrollment.studentId,
 			studentName: student.name,
 			remainingLessons: enrollment.remainingLessons,
+			status: enrollment.status,
 		})
 		.from(makeupLesson)
 		.innerJoin(
@@ -2642,10 +2711,51 @@ async function loadAttendanceMemberships(
 				eq(makeupLesson.organizationId, input.organizationId),
 				eq(makeupLesson.targetLessonId, input.lessonId),
 				eq(makeupLesson.status, "scheduled"),
+				inArray(enrollment.status, ["active", "frozen"]),
 			),
 		)
 		.for("update");
-	const rawMemberships = [...baseMemberships, ...makeupMemberships];
+	const makeupEvents =
+		makeupMemberships.length > 0
+			? await tx
+					.select({
+						enrollmentId: enrollmentLifecycleEvent.enrollmentId,
+						beforeStatus: enrollmentLifecycleEvent.beforeStatus,
+						afterStatus: enrollmentLifecycleEvent.afterStatus,
+						effectiveAt: enrollmentLifecycleEvent.effectiveAt,
+						id: enrollmentLifecycleEvent.id,
+					})
+					.from(enrollmentLifecycleEvent)
+					.where(
+						and(
+							eq(enrollmentLifecycleEvent.organizationId, input.organizationId),
+							inArray(
+								enrollmentLifecycleEvent.enrollmentId,
+								makeupMemberships.map((item) => item.id),
+							),
+						),
+					)
+					.orderBy(
+						asc(enrollmentLifecycleEvent.effectiveAt),
+						asc(enrollmentLifecycleEvent.id),
+					)
+			: [];
+	const makeupEventsByEnrollmentId = new Map<string, typeof makeupEvents>();
+	for (const event of makeupEvents) {
+		const events = makeupEventsByEnrollmentId.get(event.enrollmentId) ?? [];
+		events.push(event);
+		makeupEventsByEnrollmentId.set(event.enrollmentId, events);
+	}
+	const activeMakeupMemberships = makeupMemberships.filter((membership) => {
+		const events = makeupEventsByEnrollmentId.get(membership.id) ?? [];
+		let status = events[0]?.beforeStatus ?? membership.status;
+		for (const event of events) {
+			if (event.effectiveAt > input.startsAt) break;
+			status = event.afterStatus;
+		}
+		return status === "active";
+	});
+	const rawMemberships = [...activeBaseMemberships, ...activeMakeupMemberships];
 	if (
 		new Set(rawMemberships.map((item) => item.studentId)).size !==
 		rawMemberships.length
@@ -2717,6 +2827,7 @@ export async function getLessonAttendanceRecord(input: {
 			organizationId: input.organizationId,
 			lessonId: lessonRecord.id,
 			classGroupId: lessonRecord.classGroupId,
+			startsAt: lessonRecord.startsAt,
 		}),
 	);
 	return {
@@ -2871,6 +2982,7 @@ export async function saveLessonAttendanceDraftRecord(input: {
 			organizationId: input.organizationId,
 			lessonId: lessonRecord.id,
 			classGroupId: lessonRecord.classGroupId,
+			startsAt: lessonRecord.startsAt,
 		});
 		const submitted = new Map(
 			input.attendance.map((item) => [item.enrollmentId, item]),
@@ -2989,6 +3101,7 @@ export async function completeLessonRecord(input: {
 			organizationId: input.organizationId,
 			lessonId: lessonRecord.id,
 			classGroupId: lessonRecord.classGroupId,
+			startsAt: lessonRecord.startsAt,
 		});
 		const existingDrafts = await tx
 			.select({

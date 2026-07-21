@@ -159,7 +159,7 @@ export type EnrollmentAdjustmentRecord = {
 	courseName: string;
 	purchasedLessons: number;
 	remainingLessons: number;
-	status: "active" | "transferred";
+	status: "active" | "frozen" | "transferred";
 };
 
 export type EnrollmentAdjustmentCourseRecord = {

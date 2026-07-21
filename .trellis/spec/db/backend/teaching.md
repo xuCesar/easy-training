@@ -270,3 +270,64 @@ await tx.insert(lesson).values({ roomId: room.id, room: room.name });
 ```
 
 `roomId` 是新写入的资源事实，`room` 只保存当时名称快照；容量检查必须显式带入目标课次有效补课人数。
+
+## Scenario: 报名单条生命周期与课次成员资格
+
+### 1. Scope / Trigger
+
+冻结、复课、退班、重新分班和同课程转班必须作用于单条 `enrollment`，不能由 `student.status` 或当前 `classGroupId` 直接重写历史名单。
+
+### 2. Signatures
+
+- `updateEnrollmentLifecycleRecord({ enrollmentId, expectedVersion, requestId, action })`
+- `action`: `freeze/resume/withdrawClass` 带原因，`assignClass` 带目标班级。
+- API：`training.enrollments.lifecycle`；旧 `assignEnrollment` 仅可作为调用同一命令的兼容适配层。
+
+### 3. Contracts
+
+- 每次成功动作追加 `enrollment_lifecycle_event`，并更新 `enrollment.version`；事件含前后状态/班级、生效时点、requestId 与输入哈希。
+- 点名、结课与补课成员按 `lesson.startsAt` 回放事件：冻结区间排除；复课只影响其后课次；转班/退班只影响其后班级归属。
+- 事务内重读角色、校区、报名、目标班级、班级人数与未来教室容量；历史考勤、课消、账单与收款不回写。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 陈旧版本 | `ENROLLMENT_VERSION_CONFLICT` |
+| 非 active 冻结/分班，非 frozen 复课 | `ENROLLMENT_NOT_ACTIVE` / `ENROLLMENT_NOT_FROZEN` |
+| 目标班级课程/校区/状态不匹配 | `CLASS_COURSE_MISMATCH` / `CLASS_CAMPUS_MISMATCH` / `CLASS_NOT_AVAILABLE` |
+| 目标班级、未来教室或已有报名重复 | `CLASS_FULL` / `CLASS_STUDENT_DUPLICATE` |
+| requestId 载荷不同 | `IDEMPOTENCY_CONFLICT` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：冻结英语报名不会影响美术报名；复课后只重新进入复课时点之后的课次。
+- Base：退班只清空当前归属，保留剩余课时，之后可重新分班。
+- Bad：直接更新 `enrollment.classGroupId`，或以当前状态重新计算已完成课次的名单。
+
+### 6. Tests Required
+
+- 覆盖冻结、复课、转班、退班和重新分班对未来课次名单的回放。
+- 覆盖版本冲突、权限、同课程/同校区、容量、requestId 重放和审计数量。
+- 覆盖无生命周期事件的旧报名继续保持既有点名/结课语义。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await tx.update(enrollment).set({ status: "frozen" });
+```
+
+没有冻结区间，后续复课会让历史待上课次产生错误归属。
+
+#### Correct
+
+```ts
+await tx.insert(enrollmentLifecycleEvent).values({
+  beforeStatus,
+  afterStatus: "frozen",
+  effectiveAt: now,
+  requestId,
+});
+```

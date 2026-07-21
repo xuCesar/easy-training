@@ -1,12 +1,10 @@
 import {
 	type Campus,
-	type CreateStudentInput,
 	createStudentInputSchema,
 	type StudentDetail,
 	type StudentListResult,
 	type StudentStatus,
 	type StudentTag,
-	type UpdateStudentInput,
 	updateStudentInputSchema,
 } from "@easy-training/api/contracts/training";
 import { Badge } from "@easy-training/ui/components/badge";
@@ -51,7 +49,12 @@ import {
 	TableHeader,
 	TableRow,
 } from "@easy-training/ui/components/table";
-import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
+import {
+	useInfiniteQuery,
+	useMutation,
+	useQueries,
+	useQuery,
+} from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
 	LoaderCircleIcon,
@@ -101,7 +104,7 @@ const studentStatuses: Array<{ value: StudentStatus; label: string }> = [
 	{ value: "active", label: "在读" },
 	{ value: "paused", label: "暂停" },
 	{ value: "atRisk", label: "需关注" },
-	{ value: "graduated", label: "已结业" },
+	{ value: "graduated", label: "已归档" },
 ];
 
 function StudentsRoute() {
@@ -115,6 +118,7 @@ function StudentsRoute() {
 	const [independentEnrollmentOpen, setIndependentEnrollmentOpen] =
 		useState(false);
 	const [tagsOpen, setTagsOpen] = useState(false);
+	const [mergeTarget, setMergeTarget] = useState<StudentSummary | null>(null);
 	const deferredSearch = useDeferredValue(search.trim());
 	const queryContext = { organizationId: organization.id, sessionUserId };
 	const campusesOptions = orpc.training.campuses.list.queryOptions({
@@ -253,6 +257,7 @@ function StudentsRoute() {
 				isError={listQuery.isError}
 				onRetry={() => void listQuery.refetch()}
 				onEdit={setEditor}
+				onMerge={canManageTags ? setMergeTarget : undefined}
 			/>
 			{listQuery.hasNextPage ? (
 				<div className="flex justify-center">
@@ -278,6 +283,12 @@ function StudentsRoute() {
 					campuses={campusesQuery.data?.items ?? []}
 					tags={tagsQuery.data?.items ?? []}
 					onClose={() => setEditor(null)}
+				/>
+			) : null}
+			{mergeTarget ? (
+				<StudentMergeDialog
+					target={mergeTarget}
+					onClose={() => setMergeTarget(null)}
 				/>
 			) : null}
 			{independentEnrollmentOpen ? (
@@ -334,6 +345,7 @@ function StudentResults({
 	isError,
 	onRetry,
 	onEdit,
+	onMerge,
 }: {
 	items: StudentSummary[];
 	isFiltered: boolean;
@@ -341,6 +353,7 @@ function StudentResults({
 	isError: boolean;
 	onRetry: () => void;
 	onEdit: (student: StudentSummary) => void;
+	onMerge?: (student: StudentSummary) => void;
 }) {
 	if (isPending)
 		return (
@@ -401,6 +414,7 @@ function StudentResults({
 								key={student.id}
 								student={student}
 								onEdit={onEdit}
+								onMerge={onMerge}
 							/>
 						))}
 					</TableBody>
@@ -412,6 +426,7 @@ function StudentResults({
 						key={student.id}
 						student={student}
 						onEdit={onEdit}
+						onMerge={onMerge}
 					/>
 				))}
 			</div>
@@ -422,9 +437,11 @@ function StudentResults({
 function StudentTableRow({
 	student,
 	onEdit,
+	onMerge,
 }: {
 	student: StudentSummary;
 	onEdit: (student: StudentSummary) => void;
+	onMerge?: (student: StudentSummary) => void;
 }) {
 	return (
 		<TableRow>
@@ -457,6 +474,11 @@ function StudentTableRow({
 					<PencilIcon data-icon="inline-start" />
 					编辑
 				</Button>
+				{onMerge ? (
+					<Button size="sm" variant="ghost" onClick={() => onMerge(student)}>
+						合并
+					</Button>
+				) : null}
 			</TableCell>
 		</TableRow>
 	);
@@ -465,9 +487,11 @@ function StudentTableRow({
 function StudentCompactRow({
 	student,
 	onEdit,
+	onMerge,
 }: {
 	student: StudentSummary;
 	onEdit: (student: StudentSummary) => void;
+	onMerge?: (student: StudentSummary) => void;
 }) {
 	return (
 		<article className="flex flex-col gap-3 p-3">
@@ -499,6 +523,16 @@ function StudentCompactRow({
 				<PencilIcon data-icon="inline-start" />
 				编辑档案
 			</Button>
+			{onMerge ? (
+				<Button
+					className="self-start"
+					size="sm"
+					variant="ghost"
+					onClick={() => onMerge(student)}
+				>
+					合并重复档案
+				</Button>
+			) : null}
 		</article>
 	);
 }
@@ -516,6 +550,244 @@ function StudentStatusBadge({ status }: { status: StudentStatus }) {
 		>
 			{studentStatuses.find((item) => item.value === status)?.label}
 		</Badge>
+	);
+}
+
+function StudentMergeDialog({
+	target,
+	onClose,
+}: {
+	target: StudentSummary;
+	onClose: () => void;
+}) {
+	const [search, setSearch] = useState("");
+	const [source, setSource] = useState<StudentSummary | null>(null);
+	const [fieldSources, setFieldSources] = useState({
+		name: "target" as const,
+		campusId: "target" as const,
+		birthDate: "target" as const,
+		status: "target" as const,
+		primaryContactId: "",
+	});
+	const candidatesQuery = useQuery({
+		queryKey: ["student-merge-candidates", search],
+		queryFn: () =>
+			client.training.students.list({
+				query: search.trim() || undefined,
+				status: "all",
+				pageSize: 10,
+			}),
+	});
+	const previewQuery = useQuery({
+		...orpc.training.students.mergePreview.queryOptions({
+			input: {
+				sourceStudentId: source?.id ?? target.id,
+				targetStudentId: target.id,
+			},
+		}),
+		enabled: source !== null,
+	});
+	useEffect(() => {
+		const preview = previewQuery.data;
+		if (!preview) return;
+		const targetPrimary = preview.contacts.find(
+			(contact) =>
+				contact.studentId === target.id &&
+				contact.isPrimary &&
+				!contact.duplicateOfContactId,
+		);
+		setFieldSources((current) => ({
+			...current,
+			primaryContactId: targetPrimary?.id ?? preview.contacts[0]?.id ?? "",
+		}));
+	}, [previewQuery.data, target.id]);
+	const mutation = useMutation(
+		orpc.training.students.merge.mutationOptions({
+			onSuccess: () => {
+				toast.success("学员档案已合并，来源档案已冻结为只读映射。");
+				void invalidateStudentQueries();
+				onClose();
+			},
+		}),
+	);
+	const preview = previewQuery.data;
+	const eligibleContacts =
+		preview?.contacts.filter((contact) => !contact.duplicateOfContactId) ?? [];
+	function merge() {
+		if (!preview || !source || !fieldSources.primaryContactId) return;
+		mutation.mutate({
+			sourceStudentId: source.id,
+			targetStudentId: target.id,
+			expectedSourceUpdatedAt: preview.source.updatedAt,
+			expectedTargetUpdatedAt: preview.target.updatedAt,
+			requestId: crypto.randomUUID(),
+			fieldSources,
+		});
+	}
+	return (
+		<Dialog
+			open
+			onOpenChange={(open) => !open && !mutation.isPending && onClose()}
+		>
+			<DialogContent className="max-h-[calc(100dvh-2rem)] max-w-2xl overflow-y-auto">
+				<DialogHeader>
+					<DialogTitle>合并学员档案</DialogTitle>
+					<DialogDescription>
+						主档案为“{target.name}
+						”。合并会迁移可安全归并的业务关联，来源档案将变为只读映射；已完成课次、考勤和财务事实不会删除。
+					</DialogDescription>
+				</DialogHeader>
+				{!source ? (
+					<div className="grid gap-3">
+						<Input
+							value={search}
+							onChange={(event) => setSearch(event.target.value)}
+							placeholder="搜索要合并进此主档案的来源学员"
+						/>
+						{candidatesQuery.isPending ? <Skeleton className="h-20" /> : null}
+						{(candidatesQuery.data?.items ?? [])
+							.filter((candidate) => candidate.id !== target.id)
+							.map((candidate) => (
+								<Button
+									key={candidate.id}
+									variant="outline"
+									className="h-auto justify-start p-3 text-left"
+									onClick={() => setSource(candidate)}
+								>
+									<span>
+										{candidate.name} · {candidate.campusName} ·{" "}
+										{candidate.primaryContactPhoneMasked}
+									</span>
+								</Button>
+							))}
+						{!candidatesQuery.isPending &&
+						(candidatesQuery.data?.items ?? []).filter(
+							(candidate) => candidate.id !== target.id,
+						).length === 0 ? (
+							<p className="border p-3 text-muted-foreground text-sm">
+								暂无可选来源学员。
+							</p>
+						) : null}
+					</div>
+				) : previewQuery.isPending ? (
+					<Skeleton className="h-48" />
+				) : previewQuery.isError || !preview ? (
+					<div className="grid gap-3 border p-3 text-sm">
+						<p>合并预览加载失败：{previewQuery.error?.message}</p>
+						<Button variant="outline" onClick={() => setSource(null)}>
+							重新选择
+						</Button>
+					</div>
+				) : (
+					<div className="grid gap-4">
+						{preview.blockingReasons.length > 0 ? (
+							<div className="border border-destructive/50 bg-destructive/5 p-3 text-destructive text-sm">
+								{preview.blockingReasons.includes("ACTIVE_COURSE_ENROLLMENT")
+									? "两份档案存在同课程有效报名，请先通过续费、转课、退班或财务流程单独处理。"
+									: "两份档案在同一课次均有考勤，不能自动合并。"}
+							</div>
+						) : null}
+						<div className="grid gap-3 sm:grid-cols-2">
+							{(
+								[
+									["name", "姓名"],
+									["campusId", "所属校区"],
+									["birthDate", "出生日期"],
+									["status", "档案状态"],
+								] as const
+							).map(([field, label]) => (
+								<Field key={field}>
+									<FieldLabel>{label}</FieldLabel>
+									<Select
+										value={fieldSources[field]}
+										onValueChange={(value) =>
+											value &&
+											setFieldSources((current) => ({
+												...current,
+												[field]: value as "source" | "target",
+											}))
+										}
+									>
+										<SelectTrigger>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="target">
+												保留主档案：{String(preview.target[field] ?? "未填写")}
+											</SelectItem>
+											<SelectItem value="source">
+												采用来源：{String(preview.source[field] ?? "未填写")}
+											</SelectItem>
+										</SelectContent>
+									</Select>
+								</Field>
+							))}
+						</div>
+						<Field>
+							<FieldLabel>合并后的主要联系人</FieldLabel>
+							<Select
+								value={fieldSources.primaryContactId}
+								onValueChange={(primaryContactId) =>
+									primaryContactId &&
+									setFieldSources((current) => ({
+										...current,
+										primaryContactId,
+									}))
+								}
+							>
+								<SelectTrigger>
+									<SelectValue placeholder="选择主要联系人" />
+								</SelectTrigger>
+								<SelectContent>
+									{eligibleContacts.map((contact) => (
+										<SelectItem key={contact.id} value={contact.id}>
+											{contact.name} · {contact.phone}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</Field>
+						<p className="text-muted-foreground text-xs">
+							联系人按手机号去重，标签自动并集。提交后不能恢复来源档案为独立可写档案。
+						</p>
+					</div>
+				)}
+				<DialogFooter className="flex-col-reverse sm:flex-row">
+					<Button
+						variant="outline"
+						disabled={mutation.isPending}
+						onClick={onClose}
+					>
+						取消
+					</Button>
+					{source ? (
+						<Button
+							variant="outline"
+							disabled={mutation.isPending}
+							onClick={() => setSource(null)}
+						>
+							上一步
+						</Button>
+					) : null}
+					{preview ? (
+						<Button
+							variant="destructive"
+							disabled={
+								mutation.isPending ||
+								preview.blockingReasons.length > 0 ||
+								!fieldSources.primaryContactId
+							}
+							onClick={merge}
+						>
+							{mutation.isPending ? (
+								<LoaderCircleIcon className="animate-spin" />
+							) : null}
+							确认合并
+						</Button>
+					) : null}
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }
 
@@ -546,9 +818,28 @@ function StudentEditor({
 	const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
 	const [hasVersionConflict, setHasVersionConflict] = useState(false);
 	const [isRefreshingDetails, setIsRefreshingDetails] = useState(false);
-	const [graduationPayload, setGraduationPayload] = useState<
-		CreateStudentInput | UpdateStudentInput | null
-	>(null);
+	const duplicateCandidateQueries = useQueries({
+		queries: values.contacts.map((contact) => ({
+			...orpc.training.students.duplicateCandidates.queryOptions({
+				input: {
+					phone: contact.phone.trim() || "00000",
+					...(isEditing ? { excludeStudentId: studentId } : {}),
+				},
+			}),
+			enabled: contact.phone.trim().length >= 5,
+		})),
+	});
+	const duplicateCandidates = useMemo(
+		() =>
+			Array.from(
+				new Map(
+					duplicateCandidateQueries
+						.flatMap((query) => query.data?.items ?? [])
+						.map((candidate) => [candidate.id, candidate]),
+				).values(),
+			),
+		[duplicateCandidateQueries],
+	);
 	useEffect(() => {
 		if (!hasInitializedDraft && detailQuery.data) {
 			setValues(toStudentForm(detailQuery.data));
@@ -616,13 +907,6 @@ function StudentEditor({
 				return;
 			}
 			setFormError(null);
-			if (
-				editor.status !== "graduated" &&
-				parsed.data.data.status === "graduated"
-			) {
-				setGraduationPayload(parsed.data);
-				return;
-			}
 			updateMutation.mutate(parsed.data);
 			return;
 		}
@@ -632,10 +916,6 @@ function StudentEditor({
 			return;
 		}
 		setFormError(null);
-		if (parsed.data.status === "graduated") {
-			setGraduationPayload(parsed.data);
-			return;
-		}
 		createMutation.mutate(parsed.data);
 	}
 
@@ -656,231 +936,196 @@ function StudentEditor({
 		}
 	}
 
-	function confirmGraduation() {
-		if (!graduationPayload) return;
-		if ("id" in graduationPayload) updateMutation.mutate(graduationPayload);
-		else createMutation.mutate(graduationPayload);
-		setGraduationPayload(null);
-	}
 	const detailLoading =
 		isEditing && detailQuery.isPending && !hasInitializedDraft;
 	const detailError = isEditing && detailQuery.isError && !hasInitializedDraft;
 	return (
-		<>
-			<Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-				<DialogContent className="max-h-[calc(100dvh-2rem)] max-w-2xl overflow-y-auto">
-					<DialogHeader>
-						<DialogTitle>{isEditing ? "编辑学员档案" : "新增学员"}</DialogTitle>
-						<DialogDescription>
-							{isEditing
-								? "校区归属创建后不可直接修改。"
-								: "请填写基础资料并指定一位主要联系人。"}
-						</DialogDescription>
-					</DialogHeader>
-					{detailLoading ? (
-						<div className="space-y-3">
-							<Skeleton className="h-10 w-full" />
-							<Skeleton className="h-32 w-full" />
-						</div>
-					) : detailError ? (
-						<div className="flex flex-col gap-3">
-							<p className="text-destructive text-sm">
-								无法加载学员详情：{detailQuery.error.message}
-							</p>
-							<Button
-								className="self-start"
-								variant="outline"
-								onClick={() => void detailQuery.refetch()}
-							>
-								重试
-							</Button>
-						</div>
-					) : (
-						<form className="flex flex-col gap-5" onSubmit={submit} noValidate>
-							<div className="grid gap-4 sm:grid-cols-2">
-								<TextField
-									id="student-name"
-									label="学员姓名"
-									value={values.name}
-									onChange={(name) =>
-										setValues((current) => ({ ...current, name }))
-									}
-									required
-								/>
-								<Field>
-									<FieldLabel htmlFor="student-campus">所属校区</FieldLabel>
-									{isEditing ? (
-										<Input
-											id="student-campus"
-											readOnly
-											value={editor.campusName}
-										/>
-									) : (
-										<Select
-											value={values.campusId}
-											onValueChange={(campusId) =>
-												campusId &&
-												setValues((current) => ({ ...current, campusId }))
-											}
-										>
-											<SelectTrigger id="student-campus">
-												<SelectValue>
-													{() =>
-														activeCampuses.find(
-															(campus) => campus.id === values.campusId,
-														)?.name ?? "选择校区"
-													}
-												</SelectValue>
-											</SelectTrigger>
-											<SelectContent>
-												<SelectGroup>
-													{activeCampuses.map((campus) => (
-														<SelectItem key={campus.id} value={campus.id}>
-															{campus.name}
-														</SelectItem>
-													))}
-												</SelectGroup>
-											</SelectContent>
-										</Select>
-									)}
-								</Field>
-								<TextField
-									id="student-birth-date"
-									label="出生日期"
-									type="date"
-									value={values.birthDate}
-									onChange={(birthDate) =>
-										setValues((current) => ({ ...current, birthDate }))
-									}
-								/>
-								<Field>
-									<FieldLabel htmlFor="student-status">学员状态</FieldLabel>
+		<Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+			<DialogContent className="max-h-[calc(100dvh-2rem)] max-w-2xl overflow-y-auto">
+				<DialogHeader>
+					<DialogTitle>{isEditing ? "编辑学员档案" : "新增学员"}</DialogTitle>
+					<DialogDescription>
+						{isEditing
+							? "校区归属创建后不可直接修改。"
+							: "请填写基础资料并指定一位主要联系人。"}
+					</DialogDescription>
+				</DialogHeader>
+				{detailLoading ? (
+					<div className="space-y-3">
+						<Skeleton className="h-10 w-full" />
+						<Skeleton className="h-32 w-full" />
+					</div>
+				) : detailError ? (
+					<div className="flex flex-col gap-3">
+						<p className="text-destructive text-sm">
+							无法加载学员详情：{detailQuery.error.message}
+						</p>
+						<Button
+							className="self-start"
+							variant="outline"
+							onClick={() => void detailQuery.refetch()}
+						>
+							重试
+						</Button>
+					</div>
+				) : (
+					<form className="flex flex-col gap-5" onSubmit={submit} noValidate>
+						<div className="grid gap-4 sm:grid-cols-2">
+							<TextField
+								id="student-name"
+								label="学员姓名"
+								value={values.name}
+								onChange={(name) =>
+									setValues((current) => ({ ...current, name }))
+								}
+								required
+							/>
+							<Field>
+								<FieldLabel htmlFor="student-campus">所属校区</FieldLabel>
+								{isEditing ? (
+									<Input
+										id="student-campus"
+										readOnly
+										value={editor.campusName}
+									/>
+								) : (
 									<Select
-										value={values.status}
-										onValueChange={(status) =>
-											status &&
-											setValues((current) => ({
-												...current,
-												status: status as StudentStatus,
-											}))
+										value={values.campusId}
+										onValueChange={(campusId) =>
+											campusId &&
+											setValues((current) => ({ ...current, campusId }))
 										}
 									>
-										<SelectTrigger id="student-status">
+										<SelectTrigger id="student-campus">
 											<SelectValue>
 												{() =>
-													studentStatuses.find(
-														(item) => item.value === values.status,
-													)?.label
+													activeCampuses.find(
+														(campus) => campus.id === values.campusId,
+													)?.name ?? "选择校区"
 												}
 											</SelectValue>
 										</SelectTrigger>
 										<SelectContent>
 											<SelectGroup>
-												{studentStatuses.map((item) => (
-													<SelectItem key={item.value} value={item.value}>
-														{item.label}
+												{activeCampuses.map((campus) => (
+													<SelectItem key={campus.id} value={campus.id}>
+														{campus.name}
 													</SelectItem>
 												))}
 											</SelectGroup>
 										</SelectContent>
 									</Select>
-								</Field>
-							</div>
-							<ContactsEditor
-								contacts={values.contacts}
-								onChange={(contacts) =>
-									setValues((current) => ({ ...current, contacts }))
+								)}
+							</Field>
+							<TextField
+								id="student-birth-date"
+								label="出生日期"
+								type="date"
+								value={values.birthDate}
+								onChange={(birthDate) =>
+									setValues((current) => ({ ...current, birthDate }))
 								}
 							/>
-							<TagSelector
-								tags={availableTags}
-								selectedIds={values.tagIds}
-								onChange={(tagIds) =>
-									setValues((current) => ({ ...current, tagIds }))
-								}
-							/>
-							{hasVersionConflict ? (
-								<div
-									className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/50 bg-destructive/5 p-3"
-									role="alert"
+							<Field>
+								<FieldLabel htmlFor="student-status">学员状态</FieldLabel>
+								<Select
+									value={values.status}
+									onValueChange={(status) =>
+										status &&
+										setValues((current) => ({
+											...current,
+											status: status as StudentStatus,
+										}))
+									}
 								>
-									<p className="text-destructive text-sm">
-										资料已被其他人更新，当前填写内容已保留。
-									</p>
-									<Button
-										type="button"
-										variant="outline"
-										disabled={pending}
-										onClick={() => void refreshLatestDetails()}
-									>
-										{isRefreshingDetails ? (
-											<LoaderCircleIcon
-												className="animate-spin"
-												data-icon="inline-start"
-											/>
-										) : null}
-										刷新最新资料
-									</Button>
-								</div>
-							) : null}
-							{formError ? <FieldError match>{formError}</FieldError> : null}
-							<DialogFooter className="flex-col-reverse sm:flex-row">
+									<SelectTrigger id="student-status">
+										<SelectValue>
+											{() =>
+												studentStatuses.find(
+													(item) => item.value === values.status,
+												)?.label
+											}
+										</SelectValue>
+									</SelectTrigger>
+									<SelectContent>
+										<SelectGroup>
+											{studentStatuses.map((item) => (
+												<SelectItem key={item.value} value={item.value}>
+													{item.label}
+												</SelectItem>
+											))}
+										</SelectGroup>
+									</SelectContent>
+								</Select>
+							</Field>
+						</div>
+						<ContactsEditor
+							contacts={values.contacts}
+							duplicateCandidates={duplicateCandidates}
+							isCheckingDuplicates={duplicateCandidateQueries.some(
+								(query) => query.isFetching,
+							)}
+							onChange={(contacts) =>
+								setValues((current) => ({ ...current, contacts }))
+							}
+						/>
+						<TagSelector
+							tags={availableTags}
+							selectedIds={values.tagIds}
+							onChange={(tagIds) =>
+								setValues((current) => ({ ...current, tagIds }))
+							}
+						/>
+						{hasVersionConflict ? (
+							<div
+								className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/50 bg-destructive/5 p-3"
+								role="alert"
+							>
+								<p className="text-destructive text-sm">
+									资料已被其他人更新，当前填写内容已保留。
+								</p>
 								<Button
 									type="button"
 									variant="outline"
 									disabled={pending}
-									onClick={onClose}
+									onClick={() => void refreshLatestDetails()}
 								>
-									取消
-								</Button>
-								<Button type="submit" disabled={pending}>
-									{pending ? (
+									{isRefreshingDetails ? (
 										<LoaderCircleIcon
 											className="animate-spin"
 											data-icon="inline-start"
 										/>
-									) : (
-										<UserPlusIcon data-icon="inline-start" />
-									)}
-									{isEditing ? "保存" : "创建学员"}
+									) : null}
+									刷新最新资料
 								</Button>
-							</DialogFooter>
-						</form>
-					)}
-				</DialogContent>
-			</Dialog>
-			<Dialog
-				open={graduationPayload !== null}
-				onOpenChange={(open) => !open && setGraduationPayload(null)}
-			>
-				<DialogContent>
-					<DialogHeader>
-						<DialogTitle>确认更新为已结业</DialogTitle>
-						<DialogDescription>
-							结业仅更新学员生命周期状态，不会修改报名、账单、收款或课时记录。
-						</DialogDescription>
-					</DialogHeader>
-					<DialogFooter className="flex-col-reverse sm:flex-row">
-						<Button
-							variant="outline"
-							disabled={pending}
-							onClick={() => setGraduationPayload(null)}
-						>
-							返回修改
-						</Button>
-						<Button disabled={pending} onClick={confirmGraduation}>
-							{pending ? (
-								<LoaderCircleIcon
-									className="animate-spin"
-									data-icon="inline-start"
-								/>
-							) : null}
-							确认结业
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
-		</>
+							</div>
+						) : null}
+						{formError ? <FieldError match>{formError}</FieldError> : null}
+						<DialogFooter className="flex-col-reverse sm:flex-row">
+							<Button
+								type="button"
+								variant="outline"
+								disabled={pending}
+								onClick={onClose}
+							>
+								取消
+							</Button>
+							<Button type="submit" disabled={pending}>
+								{pending ? (
+									<LoaderCircleIcon
+										className="animate-spin"
+										data-icon="inline-start"
+									/>
+								) : (
+									<UserPlusIcon data-icon="inline-start" />
+								)}
+								{isEditing ? "保存" : "创建学员"}
+							</Button>
+						</DialogFooter>
+					</form>
+				)}
+			</DialogContent>
+		</Dialog>
 	);
 }
 
@@ -915,9 +1160,18 @@ function TextField({
 
 function ContactsEditor({
 	contacts,
+	duplicateCandidates,
+	isCheckingDuplicates,
 	onChange,
 }: {
 	contacts: StudentFormValues["contacts"];
+	duplicateCandidates: Array<{
+		id: string;
+		name: string;
+		campusName: string;
+		phoneMasked: string;
+	}>;
+	isCheckingDuplicates: boolean;
 	onChange: (contacts: StudentFormValues["contacts"]) => void;
 }) {
 	function update(
@@ -1021,6 +1275,24 @@ function ContactsEditor({
 					</div>
 				))}
 			</div>
+			{isCheckingDuplicates ? (
+				<p className="text-muted-foreground text-xs">正在检查疑似重复档案…</p>
+			) : duplicateCandidates.length > 0 ? (
+				<div className="border border-amber-500/50 bg-amber-500/5 p-3 text-sm">
+					<p className="font-medium">发现疑似重复学员</p>
+					<p className="mt-1 text-muted-foreground text-xs">
+						匹配仅基于同机构的标准化手机号，不会阻止保存；请确认是否应使用已有档案。
+					</p>
+					<ul className="mt-2 grid gap-1 text-xs">
+						{duplicateCandidates.map((candidate) => (
+							<li key={candidate.id}>
+								{candidate.name} · {candidate.campusName} ·{" "}
+								{candidate.phoneMasked}
+							</li>
+						))}
+					</ul>
+				</div>
+			) : null}
 		</section>
 	);
 }

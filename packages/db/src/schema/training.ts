@@ -62,6 +62,11 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"makeup_lesson_cancelled",
 	"makeup_lesson_needs_reschedule",
 	"enrollment_created",
+	"enrollment_frozen",
+	"enrollment_resumed",
+	"enrollment_class_transferred",
+	"enrollment_class_withdrawn",
+	"student_merged",
 	"lead_imported",
 	"lead_exported",
 	"notification_read",
@@ -143,7 +148,15 @@ export const classPauseFutureLessonPolicy = pgEnum(
 );
 export const enrollmentStatus = pgEnum("enrollment_status", [
 	"active",
+	"frozen",
 	"transferred",
+]);
+export const enrollmentLifecycleKind = pgEnum("enrollment_lifecycle_kind", [
+	"frozen",
+	"resumed",
+	"class_transferred",
+	"class_withdrawn",
+	"class_assigned",
 ]);
 export const invoiceStatus = pgEnum("invoice_status", [
 	"paid",
@@ -492,8 +505,13 @@ export const student = pgTable(
 		name: text("name").notNull(),
 		guardianName: text("guardian_name").notNull(),
 		guardianPhone: text("guardian_phone").notNull(),
+		guardianPhoneNormalized: text("guardian_phone_normalized")
+			.default("")
+			.notNull(),
 		birthDate: date("birth_date"),
 		status: studentStatus("status").default("trial").notNull(),
+		mergedIntoStudentId: uuid("merged_into_student_id"),
+		mergedAt: timestamp("merged_at", { withTimezone: true }),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
@@ -509,6 +527,11 @@ export const student = pgTable(
 			table.organizationId,
 			table.guardianPhone,
 		),
+		index("student_org_guardian_phone_normalized_idx").on(
+			table.organizationId,
+			table.guardianPhoneNormalized,
+		),
+		index("student_merged_into_idx").on(table.mergedIntoStudentId),
 	],
 );
 
@@ -521,6 +544,7 @@ export const studentContact = pgTable(
 			.references(() => student.id, { onDelete: "cascade" }),
 		name: text("name").notNull(),
 		phone: text("phone").notNull(),
+		phoneNormalized: text("phone_normalized").default("").notNull(),
 		relationship: text("relationship"),
 		isPrimary: boolean("is_primary").default(false).notNull(),
 		createdAt: timestamp("created_at", { withTimezone: true })
@@ -536,6 +560,7 @@ export const studentContact = pgTable(
 			.on(table.studentId)
 			.where(sql`${table.isPrimary} = true`),
 		index("student_contact_student_idx").on(table.studentId),
+		index("student_contact_phone_normalized_idx").on(table.phoneNormalized),
 	],
 );
 
@@ -911,6 +936,7 @@ export const enrollment = pgTable(
 		}),
 		purchasedLessons: integer("purchased_lessons").notNull(),
 		remainingLessons: integer("remaining_lessons").notNull(),
+		version: integer("version").default(1).notNull(),
 		amountInCents: integer("amount_in_cents").default(0).notNull(),
 		paidAmountInCents: integer("paid_amount_in_cents").default(0).notNull(),
 		status: enrollmentStatus("status").default("active").notNull(),
@@ -926,6 +952,85 @@ export const enrollment = pgTable(
 		index("enrollment_org_idx").on(table.organizationId),
 		index("enrollment_student_idx").on(table.studentId),
 		index("enrollment_class_idx").on(table.classGroupId),
+	],
+);
+
+export const enrollmentLifecycleEvent = pgTable(
+	"enrollment_lifecycle_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		enrollmentId: uuid("enrollment_id")
+			.notNull()
+			.references(() => enrollment.id),
+		kind: enrollmentLifecycleKind("kind").notNull(),
+		beforeStatus: enrollmentStatus("before_status").notNull(),
+		afterStatus: enrollmentStatus("after_status").notNull(),
+		fromClassGroupId: uuid("from_class_group_id").references(
+			() => classGroup.id,
+		),
+		toClassGroupId: uuid("to_class_group_id").references(() => classGroup.id),
+		effectiveAt: timestamp("effective_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		reason: text("reason"),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		requestId: uuid("request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("enrollment_lifecycle_event_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("enrollment_lifecycle_event_enrollment_effective_idx").on(
+			table.enrollmentId,
+			table.effectiveAt,
+			table.id,
+		),
+	],
+);
+
+export const studentMerge = pgTable(
+	"student_merge",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		sourceStudentId: uuid("source_student_id")
+			.notNull()
+			.references(() => student.id),
+		targetStudentId: uuid("target_student_id")
+			.notNull()
+			.references(() => student.id),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		requestId: uuid("request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		selection: jsonb("selection").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("student_merge_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		uniqueIndex("student_merge_source_uidx").on(table.sourceStudentId),
+		index("student_merge_org_target_idx").on(
+			table.organizationId,
+			table.targetStudentId,
+		),
 	],
 );
 

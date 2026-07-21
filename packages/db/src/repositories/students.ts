@@ -1,4 +1,15 @@
-import { and, asc, count, desc, eq, gt, inArray, or, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	gt,
+	inArray,
+	isNull,
+	or,
+	sql,
+} from "drizzle-orm";
 
 import { db } from "../index";
 import {
@@ -11,6 +22,7 @@ import {
 	studentTagAssignment,
 } from "../schema";
 import type { CampusAccess } from "./organization";
+import { normalizeStudentPhone } from "./student-phone";
 
 export type StudentRepositoryErrorCode =
 	| "STUDENT_NOT_FOUND"
@@ -23,6 +35,7 @@ export type StudentRepositoryErrorCode =
 	| "STUDENT_TAG_NOT_FOUND"
 	| "STUDENT_TAG_DUPLICATE"
 	| "MEMBER_FORBIDDEN"
+	| "STUDENT_MERGED"
 	| "INVALID_CURSOR";
 
 export class StudentRepositoryError extends Error {
@@ -68,6 +81,15 @@ export type StudentDetailRecord = StudentSummaryRecord & {
 		relationship: string | null;
 		isPrimary: boolean;
 	}>;
+};
+
+export type DuplicateStudentCandidateRecord = {
+	id: string;
+	name: string;
+	campusId: string;
+	campusName: string;
+	status: (typeof student.$inferSelect)["status"];
+	phoneMasked: string;
 };
 
 export type CreateStudentRecordInput = {
@@ -215,6 +237,64 @@ function maskPhone(phone: string): string {
 	if (compact.length < 8)
 		return `${compact.slice(0, 1)}***${compact.slice(-1)}`;
 	return `${compact.slice(0, 3)}****${compact.slice(-4)}`;
+}
+
+export async function findDuplicateStudentCandidates(input: {
+	organizationId: string;
+	campusAccess: CampusAccess;
+	phone: string;
+	excludeStudentId?: string;
+}): Promise<DuplicateStudentCandidateRecord[]> {
+	const normalizedPhone = normalizeStudentPhone(input.phone);
+	if (!normalizedPhone || input.campusAccess.kind === "none") return [];
+	const candidates = await db
+		.select({
+			id: student.id,
+			name: student.name,
+			campusId: campus.id,
+			campusName: campus.name,
+			status: student.status,
+			guardianPhone: student.guardianPhone,
+		})
+		.from(student)
+		.innerJoin(
+			campus,
+			and(
+				eq(campus.id, student.campusId),
+				eq(campus.organizationId, input.organizationId),
+			),
+		)
+		.leftJoin(studentContact, eq(studentContact.studentId, student.id))
+		.where(
+			and(
+				eq(student.organizationId, input.organizationId),
+				isNull(student.mergedIntoStudentId),
+				campusAccessCondition(input.campusAccess),
+				input.excludeStudentId
+					? sql`${student.id} <> ${input.excludeStudentId}`
+					: undefined,
+				or(
+					eq(student.guardianPhoneNormalized, normalizedPhone),
+					eq(studentContact.phoneNormalized, normalizedPhone),
+				),
+			),
+		)
+		.orderBy(asc(student.name), asc(student.id));
+	return Array.from(
+		new Map(
+			candidates.map((item) => [
+				item.id,
+				{
+					id: item.id,
+					name: item.name,
+					campusId: item.campusId,
+					campusName: item.campusName,
+					status: item.status,
+					phoneMasked: maskPhone(item.guardianPhone),
+				},
+			]),
+		).values(),
+	);
 }
 
 function normalizeTagName(name: string): string {
@@ -442,6 +522,7 @@ export async function listStudentRecords(input: {
 	const cursor = decodeCursor(input.cursor);
 	const baseFilters = [
 		eq(student.organizationId, input.organizationId),
+		isNull(student.mergedIntoStudentId),
 		campusAccessCondition(input.campusAccess),
 	];
 	if (input.campusId) baseFilters.push(eq(student.campusId, input.campusId));
@@ -676,6 +757,7 @@ export async function createStudentRecord(
 					status: input.status,
 					guardianName: primaryContact.name,
 					guardianPhone: primaryContact.phone,
+					guardianPhoneNormalized: normalizeStudentPhone(primaryContact.phone),
 				})
 				.returning({ id: student.id });
 			if (!created)
@@ -686,6 +768,7 @@ export async function createStudentRecord(
 					studentId: created.id,
 					name: contact.name,
 					phone: contact.phone,
+					phoneNormalized: normalizeStudentPhone(contact.phone),
 					relationship: contact.relationship,
 					isPrimary: contact.isPrimary,
 				})),
@@ -728,6 +811,7 @@ export async function updateStudentRecord(input: {
 					id: student.id,
 					campusId: student.campusId,
 					updatedAt: student.updatedAt,
+					mergedIntoStudentId: student.mergedIntoStudentId,
 				})
 				.from(student)
 				.where(
@@ -739,6 +823,9 @@ export async function updateStudentRecord(input: {
 				.limit(1)
 				.for("update");
 			if (!current) throw new StudentRepositoryError("STUDENT_NOT_FOUND");
+			if (current.mergedIntoStudentId) {
+				throw new StudentRepositoryError("STUDENT_MERGED");
+			}
 			await assertWritableCampus(tx, {
 				organizationId: input.organizationId,
 				campusAccess,
@@ -780,6 +867,7 @@ export async function updateStudentRecord(input: {
 					studentId: current.id,
 					name: contact.name,
 					phone: contact.phone,
+					phoneNormalized: normalizeStudentPhone(contact.phone),
 					relationship: contact.relationship,
 					isPrimary: contact.isPrimary,
 				})),
@@ -793,6 +881,7 @@ export async function updateStudentRecord(input: {
 					status: input.data.status,
 					guardianName: primaryContact.name,
 					guardianPhone: primaryContact.phone,
+					guardianPhoneNormalized: normalizeStudentPhone(primaryContact.phone),
 					updatedAt: sql`greatest(clock_timestamp(), ${student.updatedAt} + interval '1 millisecond')`,
 				})
 				.where(eq(student.id, current.id));

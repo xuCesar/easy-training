@@ -1,5 +1,5 @@
 import {
-	assignEnrollmentClassRecord,
+	assignEnrollmentClassLegacyRecord,
 	bulkUpdateLessonsRecord,
 	cancelLessonRecord,
 	cancelMakeupLessonRecord,
@@ -763,7 +763,7 @@ export async function assignEnrollmentClass(
 	input: AssignEnrollmentClassInput,
 ) {
 	try {
-		await assignEnrollmentClassRecord({
+		await assignEnrollmentClassLegacyRecord({
 			organizationId: scope.organizationId,
 			userId: scope.userId,
 			...input,

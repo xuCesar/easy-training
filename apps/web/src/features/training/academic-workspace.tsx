@@ -1809,8 +1809,13 @@ function ClassMembersDialog({
 	});
 	const query = useQuery(options);
 	const mutation = useMutation(
-		orpc.training.teaching.classes.assignEnrollment.mutationOptions(),
+		orpc.training.enrollments.lifecycle.mutationOptions(),
 	);
+	const [pendingAction, setPendingAction] = useState<{
+		item: ClassEnrollment;
+		kind: "freeze" | "resume" | "withdrawClass" | "assignClass";
+	} | null>(null);
+	const [reason, setReason] = useState("");
 	const items = query.data?.items ?? [];
 	const members = items.filter((item) => item.classGroupId === classGroup.id);
 	const candidates = items.filter(
@@ -1818,11 +1823,39 @@ function ClassMembersDialog({
 	);
 	const canAssign =
 		classGroup.status === "recruiting" || classGroup.status === "running";
-	function assign(item: ClassEnrollment, classGroupId: string | null) {
+	function requestAction(
+		item: ClassEnrollment,
+		kind: "freeze" | "resume" | "withdrawClass" | "assignClass",
+	) {
+		setReason("");
+		setPendingAction({ item, kind });
+	}
+	function submitAction() {
+		if (!pendingAction) return;
+		const { item, kind } = pendingAction;
+		if (kind !== "assignClass" && !reason.trim()) return;
+		const action =
+			kind === "assignClass"
+				? { kind, classGroupId: classGroup.id }
+				: { kind, reason: reason.trim() };
 		void mutation
-			.mutateAsync({ enrollmentId: item.enrollmentId, classGroupId })
+			.mutateAsync({
+				enrollmentId: item.enrollmentId,
+				expectedVersion: item.version,
+				requestId: crypto.randomUUID(),
+				action,
+			})
 			.then(async () => {
-				toast.success(classGroupId ? "学员已入班" : "已移出班级");
+				toast.success(
+					kind === "freeze"
+						? "报名已冻结，仅影响之后的待上课次"
+						: kind === "resume"
+							? "报名已复课，仅从现在之后的课次恢复"
+							: kind === "withdrawClass"
+								? "已退班，报名与剩余课时保持不变"
+								: "已更新后续课次的班级归属",
+				);
+				setPendingAction(null);
 				await onSaved();
 			})
 			.catch((error: Error) => {
@@ -1840,6 +1873,15 @@ function ClassMembersDialog({
 				});
 			});
 	}
+	const pendingReasonRequired = pendingAction?.kind !== "assignClass";
+	const actionTitle =
+		pendingAction?.kind === "freeze"
+			? "冻结报名"
+			: pendingAction?.kind === "resume"
+				? "复课"
+				: pendingAction?.kind === "withdrawClass"
+					? "确认退班"
+					: "确认分班";
 	return (
 		<EditorDialog
 			title={`成员管理 · ${classGroup.name}`}
@@ -1869,7 +1911,18 @@ function ClassMembersDialog({
 						empty="当前班级还没有学员。"
 						actionLabel="移出"
 						disabled={mutation.isPending}
-						onAction={(item) => assign(item, null)}
+						onAction={(item) => requestAction(item, "withdrawClass")}
+						secondaryAction={(item) =>
+							item.status === "frozen"
+								? {
+										label: "复课",
+										onAction: () => requestAction(item, "resume"),
+									}
+								: {
+										label: "冻结",
+										onAction: () => requestAction(item, "freeze"),
+									}
+						}
 					/>
 					<MemberList
 						title="可入班报名"
@@ -1881,10 +1934,61 @@ function ClassMembersDialog({
 						}
 						actionLabel="入班"
 						disabled={mutation.isPending || !canAssign}
-						onAction={(item) => assign(item, classGroup.id)}
+						onAction={(item) => requestAction(item, "assignClass")}
 					/>
 				</div>
 			) : null}
+			<Dialog
+				open={pendingAction !== null}
+				onOpenChange={(open) =>
+					!open && !mutation.isPending && setPendingAction(null)
+				}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>{actionTitle}</DialogTitle>
+						<DialogDescription>
+							{pendingAction?.kind === "assignClass"
+								? "仅更新此刻之后的待上课次；历史考勤、课消和收款不会改变。"
+								: "本操作只影响此刻之后的待上课次，不会改写已完成课次、考勤、课消或收款。"}
+						</DialogDescription>
+					</DialogHeader>
+					{pendingReasonRequired ? (
+						<Field>
+							<FieldLabel htmlFor="enrollment-lifecycle-reason">
+								操作原因
+							</FieldLabel>
+							<Input
+								id="enrollment-lifecycle-reason"
+								value={reason}
+								onChange={(event) => setReason(event.target.value)}
+								maxLength={500}
+								placeholder="请填写原因"
+							/>
+						</Field>
+					) : null}
+					<DialogFooter className="flex-col-reverse sm:flex-row">
+						<Button
+							variant="outline"
+							disabled={mutation.isPending}
+							onClick={() => setPendingAction(null)}
+						>
+							取消
+						</Button>
+						<Button
+							disabled={
+								mutation.isPending || (pendingReasonRequired && !reason.trim())
+							}
+							onClick={submitAction}
+						>
+							{mutation.isPending ? (
+								<LoaderCircleIcon className="animate-spin" />
+							) : null}
+							确认
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</EditorDialog>
 	);
 }
@@ -1896,6 +2000,7 @@ function MemberList({
 	actionLabel,
 	disabled,
 	onAction,
+	secondaryAction,
 }: {
 	title: string;
 	items: ClassEnrollment[];
@@ -1903,6 +2008,10 @@ function MemberList({
 	actionLabel: string;
 	disabled: boolean;
 	onAction: (item: ClassEnrollment) => void;
+	secondaryAction?: (item: ClassEnrollment) => {
+		label: string;
+		onAction: () => void;
+	};
 }) {
 	return (
 		<section className="grid gap-2">
@@ -1923,14 +2032,29 @@ function MemberList({
 									{item.className ? ` · 当前：${item.className}` : ""}
 								</p>
 							</div>
-							<Button
-								size="sm"
-								variant={actionLabel === "移出" ? "outline" : "default"}
-								disabled={disabled}
-								onClick={() => onAction(item)}
-							>
-								{actionLabel}
-							</Button>
+							<div className="flex shrink-0 gap-2">
+								{secondaryAction ? (
+									<Button
+										size="sm"
+										variant="outline"
+										disabled={disabled}
+										onClick={() => secondaryAction(item).onAction()}
+									>
+										{secondaryAction(item).label}
+									</Button>
+								) : null}
+								<Button
+									size="sm"
+									variant={actionLabel === "移出" ? "outline" : "default"}
+									disabled={
+										disabled ||
+										(actionLabel === "入班" && item.status === "frozen")
+									}
+									onClick={() => onAction(item)}
+								>
+									{actionLabel}
+								</Button>
+							</div>
 						</div>
 					))}
 				</div>

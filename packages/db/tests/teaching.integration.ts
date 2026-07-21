@@ -12,6 +12,10 @@ import {
 	updateClassroomRecord,
 } from "../src/repositories/classrooms";
 import {
+	EnrollmentLifecycleError,
+	updateEnrollmentLifecycleRecord,
+} from "../src/repositories/enrollment-lifecycle";
+import {
 	createScheduleRuleRecord as createScheduleRuleRepositoryRecord,
 	deactivateScheduleRuleRecord,
 	deleteScheduleRuleRecord,
@@ -51,6 +55,7 @@ import {
 	classStatusEvent,
 	course,
 	enrollment,
+	enrollmentLifecycleEvent,
 	lesson,
 	lessonConsumption,
 	lessonScheduleBatch,
@@ -103,6 +108,9 @@ async function cleanup(ids: FixtureIds) {
 	if (lessonIds.length > 0) {
 		await db.delete(attendance).where(inArray(attendance.lessonId, lessonIds));
 	}
+	await db
+		.delete(enrollmentLifecycleEvent)
+		.where(eq(enrollmentLifecycleEvent.organizationId, ids.organizationId));
 	await db
 		.delete(enrollment)
 		.where(eq(enrollment.organizationId, ids.organizationId));
@@ -841,6 +849,126 @@ test("报名仅能进入同课程、同校区且未满的班级", async () => {
 			.from(enrollment)
 			.where(eq(enrollment.id, first.enrollmentId));
 		assert.equal(unassigned?.classGroupId, null);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("报名冻结、复课和转班只按生效时点影响未来课次名单", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course, group, room } = await createClassFixture(ids);
+		assert.ok(course);
+		const { group: targetGroup } = await createClassFixture(ids, {
+			courseId: course.id,
+		});
+		const enrollmentFixture = await createEnrollmentFixture({
+			ids,
+			courseId: course.id,
+			classGroupId: group.id,
+			studentName: "报名生命周期学员",
+		});
+		const startsAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+		const sourceLesson = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: group.id,
+			room: room.name,
+			startsAt,
+			endsAt: new Date(startsAt.getTime() + 60 * 60 * 1000),
+		});
+		assert.deepEqual(
+			(
+				await getLessonAttendanceRecord({
+					organizationId: ids.organizationId,
+					campusAccess: { kind: "all" },
+					id: sourceLesson.id,
+				})
+			).members.map((item) => item.enrollmentId),
+			[enrollmentFixture.enrollmentId],
+		);
+		const frozen = await updateEnrollmentLifecycleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			enrollmentId: enrollmentFixture.enrollmentId,
+			expectedVersion: 1,
+			requestId: randomUUID(),
+			action: { kind: "freeze", reason: "暑期暂停" },
+		});
+		assert.equal(frozen.status, "frozen");
+		assert.deepEqual(
+			(
+				await getLessonAttendanceRecord({
+					organizationId: ids.organizationId,
+					campusAccess: { kind: "all" },
+					id: sourceLesson.id,
+				})
+			).members,
+			[],
+		);
+		const resumed = await updateEnrollmentLifecycleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			enrollmentId: enrollmentFixture.enrollmentId,
+			expectedVersion: frozen.version,
+			requestId: randomUUID(),
+			action: { kind: "resume", reason: "恢复上课" },
+		});
+		assert.equal(resumed.status, "active");
+		const transferred = await updateEnrollmentLifecycleRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			enrollmentId: enrollmentFixture.enrollmentId,
+			expectedVersion: resumed.version,
+			requestId: randomUUID(),
+			action: { kind: "assignClass", classGroupId: targetGroup.id },
+		});
+		assert.equal(transferred.classGroupId, targetGroup.id);
+		assert.deepEqual(
+			(
+				await getLessonAttendanceRecord({
+					organizationId: ids.organizationId,
+					campusAccess: { kind: "all" },
+					id: sourceLesson.id,
+				})
+			).members,
+			[],
+		);
+		const targetStartsAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+		const targetLesson = await createLessonRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			classGroupId: targetGroup.id,
+			room: "生命周期目标教室",
+			startsAt: targetStartsAt,
+			endsAt: new Date(targetStartsAt.getTime() + 60 * 60 * 1000),
+		});
+		assert.deepEqual(
+			(
+				await getLessonAttendanceRecord({
+					organizationId: ids.organizationId,
+					campusAccess: { kind: "all" },
+					id: targetLesson.id,
+				})
+			).members.map((item) => item.enrollmentId),
+			[enrollmentFixture.enrollmentId],
+		);
+		await assert.rejects(
+			updateEnrollmentLifecycleRecord({
+				organizationId: ids.organizationId,
+				userId: ids.managerId,
+				enrollmentId: enrollmentFixture.enrollmentId,
+				expectedVersion: 1,
+				requestId: randomUUID(),
+				action: { kind: "freeze", reason: "陈旧版本" },
+			}),
+			(error: unknown) => {
+				assert.ok(error instanceof EnrollmentLifecycleError);
+				assert.equal(error.code, "ENROLLMENT_VERSION_CONFLICT");
+				return true;
+			},
+		);
 	} finally {
 		await cleanup(ids);
 	}

@@ -174,6 +174,12 @@ function IndependentEnrollmentForm({
 	const [invoiceDueDate, setInvoiceDueDate] = useState(getShanghaiToday);
 	const [requestId] = useState(() => crypto.randomUUID());
 	const [errors, setErrors] = useState<EnrollmentErrors>({});
+	const duplicateCandidatesQuery = useQuery({
+		...orpc.training.students.duplicateCandidates.queryOptions({
+			input: { phone: contactPhone.trim() || "00000" },
+		}),
+		enabled: mode === "new" && contactPhone.trim().length >= 5,
+	});
 
 	const studentListQuery = useInfiniteQuery({
 		queryKey: ["independent-enrollment-students", deferredStudentQuery],
@@ -365,6 +371,8 @@ function IndependentEnrollmentForm({
 					contactName={contactName}
 					contactPhone={contactPhone}
 					contactRelationship={contactRelationship}
+					duplicateCandidates={duplicateCandidatesQuery.data?.items ?? []}
+					isCheckingDuplicates={duplicateCandidatesQuery.isFetching}
 					errors={errors}
 					onStudentNameChange={(value) => {
 						setStudentName(value);
@@ -578,6 +586,8 @@ function NewStudentFields({
 	contactName,
 	contactPhone,
 	contactRelationship,
+	duplicateCandidates,
+	isCheckingDuplicates,
 	errors,
 	onStudentNameChange,
 	onCampusChange,
@@ -591,6 +601,13 @@ function NewStudentFields({
 	contactName: string;
 	contactPhone: string;
 	contactRelationship: string;
+	duplicateCandidates: Array<{
+		id: string;
+		name: string;
+		campusName: string;
+		phoneMasked: string;
+	}>;
+	isCheckingDuplicates: boolean;
 	errors: EnrollmentErrors;
 	onStudentNameChange: (value: string) => void;
 	onCampusChange: (value: string) => void;
@@ -652,6 +669,26 @@ function NewStudentFields({
 				maxLength={50}
 				required
 			/>
+			{isCheckingDuplicates ? (
+				<p className="text-muted-foreground text-xs sm:col-span-2">
+					正在检查疑似重复档案…
+				</p>
+			) : duplicateCandidates.length > 0 ? (
+				<div className="border border-amber-500/50 bg-amber-500/5 p-3 text-sm sm:col-span-2">
+					<p className="font-medium">发现疑似重复学员</p>
+					<p className="mt-1 text-muted-foreground text-xs">
+						同机构的相同标准化手机号不会阻止报名；请确认是否应选择已有档案。
+					</p>
+					<ul className="mt-2 grid gap-1 text-xs">
+						{duplicateCandidates.map((candidate) => (
+							<li key={candidate.id}>
+								{candidate.name} · {candidate.campusName} ·{" "}
+								{candidate.phoneMasked}
+							</li>
+						))}
+					</ul>
+				</div>
+			) : null}
 			<TextField
 				id="independent-enrollment-contact-phone"
 				label="主要联系人手机号"

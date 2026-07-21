@@ -1,6 +1,7 @@
 import {
 	createStudentRecord,
 	createStudentTagRecord,
+	findDuplicateStudentCandidates,
 	getStudentRecord,
 	listStudentRecords,
 	listStudentTagRecords,
@@ -14,6 +15,8 @@ import { ORPCError } from "@orpc/server";
 import type {
 	CreateStudentInput,
 	CreateStudentTagInput,
+	DuplicateStudentCandidatesInput,
+	DuplicateStudentCandidatesResult,
 	SetStudentTagActiveInput,
 	StudentDetail,
 	StudentListInput,
@@ -98,6 +101,10 @@ function throwStudentError(error: unknown): never {
 				message: "该学员档案已被其他人更新，请刷新最新资料后重试。",
 				data: { reason: "STUDENT_VERSION_CONFLICT" },
 			});
+		case "STUDENT_MERGED":
+			throw new ORPCError("CONFLICT", {
+				message: "该学员已合并到主档案，不能再编辑。",
+			});
 		case "CONTACT_INVARIANT":
 			throw new ORPCError("BAD_REQUEST", {
 				message: "请且仅保留一位主要联系人。",
@@ -130,6 +137,24 @@ export async function listStudents(
 			items: result.items.map(toSummary),
 			total: result.total,
 			nextCursor: result.nextCursor,
+		};
+	} catch (error) {
+		return throwStudentError(error);
+	}
+}
+
+export async function getDuplicateStudentCandidates(
+	scope: StudentScope,
+	input: DuplicateStudentCandidatesInput,
+): Promise<DuplicateStudentCandidatesResult> {
+	try {
+		return {
+			items: (await findDuplicateStudentCandidates({ ...scope, ...input })).map(
+				(item) => ({
+					...item,
+					status: toStudentStatus(item.status),
+				}),
+			),
 		};
 	} catch (error) {
 		return throwStudentError(error);

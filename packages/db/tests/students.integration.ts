@@ -8,8 +8,13 @@ import { appRouter } from "../../api/src/routers";
 import { db } from "../src";
 import { convertLeadRecord } from "../src/repositories/enrollment-conversion";
 import {
+	getStudentMergePreviewRecord,
+	mergeStudentRecords,
+} from "../src/repositories/student-merge";
+import {
 	createStudentRecord,
 	createStudentTagRecord,
+	findDuplicateStudentCandidates,
 	getStudentRecord,
 	listStudentRecords,
 	renameStudentTagRecord,
@@ -24,6 +29,7 @@ import {
 	invoice,
 	lead,
 	organization,
+	organizationAuditEvent,
 	organizationMember,
 	organizationMemberCampus,
 	session,
@@ -855,6 +861,168 @@ test("线索转报名的新学员在同一事务创建主要联系人并保留 g
 		assert.deepEqual(contacts, [
 			{ name: "转报名家长", phone: "139-0000-0001", isPrimary: true },
 		]);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("学员合并显式选择主档案字段，迁移安全关联并冻结来源档案", async () => {
+	const ids = createFixtureIds();
+	const access = { kind: "all" as const };
+	try {
+		await seedFixture(ids);
+		const source = await createStudentRecord({
+			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
+			campusAccess: access,
+			name: "待合并来源",
+			campusId: ids.campusA,
+			birthDate: "2017-01-02",
+			status: "active",
+			contacts: [
+				{
+					name: "来源家长",
+					phone: "+86 138-0013-8000",
+					relationship: "母亲",
+					isPrimary: true,
+				},
+			],
+			tagIds: [],
+		});
+		const target = await createStudentRecord({
+			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
+			campusAccess: access,
+			name: "主档案",
+			campusId: ids.campusA,
+			birthDate: null,
+			status: "trial",
+			contacts: [
+				{
+					name: "主档案家长",
+					phone: "13900139000",
+					relationship: "父亲",
+					isPrimary: true,
+				},
+			],
+			tagIds: [],
+		});
+		await db.insert(enrollment).values({
+			organizationId: ids.organizationA,
+			studentId: source.id,
+			courseId: ids.courseA,
+			purchasedLessons: 10,
+			remainingLessons: 8,
+			status: "transferred",
+		});
+
+		const duplicateCandidates = await findDuplicateStudentCandidates({
+			organizationId: ids.organizationA,
+			campusAccess: access,
+			phone: "13800138000",
+		});
+		assert.deepEqual(
+			duplicateCandidates.map((item) => item.id),
+			[source.id],
+		);
+
+		const preview = await getStudentMergePreviewRecord({
+			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
+			sourceStudentId: source.id,
+			targetStudentId: target.id,
+		});
+		assert.deepEqual(preview.blockingReasons, []);
+		assert.ok(preview.conflicts.includes("name"));
+		const targetPrimary = preview.contacts.find(
+			(contact) => contact.studentId === target.id && contact.isPrimary,
+		);
+		assert.ok(targetPrimary);
+		const requestId = randomUUID();
+		const result = await mergeStudentRecords({
+			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
+			sourceStudentId: source.id,
+			targetStudentId: target.id,
+			expectedSourceUpdatedAt: preview.source.updatedAt,
+			expectedTargetUpdatedAt: preview.target.updatedAt,
+			requestId,
+			fieldSources: {
+				name: "target",
+				campusId: "target",
+				birthDate: "source",
+				status: "source",
+				primaryContactId: targetPrimary.id,
+			},
+		});
+		assert.equal(result.replayed, false);
+		assert.deepEqual(
+			await mergeStudentRecords({
+				organizationId: ids.organizationA,
+				userId: ids.managerUserId,
+				sourceStudentId: source.id,
+				targetStudentId: target.id,
+				expectedSourceUpdatedAt: preview.source.updatedAt,
+				expectedTargetUpdatedAt: preview.target.updatedAt,
+				requestId,
+				fieldSources: {
+					name: "target",
+					campusId: "target",
+					birthDate: "source",
+					status: "source",
+					primaryContactId: targetPrimary.id,
+				},
+			}),
+			{ ...result, replayed: true },
+		);
+
+		const [sourceMapping, movedEnrollment, mergedTarget, audits] =
+			await Promise.all([
+				db
+					.select({ mergedIntoStudentId: student.mergedIntoStudentId })
+					.from(student)
+					.where(eq(student.id, source.id)),
+				db
+					.select({ studentId: enrollment.studentId })
+					.from(enrollment)
+					.where(eq(enrollment.studentId, target.id)),
+				getStudentRecord({
+					organizationId: ids.organizationA,
+					campusAccess: access,
+					id: target.id,
+				}),
+				db
+					.select({ action: organizationAuditEvent.action })
+					.from(organizationAuditEvent)
+					.where(eq(organizationAuditEvent.organizationId, ids.organizationA)),
+			]);
+		assert.equal(sourceMapping[0]?.mergedIntoStudentId, target.id);
+		assert.equal(movedEnrollment.length, 1);
+		assert.equal(mergedTarget.birthDate, "2017-01-02");
+		assert.equal(mergedTarget.status, "active");
+		assert.equal(mergedTarget.contacts.length, 2);
+		assert.ok(audits.some((audit) => audit.action === "student_merged"));
+		await assert.rejects(
+			updateStudentRecord({
+				organizationId: ids.organizationA,
+				userId: ids.managerUserId,
+				campusAccess: access,
+				id: source.id,
+				expectedUpdatedAt: source.updatedAt,
+				data: {
+					name: source.name,
+					birthDate: source.birthDate,
+					status: source.status,
+					contacts: source.contacts,
+					tagIds: [],
+				},
+			}),
+			(error: unknown) => {
+				assert.ok(error instanceof StudentRepositoryError);
+				assert.equal(error.code, "STUDENT_MERGED");
+				return true;
+			},
+		);
 	} finally {
 		await cleanupFixture(ids);
 	}

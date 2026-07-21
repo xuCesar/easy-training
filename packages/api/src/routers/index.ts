@@ -57,6 +57,8 @@ import {
 	deactivateScheduleRuleResultSchema,
 	deleteScheduleRuleInputSchema,
 	deleteScheduleRuleResultSchema,
+	duplicateStudentCandidatesInputSchema,
+	duplicateStudentCandidatesResultSchema,
 	enrollmentAdjustmentListResultSchema,
 	exportLeadsInputSchema,
 	exportLeadsResultSchema,
@@ -86,6 +88,8 @@ import {
 	markNotificationReadInputSchema,
 	markNotificationsReadResultSchema,
 	memberListResultSchema,
+	mergeStudentsInputSchema,
+	mergeStudentsResultSchema,
 	notificationListInputSchema,
 	notificationListResultSchema,
 	pauseClassGroupInputSchema,
@@ -119,6 +123,8 @@ import {
 	studentDetailSchema,
 	studentListInputSchema,
 	studentListResultSchema,
+	studentMergePreviewInputSchema,
+	studentMergePreviewResultSchema,
 	studentTagListInputSchema,
 	studentTagListResultSchema,
 	teacherListResultSchema,
@@ -130,6 +136,8 @@ import {
 	updateClassGroupInputSchema,
 	updateClassroomInputSchema,
 	updateCourseInputSchema,
+	updateEnrollmentLifecycleInputSchema,
+	updateEnrollmentLifecycleResultSchema,
 	updateLeadInputSchema,
 	updateMemberInputSchema,
 	updateScheduleRuleInputSchema,
@@ -169,6 +177,7 @@ import {
 	renewEnrollment,
 	transferEnrollment,
 } from "../repositories/enrollment-finance-adjustments";
+import { updateEnrollmentLifecycle } from "../repositories/enrollment-lifecycle";
 import {
 	createIndependentEnrollment,
 	getIndependentEnrollmentOptions,
@@ -214,8 +223,13 @@ import {
 	updateMember,
 } from "../repositories/organization-management";
 import {
+	getStudentMergePreview,
+	mergeStudents,
+} from "../repositories/student-merge";
+import {
 	createStudent,
 	createStudentTag,
+	getDuplicateStudentCandidates,
 	getStudent,
 	listStudents,
 	listStudentTags,
@@ -509,6 +523,43 @@ export const appRouter = {
 				),
 		},
 		students: {
+			mergePreview: organizationManagementProcedure
+				.input(studentMergePreviewInputSchema)
+				.output(studentMergePreviewResultSchema)
+				.handler(({ context, input }) =>
+					getStudentMergePreview(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+						},
+						input,
+					),
+				),
+			merge: organizationManagementProcedure
+				.input(mergeStudentsInputSchema)
+				.output(mergeStudentsResultSchema)
+				.handler(({ context, input }) =>
+					mergeStudents(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+						},
+						input,
+					),
+				),
+			duplicateCandidates: studentProcedure
+				.input(duplicateStudentCandidatesInputSchema)
+				.output(duplicateStudentCandidatesResultSchema)
+				.handler(({ context, input }) =>
+					getDuplicateStudentCandidates(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
 			list: studentProcedure
 				.input(studentListInputSchema)
 				.output(studentListResultSchema)
@@ -1186,6 +1237,18 @@ export const appRouter = {
 			},
 		},
 		enrollments: {
+			lifecycle: studentProcedure
+				.input(updateEnrollmentLifecycleInputSchema)
+				.output(updateEnrollmentLifecycleResultSchema)
+				.handler(({ context, input }) =>
+					updateEnrollmentLifecycle(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+						},
+						input,
+					),
+				),
 			independentOptions: studentProcedure
 				.input(independentEnrollmentOptionsInputSchema)
 				.output(independentEnrollmentOptionsSchema)

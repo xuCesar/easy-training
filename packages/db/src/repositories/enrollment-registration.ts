@@ -19,6 +19,7 @@ import {
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
+import { normalizeStudentPhone } from "./student-phone";
 import {
 	assertWritableCampus,
 	getCurrentWriteCampusAccess,
@@ -471,6 +472,7 @@ async function assertExistingStudent(
 			id: student.id,
 			campusId: student.campusId,
 			status: student.status,
+			mergedIntoStudentId: student.mergedIntoStudentId,
 		})
 		.from(student)
 		.where(
@@ -482,6 +484,9 @@ async function assertExistingStudent(
 		.limit(1)
 		.for("update");
 	if (!record) throw new EnrollmentRegistrationError("STUDENT_NOT_FOUND");
+	if (record.mergedIntoStudentId) {
+		throw new EnrollmentRegistrationError("STUDENT_NOT_ENROLLABLE");
+	}
 	if (!enrollableStudentStatuses.some((status) => status === record.status)) {
 		throw new EnrollmentRegistrationError("STUDENT_NOT_ENROLLABLE");
 	}
@@ -586,6 +591,9 @@ export async function createIndependentEnrollmentRecord(
 						name: input.student.name,
 						guardianName: input.student.primaryContact.name,
 						guardianPhone: input.student.primaryContact.phone,
+						guardianPhoneNormalized: normalizeStudentPhone(
+							input.student.primaryContact.phone,
+						),
 						status: "active",
 					})
 					.returning({ id: student.id, campusId: student.campusId });
@@ -595,6 +603,9 @@ export async function createIndependentEnrollmentRecord(
 					studentId: createdStudent.id,
 					name: input.student.primaryContact.name,
 					phone: input.student.primaryContact.phone,
+					phoneNormalized: normalizeStudentPhone(
+						input.student.primaryContact.phone,
+					),
 					relationship: input.student.primaryContact.relationship,
 					isPrimary: true,
 				});

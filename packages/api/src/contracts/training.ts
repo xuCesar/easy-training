@@ -448,6 +448,11 @@ const auditActionSchema = z.enum([
 	"makeup_lesson_cancelled",
 	"makeup_lesson_needs_reschedule",
 	"enrollment_created",
+	"enrollment_frozen",
+	"enrollment_resumed",
+	"enrollment_class_transferred",
+	"enrollment_class_withdrawn",
+	"student_merged",
 	"lead_imported",
 	"lead_exported",
 	"notification_read",
@@ -872,7 +877,7 @@ const enrollmentAdjustmentSchema = z.object({
 	courseName: z.string(),
 	purchasedLessons: z.number().int().nonnegative(),
 	remainingLessons: z.number().int().nonnegative(),
-	status: z.enum(["active", "transferred"]),
+	status: z.enum(["active", "frozen", "transferred"]),
 });
 
 export const enrollmentAdjustmentListResultSchema = z.object({
@@ -1063,6 +1068,69 @@ export const studentListResultSchema = z.object({
 });
 
 export const studentDetailInputSchema = z.object({ id: z.uuid() });
+export const duplicateStudentCandidatesInputSchema = z.object({
+	phone: z.string().trim().min(5).max(30),
+	excludeStudentId: z.uuid().optional(),
+});
+export const duplicateStudentCandidatesResultSchema = z.object({
+	items: z.array(
+		z.object({
+			id: z.uuid(),
+			name: z.string(),
+			campusId: z.uuid(),
+			campusName: z.string(),
+			status: studentStatusSchema,
+			phoneMasked: z.string(),
+		}),
+	),
+});
+const studentMergeProfileSchema = z.object({
+	id: z.uuid(),
+	name: z.string(),
+	campusId: z.uuid(),
+	campusName: z.string(),
+	birthDate: z.iso.date().nullable(),
+	status: studentStatusSchema,
+	updatedAt: z.iso.datetime({ offset: true }),
+});
+const studentMergeContactSchema = studentContactSchema.extend({
+	studentId: z.uuid(),
+	duplicateOfContactId: z.uuid().nullable(),
+});
+export const studentMergePreviewInputSchema = z.object({
+	sourceStudentId: z.uuid(),
+	targetStudentId: z.uuid(),
+});
+export const studentMergePreviewResultSchema = z.object({
+	source: studentMergeProfileSchema,
+	target: studentMergeProfileSchema,
+	contacts: z.array(studentMergeContactSchema),
+	conflicts: z.array(
+		z.enum(["name", "campusId", "birthDate", "status", "primaryContactId"]),
+	),
+	blockingReasons: z.array(
+		z.enum(["ACTIVE_COURSE_ENROLLMENT", "ATTENDANCE_CONFLICT"]),
+	),
+});
+export const mergeStudentsInputSchema = z.object({
+	sourceStudentId: z.uuid(),
+	targetStudentId: z.uuid(),
+	expectedSourceUpdatedAt: z.iso.datetime({ offset: true }),
+	expectedTargetUpdatedAt: z.iso.datetime({ offset: true }),
+	requestId: z.uuid(),
+	fieldSources: z.object({
+		name: z.enum(["source", "target"]),
+		campusId: z.enum(["source", "target"]),
+		birthDate: z.enum(["source", "target"]),
+		status: z.enum(["source", "target"]),
+		primaryContactId: z.uuid(),
+	}),
+});
+export const mergeStudentsResultSchema = z.object({
+	sourceStudentId: z.uuid(),
+	targetStudentId: z.uuid(),
+	replayed: z.boolean(),
+});
 
 export const createStudentInputSchema = z.object({
 	name: z.string().trim().min(1).max(50),
@@ -1111,6 +1179,20 @@ export type StudentStatus = z.infer<typeof studentStatusSchema>;
 export type StudentTag = z.infer<typeof studentTagSchema>;
 export type StudentDetail = z.infer<typeof studentDetailSchema>;
 export type StudentListInput = z.infer<typeof studentListInputSchema>;
+export type DuplicateStudentCandidatesInput = z.infer<
+	typeof duplicateStudentCandidatesInputSchema
+>;
+export type DuplicateStudentCandidatesResult = z.infer<
+	typeof duplicateStudentCandidatesResultSchema
+>;
+export type StudentMergePreviewInput = z.infer<
+	typeof studentMergePreviewInputSchema
+>;
+export type StudentMergePreviewResult = z.infer<
+	typeof studentMergePreviewResultSchema
+>;
+export type MergeStudentsInput = z.infer<typeof mergeStudentsInputSchema>;
+export type MergeStudentsResult = z.infer<typeof mergeStudentsResultSchema>;
 export type StudentListResult = z.infer<typeof studentListResultSchema>;
 export type CreateStudentInput = z.infer<typeof createStudentInputSchema>;
 export type UpdateStudentInput = z.infer<typeof updateStudentInputSchema>;
@@ -1267,6 +1349,8 @@ const classEnrollmentSchema = z.object({
 	studentId: z.uuid(),
 	studentName: z.string(),
 	remainingLessons: z.number().int().nonnegative(),
+	status: z.enum(["active", "frozen", "transferred"]),
+	version: z.number().int().positive(),
 	classGroupId: z.uuid().nullable(),
 	className: z.string().nullable(),
 });
@@ -1281,6 +1365,41 @@ export const assignEnrollmentClassInputSchema = z.object({
 export const assignEnrollmentClassResultSchema = z.object({
 	enrollmentId: z.uuid(),
 });
+
+const enrollmentLifecycleActionSchema = z.discriminatedUnion("kind", [
+	z.object({
+		kind: z.literal("freeze"),
+		reason: z.string().trim().min(1).max(500),
+	}),
+	z.object({
+		kind: z.literal("resume"),
+		reason: z.string().trim().min(1).max(500),
+	}),
+	z.object({
+		kind: z.literal("withdrawClass"),
+		reason: z.string().trim().min(1).max(500),
+	}),
+	z.object({ kind: z.literal("assignClass"), classGroupId: z.uuid() }),
+]);
+export const updateEnrollmentLifecycleInputSchema = z.object({
+	enrollmentId: z.uuid(),
+	expectedVersion: z.number().int().positive(),
+	requestId: z.uuid(),
+	action: enrollmentLifecycleActionSchema,
+});
+export const updateEnrollmentLifecycleResultSchema = z.object({
+	enrollmentId: z.uuid(),
+	status: z.enum(["active", "frozen", "transferred"]),
+	classGroupId: z.uuid().nullable(),
+	version: z.number().int().positive(),
+	replayed: z.boolean(),
+});
+export type UpdateEnrollmentLifecycleInput = z.infer<
+	typeof updateEnrollmentLifecycleInputSchema
+>;
+export type UpdateEnrollmentLifecycleResult = z.infer<
+	typeof updateEnrollmentLifecycleResultSchema
+>;
 
 const lessonSchema = z.object({
 	id: z.uuid(),

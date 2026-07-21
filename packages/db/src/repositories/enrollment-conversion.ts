@@ -14,6 +14,7 @@ import {
 	user,
 } from "../schema";
 import type { CampusAccess } from "./organization";
+import { normalizeStudentPhone } from "./student-phone";
 
 const convertibleLeadStages = ["new", "contacted", "trial_booked"] as const;
 const availableClassStatuses = ["recruiting", "running"] as const;
@@ -427,6 +428,7 @@ export async function convertLeadRecord(
 						id: student.id,
 						campusId: student.campusId,
 						guardianPhone: student.guardianPhone,
+						mergedIntoStudentId: student.mergedIntoStudentId,
 					})
 					.from(student)
 					.where(
@@ -439,6 +441,9 @@ export async function convertLeadRecord(
 					.for("update");
 
 				if (!studentRecord) {
+					throw new EnrollmentConversionError("STUDENT_NOT_FOUND");
+				}
+				if (studentRecord.mergedIntoStudentId) {
 					throw new EnrollmentConversionError("STUDENT_NOT_FOUND");
 				}
 				if (!isCampusAccessible(input.campusAccess, studentRecord.campusId)) {
@@ -496,6 +501,7 @@ export async function convertLeadRecord(
 						name: input.student.name,
 						guardianName: input.student.guardianName,
 						guardianPhone: leadRecord.phone,
+						guardianPhoneNormalized: normalizeStudentPhone(leadRecord.phone),
 						status: "active",
 					})
 					.returning({ id: student.id, campusId: student.campusId });
@@ -508,6 +514,7 @@ export async function convertLeadRecord(
 					studentId: createdStudent.id,
 					name: input.student.guardianName,
 					phone: leadRecord.phone,
+					phoneNormalized: normalizeStudentPhone(leadRecord.phone),
 					isPrimary: true,
 				});
 
