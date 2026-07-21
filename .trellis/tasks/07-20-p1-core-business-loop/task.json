@@ -20,14 +20,26 @@
   "subtasks": [],
   "children": [
     "07-20-p1-recurring-scheduling-teacher-workbench",
-    "07-20-p1-makeup-class-pause-room-resources"
+    "07-20-p1-makeup-class-pause-room-resources",
+    "07-21-p1-independent-enrollment",
+    "07-21-p1-enrollment-lifecycle-student-merge"
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "教务阶段 T1/T2 已完成并关闭 #24、#31、#32；学员与报名、财务闭环仍由 #25-#29 跟踪，父任务保持进行中。",
+  "notes": "教务阶段 T1/T2 与学员报名阶段 #25、#26 已完成并关闭；完整业务时间线与财务闭环仍由 #27-#29 跟踪，父任务保持进行中。",
   "meta": {
     "githubIssue": 6,
-    "completedIssues": [24, 31, 32],
-    "remainingIssues": [25, 26, 27, 28, 29]
+    "completedIssues": [
+      24,
+      31,
+      32,
+      25,
+      26
+    ],
+    "remainingIssues": [
+      27,
+      28,
+      29
+    ]
   }
 }
