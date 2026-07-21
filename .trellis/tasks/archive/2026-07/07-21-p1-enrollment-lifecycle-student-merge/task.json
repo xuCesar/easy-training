@@ -1,0 +1,28 @@
+{
+  "id": "p1-enrollment-lifecycle-student-merge",
+  "name": "p1-enrollment-lifecycle-student-merge",
+  "title": "P1 报名状态流转与学员联系人查重合并",
+  "description": "实现 GitHub Issue #26：报名转班、退班、冻结、复课，以及学员/联系人查重提示和人工合并的可追溯闭环；结业仅保留历史兼容状态，不新增流程。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": "server",
+  "priority": "P1",
+  "creator": "xuCesar",
+  "assignee": "xuCesar",
+  "createdAt": "2026-07-21",
+  "completedAt": "2026-07-21",
+  "branch": null,
+  "base_branch": "develop",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "07-20-p1-core-business-loop",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "githubIssue": 26
+  }
+}
