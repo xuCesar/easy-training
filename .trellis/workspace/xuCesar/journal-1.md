@@ -761,3 +761,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: 同步 P1 能力文档与路线图状态
+
+**Date**: 2026-07-22
+**Task**: 同步 P1 能力文档与路线图状态
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+修正 README 与 Trellis 自动提交说明，补齐 P1 教务、学员报名和财务闭环能力边界，同步并归档顶层 P1 任务。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `38bf185` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

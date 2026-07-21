@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
+- **Total Sessions**: 22
 - **Last Active**: 2026-07-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~763 | Active |
+| `journal-1.md` | ~797 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-07-22 | 同步 P1 能力文档与路线图状态 | `38bf185` | `develop` |
 | 21 | 2026-07-22 | 完成收据与付款凭证闭环 | `6554c63` | `develop` |
 | 20 | 2026-07-21 | 完成欠费处理工作流 | `6ff580b` | `develop` |
 | 19 | 2026-07-21 | 完成收款冲正闭环 | `4729dcc` | `develop` |
