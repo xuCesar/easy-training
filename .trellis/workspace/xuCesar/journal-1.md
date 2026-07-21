@@ -523,3 +523,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: 报名生命周期与学员合并
+
+**Date**: 2026-07-21
+**Task**: 报名生命周期与学员合并
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+完成报名冻结、复课、退班与转班的时间回放；支持同机构学员手机号查重、人工合并和审计；完成数据库迁移、接口、管理端交互与集成测试。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9c0fb2e` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
