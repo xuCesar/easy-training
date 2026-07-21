@@ -727,3 +727,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: 完成收据与付款凭证闭环
+
+**Date**: 2026-07-22
+**Task**: 完成收据与付款凭证闭环
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+实现凭证开具、查看、作废、补开、机构月序列编号、审计、打印与移动端适配；完成全量测试和真实浏览器/PDF验收。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6554c63` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
