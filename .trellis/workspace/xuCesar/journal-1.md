@@ -625,3 +625,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 退款审批闭环
+
+**Date**: 2026-07-21
+**Task**: 退款审批闭环
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+完成退款申请、审批、拒绝、取消、批准入账与审计闭环；移除旧公开直退入口和生产旁路；补齐财务界面、字段错误、移动端交互及关键集成测试。验证通过：pnpm check、check-types、build，全量集成测试 51/51，财务集成测试 4/4。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8d7a3fb` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
