@@ -659,3 +659,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 完成收款冲正闭环
+
+**Date**: 2026-07-21
+**Task**: 完成收款冲正闭环
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+实现不可变收款冲正流水、并发与幂等保护、账单及报名投影重算、Web 冲正交互与完整集成测试。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4729dcc` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
