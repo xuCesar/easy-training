@@ -127,6 +127,8 @@ import {
 	studentMergePreviewResultSchema,
 	studentTagListInputSchema,
 	studentTagListResultSchema,
+	studentTimelineInputSchema,
+	studentTimelineResultSchema,
 	teacherListResultSchema,
 	teacherWorkspaceInputSchema,
 	teacherWorkspaceResultSchema,
@@ -231,6 +233,7 @@ import {
 	createStudentTag,
 	getDuplicateStudentCandidates,
 	getStudent,
+	getStudentTimeline,
 	listStudents,
 	listStudentTags,
 	setStudentTagActive,
@@ -523,6 +526,20 @@ export const appRouter = {
 				),
 		},
 		students: {
+			timeline: studentProcedure
+				.input(studentTimelineInputSchema)
+				.output(studentTimelineResultSchema)
+				.handler(({ context, input }) =>
+					getStudentTimeline(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+							role: context.role,
+						},
+						input,
+					),
+				),
 			mergePreview: organizationManagementProcedure
 				.input(studentMergePreviewInputSchema)
 				.output(studentMergePreviewResultSchema)

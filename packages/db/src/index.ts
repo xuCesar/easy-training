@@ -21,5 +21,6 @@ export * from "./repositories/organization";
 export * from "./repositories/organization-management";
 export * from "./repositories/scheduling";
 export * from "./repositories/student-merge";
+export * from "./repositories/student-timeline";
 export * from "./repositories/students";
 export * from "./repositories/teaching";

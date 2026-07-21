@@ -5,6 +5,7 @@ import {
 	getStudentRecord,
 	listStudentRecords,
 	listStudentTagRecords,
+	listStudentTimelineRecords,
 	renameStudentTagRecord,
 	StudentRepositoryError,
 	setStudentTagActiveRecord,
@@ -25,6 +26,8 @@ import type {
 	StudentTag,
 	StudentTagListInput,
 	StudentTagListResult,
+	StudentTimelineInput,
+	StudentTimelineResult,
 	UpdateStudentInput,
 	UpdateStudentTagInput,
 } from "../contracts/training";
@@ -33,6 +36,16 @@ type StudentScope = {
 	organizationId: string;
 	userId: string;
 	campusAccess: Parameters<typeof listStudentRecords>[0]["campusAccess"];
+};
+
+type StudentTimelineScope = StudentScope & {
+	role:
+		| "owner"
+		| "admin"
+		| "campus_manager"
+		| "consultant"
+		| "teacher"
+		| "finance";
 };
 
 function toStudentStatus(
@@ -167,6 +180,51 @@ export async function getStudent(
 ): Promise<StudentDetail> {
 	try {
 		return toDetail(await getStudentRecord({ ...scope, id }));
+	} catch (error) {
+		return throwStudentError(error);
+	}
+}
+
+export async function getStudentTimeline(
+	scope: StudentTimelineScope,
+	input: StudentTimelineInput,
+): Promise<StudentTimelineResult> {
+	try {
+		const result = await listStudentTimelineRecords({
+			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
+			studentId: input.studentId,
+			includeFinancial:
+				scope.role === "owner" ||
+				scope.role === "admin" ||
+				scope.role === "campus_manager",
+			cursor: input.cursor,
+			pageSize: input.pageSize,
+		});
+		return {
+			items: result.items.map((item) => ({
+				id: item.id,
+				kind: item.kind,
+				occurredAt: item.occurredAt.toISOString(),
+				recordedAt: item.recordedAt?.toISOString() ?? null,
+				actorName: item.actorName,
+				courseName: item.courseName,
+				className: item.className,
+				amountInCents: item.amountInCents,
+				lessonCount: item.lessonCount,
+				previousRemainingLessons: item.previousRemainingLessons,
+				remainingLessons: item.remainingLessons,
+				status: item.status,
+				beforeStatus: item.beforeStatus,
+				afterStatus: item.afterStatus,
+				source: item.invoiceId
+					? { type: "invoice" as const, invoiceId: item.invoiceId }
+					: item.lessonId
+						? { type: "lesson" as const, lessonId: item.lessonId }
+						: { type: "none" as const },
+			})),
+			nextCursor: result.nextCursor,
+		};
 	} catch (error) {
 		return throwStudentError(error);
 	}

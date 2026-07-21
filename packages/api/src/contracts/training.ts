@@ -1068,6 +1068,49 @@ export const studentListResultSchema = z.object({
 });
 
 export const studentDetailInputSchema = z.object({ id: z.uuid() });
+export const studentTimelineInputSchema = z.object({
+	studentId: z.uuid(),
+	cursor: z.string().min(1).max(512).optional(),
+	pageSize: z.number().int().min(1).max(50).default(20),
+});
+const studentTimelineKindSchema = z.enum([
+	"enrollment_created",
+	"enrollment_lifecycle",
+	"invoice_issued",
+	"payment_received",
+	"enrollment_renewed",
+	"enrollment_transferred",
+	"refund_created",
+	"attendance_recorded",
+	"lesson_consumed",
+	"student_status_changed",
+]);
+const studentTimelineSourceSchema = z.discriminatedUnion("type", [
+	z.object({ type: z.literal("none") }),
+	z.object({ type: z.literal("invoice"), invoiceId: z.uuid() }),
+	z.object({ type: z.literal("lesson"), lessonId: z.uuid() }),
+]);
+const studentTimelineItemSchema = z.object({
+	id: z.string().min(1),
+	kind: studentTimelineKindSchema,
+	occurredAt: z.iso.datetime({ offset: true }),
+	recordedAt: z.iso.datetime({ offset: true }).nullable(),
+	actorName: z.string().nullable(),
+	courseName: z.string().nullable(),
+	className: z.string().nullable(),
+	amountInCents: z.number().int().nullable(),
+	lessonCount: z.number().int().nullable(),
+	previousRemainingLessons: z.number().int().nullable(),
+	remainingLessons: z.number().int().nullable(),
+	status: z.string().nullable(),
+	beforeStatus: z.string().nullable(),
+	afterStatus: z.string().nullable(),
+	source: studentTimelineSourceSchema,
+});
+export const studentTimelineResultSchema = z.object({
+	items: z.array(studentTimelineItemSchema),
+	nextCursor: z.string().nullable(),
+});
 export const duplicateStudentCandidatesInputSchema = z.object({
 	phone: z.string().trim().min(5).max(30),
 	excludeStudentId: z.uuid().optional(),
@@ -1178,6 +1221,8 @@ export const setStudentTagActiveInputSchema = z.object({
 export type StudentStatus = z.infer<typeof studentStatusSchema>;
 export type StudentTag = z.infer<typeof studentTagSchema>;
 export type StudentDetail = z.infer<typeof studentDetailSchema>;
+export type StudentTimelineInput = z.infer<typeof studentTimelineInputSchema>;
+export type StudentTimelineResult = z.infer<typeof studentTimelineResultSchema>;
 export type StudentListInput = z.infer<typeof studentListInputSchema>;
 export type DuplicateStudentCandidatesInput = z.infer<
 	typeof duplicateStudentCandidatesInputSchema

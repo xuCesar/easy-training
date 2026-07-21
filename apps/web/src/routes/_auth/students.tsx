@@ -57,6 +57,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
+	HistoryIcon,
 	LoaderCircleIcon,
 	PencilIcon,
 	PlusIcon,
@@ -76,6 +77,7 @@ import {
 import { toast } from "sonner";
 import { IndependentEnrollmentDialog } from "@/features/training/independent-enrollment-dialog";
 import { useOrganization } from "@/features/training/organization-context";
+import { StudentTimelineSheet } from "@/features/training/student-timeline-sheet";
 import { client, orpc, queryClient } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth/students")({
@@ -119,6 +121,9 @@ function StudentsRoute() {
 		useState(false);
 	const [tagsOpen, setTagsOpen] = useState(false);
 	const [mergeTarget, setMergeTarget] = useState<StudentSummary | null>(null);
+	const [timelineTarget, setTimelineTarget] = useState<StudentSummary | null>(
+		null,
+	);
 	const deferredSearch = useDeferredValue(search.trim());
 	const queryContext = { organizationId: organization.id, sessionUserId };
 	const campusesOptions = orpc.training.campuses.list.queryOptions({
@@ -257,6 +262,7 @@ function StudentsRoute() {
 				isError={listQuery.isError}
 				onRetry={() => void listQuery.refetch()}
 				onEdit={setEditor}
+				onTimeline={setTimelineTarget}
 				onMerge={canManageTags ? setMergeTarget : undefined}
 			/>
 			{listQuery.hasNextPage ? (
@@ -289,6 +295,14 @@ function StudentsRoute() {
 				<StudentMergeDialog
 					target={mergeTarget}
 					onClose={() => setMergeTarget(null)}
+				/>
+			) : null}
+			{timelineTarget ? (
+				<StudentTimelineSheet
+					student={timelineTarget}
+					organizationId={organization.id}
+					sessionUserId={sessionUserId}
+					onClose={() => setTimelineTarget(null)}
 				/>
 			) : null}
 			{independentEnrollmentOpen ? (
@@ -345,6 +359,7 @@ function StudentResults({
 	isError,
 	onRetry,
 	onEdit,
+	onTimeline,
 	onMerge,
 }: {
 	items: StudentSummary[];
@@ -353,6 +368,7 @@ function StudentResults({
 	isError: boolean;
 	onRetry: () => void;
 	onEdit: (student: StudentSummary) => void;
+	onTimeline: (student: StudentSummary) => void;
 	onMerge?: (student: StudentSummary) => void;
 }) {
 	if (isPending)
@@ -414,6 +430,7 @@ function StudentResults({
 								key={student.id}
 								student={student}
 								onEdit={onEdit}
+								onTimeline={onTimeline}
 								onMerge={onMerge}
 							/>
 						))}
@@ -426,6 +443,7 @@ function StudentResults({
 						key={student.id}
 						student={student}
 						onEdit={onEdit}
+						onTimeline={onTimeline}
 						onMerge={onMerge}
 					/>
 				))}
@@ -437,10 +455,12 @@ function StudentResults({
 function StudentTableRow({
 	student,
 	onEdit,
+	onTimeline,
 	onMerge,
 }: {
 	student: StudentSummary;
 	onEdit: (student: StudentSummary) => void;
+	onTimeline: (student: StudentSummary) => void;
 	onMerge?: (student: StudentSummary) => void;
 }) {
 	return (
@@ -470,6 +490,10 @@ function StudentTableRow({
 				</div>
 			</TableCell>
 			<TableCell className="text-right">
+				<Button size="sm" variant="ghost" onClick={() => onTimeline(student)}>
+					<HistoryIcon data-icon="inline-start" />
+					时间线
+				</Button>
 				<Button size="sm" variant="ghost" onClick={() => onEdit(student)}>
 					<PencilIcon data-icon="inline-start" />
 					编辑
@@ -487,10 +511,12 @@ function StudentTableRow({
 function StudentCompactRow({
 	student,
 	onEdit,
+	onTimeline,
 	onMerge,
 }: {
 	student: StudentSummary;
 	onEdit: (student: StudentSummary) => void;
+	onTimeline: (student: StudentSummary) => void;
 	onMerge?: (student: StudentSummary) => void;
 }) {
 	return (
@@ -514,6 +540,15 @@ function StudentCompactRow({
 					))}
 				</div>
 			) : null}
+			<Button
+				className="self-start"
+				size="sm"
+				variant="outline"
+				onClick={() => onTimeline(student)}
+			>
+				<HistoryIcon data-icon="inline-start" />
+				业务时间线
+			</Button>
 			<Button
 				className="self-start"
 				size="sm"

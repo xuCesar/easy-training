@@ -20,14 +20,17 @@ const academicTabs = [
 ] as const;
 
 export const Route = createFileRoute("/_auth/academic")({
-	validateSearch: z.object({ tab: z.enum(academicTabs).optional() }),
+	validateSearch: z.object({
+		tab: z.enum(academicTabs).optional(),
+		lessonId: z.uuid().optional(),
+	}),
 	component: AcademicRoute,
 });
 
 function AcademicRoute() {
 	const sessionUserId = Route.useRouteContext().session.data?.user.id;
 	const { organization } = useOrganization();
-	const { tab } = Route.useSearch();
+	const { tab, lessonId } = Route.useSearch();
 	const canManageAcademic = ["owner", "admin", "campus_manager"].includes(
 		organization.role,
 	);
@@ -49,6 +52,7 @@ function AcademicRoute() {
 	return (
 		<AcademicWorkspace
 			initialTab={tab ?? "classes"}
+			initialLessonId={lessonId}
 			organizationId={organization.id}
 			sessionUserId={sessionUserId}
 			role={organization.role}

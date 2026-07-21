@@ -535,6 +535,38 @@ export const student = pgTable(
 	],
 );
 
+export const studentStatusEvent = pgTable(
+	"student_status_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		beforeStatus: studentStatus("before_status").notNull(),
+		afterStatus: studentStatus("after_status").notNull(),
+		operatorUserId: text("operator_user_id")
+			.notNull()
+			.references(() => user.id),
+		occurredAt: timestamp("occurred_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		index("student_status_event_org_student_occurred_idx").on(
+			table.organizationId,
+			table.studentId,
+			table.occurredAt,
+			table.id,
+		),
+	],
+);
+
 export const studentContact = pgTable(
 	"student_contact",
 	{

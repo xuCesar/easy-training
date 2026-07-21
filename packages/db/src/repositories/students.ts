@@ -18,6 +18,7 @@ import {
 	organizationMemberCampus,
 	student,
 	studentContact,
+	studentStatusEvent,
 	studentTag,
 	studentTagAssignment,
 } from "../schema";
@@ -799,6 +800,8 @@ export async function updateStudentRecord(input: {
 		allowExistingIds: true,
 	});
 	const tagIds = normalizeTagIds(input.data.tagIds);
+	const nextStatus = input.data.status;
+	if (!nextStatus) throw new Error("Student status is required.");
 	try {
 		await db.transaction(async (tx) => {
 			const campusAccess = await getCurrentWriteCampusAccess(tx, {
@@ -812,6 +815,7 @@ export async function updateStudentRecord(input: {
 					campusId: student.campusId,
 					updatedAt: student.updatedAt,
 					mergedIntoStudentId: student.mergedIntoStudentId,
+					status: student.status,
 				})
 				.from(student)
 				.where(
@@ -878,13 +882,25 @@ export async function updateStudentRecord(input: {
 				.set({
 					name: input.data.name.trim(),
 					birthDate: input.data.birthDate,
-					status: input.data.status,
+					status: nextStatus,
 					guardianName: primaryContact.name,
 					guardianPhone: primaryContact.phone,
 					guardianPhoneNormalized: normalizeStudentPhone(primaryContact.phone),
 					updatedAt: sql`greatest(clock_timestamp(), ${student.updatedAt} + interval '1 millisecond')`,
 				})
 				.where(eq(student.id, current.id));
+			const currentStatus = current.status;
+			if (!currentStatus) throw new Error("Student status is missing.");
+			if (currentStatus !== nextStatus) {
+				await tx.insert(studentStatusEvent).values({
+					organizationId: input.organizationId,
+					studentId: current.id,
+					campusId: current.campusId,
+					beforeStatus: currentStatus,
+					afterStatus: nextStatus,
+					operatorUserId: input.userId,
+				});
+			}
 		});
 		return getStudentRecord({
 			organizationId: input.organizationId,

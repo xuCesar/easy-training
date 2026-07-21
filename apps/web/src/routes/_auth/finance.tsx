@@ -7,11 +7,13 @@ import {
 } from "@easy-training/ui/components/empty";
 import { createFileRoute } from "@tanstack/react-router";
 import { LockKeyholeIcon } from "lucide-react";
+import { z } from "zod";
 
 import { FinanceWorkspace } from "@/features/training/finance-workspace";
 import { useOrganization } from "@/features/training/organization-context";
 
 export const Route = createFileRoute("/_auth/finance")({
+	validateSearch: z.object({ invoiceId: z.uuid().optional() }),
 	component: FinanceRoute,
 });
 
@@ -19,6 +21,8 @@ const financeRoles = new Set(["owner", "admin", "campus_manager", "finance"]);
 
 function FinanceRoute() {
 	const sessionUserId = Route.useRouteContext().session.data?.user.id;
+	const navigate = Route.useNavigate();
+	const { invoiceId } = Route.useSearch();
 	const { organization } = useOrganization();
 
 	if (!financeRoles.has(organization.role)) {
@@ -41,6 +45,13 @@ function FinanceRoute() {
 		<FinanceWorkspace
 			organizationId={organization.id}
 			sessionUserId={sessionUserId}
+			initialInvoiceId={invoiceId}
+			onInvoiceIdChange={(nextInvoiceId) =>
+				void navigate({
+					search: nextInvoiceId ? { invoiceId: nextInvoiceId } : {},
+					replace: true,
+				})
+			}
 		/>
 	);
 }

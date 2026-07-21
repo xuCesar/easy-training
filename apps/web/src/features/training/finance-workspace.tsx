@@ -57,7 +57,7 @@ import {
 	SearchIcon,
 	XIcon,
 } from "lucide-react";
-import { type FormEvent, useDeferredValue, useState } from "react";
+import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { orpc, queryClient } from "@/utils/orpc";
@@ -95,15 +95,22 @@ const paymentMethods: Array<{ value: PaymentMethod; label: string }> = [
 export function FinanceWorkspace({
 	organizationId,
 	sessionUserId,
+	initialInvoiceId,
+	onInvoiceIdChange,
 }: {
 	organizationId: string;
 	sessionUserId?: string;
+	initialInvoiceId?: string;
+	onInvoiceIdChange?: (invoiceId: string | null) => void;
 }) {
 	const [search, setSearch] = useState("");
 	const [status, setStatus] = useState<InvoiceStatusFilter>("open");
 	const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(
-		null,
+		initialInvoiceId ?? null,
 	);
+	useEffect(() => {
+		setSelectedInvoiceId(initialInvoiceId ?? null);
+	}, [initialInvoiceId]);
 	const deferredSearch = useDeferredValue(search.trim());
 	const listOptions = orpc.training.finance.invoices.list.queryOptions({
 		input: { query: deferredSearch || undefined, status },
@@ -169,7 +176,10 @@ export function FinanceWorkspace({
 				errorMessage={listQuery.error?.message}
 				isFiltered={Boolean(deferredSearch || status !== "all")}
 				onRetry={() => listQuery.refetch()}
-				onSelect={setSelectedInvoiceId}
+				onSelect={(invoiceId) => {
+					setSelectedInvoiceId(invoiceId);
+					onInvoiceIdChange?.(invoiceId);
+				}}
 			/>
 
 			{selectedInvoiceId ? (
@@ -177,7 +187,10 @@ export function FinanceWorkspace({
 					key={selectedInvoiceId}
 					invoiceId={selectedInvoiceId}
 					organizationId={organizationId}
-					onClose={() => setSelectedInvoiceId(null)}
+					onClose={() => {
+						setSelectedInvoiceId(null);
+						onInvoiceIdChange?.(null);
+					}}
 				/>
 			) : null}
 		</div>

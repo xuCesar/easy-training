@@ -11,6 +11,7 @@ import {
 	getStudentMergePreviewRecord,
 	mergeStudentRecords,
 } from "../src/repositories/student-merge";
+import { listStudentTimelineRecords } from "../src/repositories/student-timeline";
 import {
 	createStudentRecord,
 	createStudentTagRecord,
@@ -23,18 +24,25 @@ import {
 	updateStudentRecord,
 } from "../src/repositories/students";
 import {
+	attendance,
 	campus,
+	classGroup,
 	course,
 	enrollment,
 	invoice,
 	lead,
+	lesson,
+	lessonConsumption,
 	organization,
 	organizationAuditEvent,
 	organizationMember,
 	organizationMemberCampus,
+	payment,
 	session,
 	student,
 	studentContact,
+	studentStatusEvent,
+	teacher,
 	user,
 } from "../src/schema";
 
@@ -112,11 +120,40 @@ async function expectOrpcError(
 async function cleanupFixture(ids: FixtureIds) {
 	const organizationIds = [ids.organizationA, ids.organizationB];
 	await db
+		.delete(lessonConsumption)
+		.where(inArray(lessonConsumption.organizationId, organizationIds));
+	await db
+		.delete(attendance)
+		.where(
+			inArray(
+				attendance.lessonId,
+				db
+					.select({ id: lesson.id })
+					.from(lesson)
+					.where(inArray(lesson.organizationId, organizationIds)),
+			),
+		);
+	await db
+		.delete(payment)
+		.where(inArray(payment.organizationId, organizationIds));
+	await db
+		.delete(studentStatusEvent)
+		.where(inArray(studentStatusEvent.organizationId, organizationIds));
+	await db
 		.delete(invoice)
 		.where(inArray(invoice.organizationId, organizationIds));
 	await db
 		.delete(enrollment)
 		.where(inArray(enrollment.organizationId, organizationIds));
+	await db
+		.delete(lesson)
+		.where(inArray(lesson.organizationId, organizationIds));
+	await db
+		.delete(classGroup)
+		.where(inArray(classGroup.organizationId, organizationIds));
+	await db
+		.delete(teacher)
+		.where(inArray(teacher.organizationId, organizationIds));
 	await db.delete(lead).where(inArray(lead.organizationId, organizationIds));
 	await db
 		.delete(organization)
@@ -1022,6 +1059,347 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 				assert.equal(error.code, "STUDENT_MERGED");
 				return true;
 			},
+		);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("学员业务时间线稳定聚合事实，并按角色、机构和校区裁剪", async () => {
+	const ids = createFixtureIds();
+	const allAccess = { kind: "all" as const };
+	const selectedA = { kind: "selected" as const, campusIds: [ids.campusA] };
+	const enrolledAt = new Date("2026-07-01T01:00:00.000Z");
+	const issuedAt = new Date("2026-07-02T01:00:00.000Z");
+	const receivedAt = new Date("2026-07-03T01:00:00.000Z");
+	const startsAt = new Date("2026-07-04T01:00:00.000Z");
+	const recordedAt = new Date("2026-07-10T01:00:00.000Z");
+
+	try {
+		await seedFixture(ids);
+		const created = await createStudentRecord({
+			organizationId: ids.organizationA,
+			userId: ids.operatorUserId,
+			campusAccess: selectedA,
+			name: "时间线学员",
+			campusId: ids.campusA,
+			birthDate: null,
+			status: "trial",
+			contacts: [
+				{
+					name: "时间线联系人",
+					phone: "13800138003",
+					relationship: "母亲",
+					isPrimary: true,
+				},
+			],
+			tagIds: [],
+		});
+
+		const teacherId = randomUUID();
+		const classGroupId = randomUUID();
+		const enrollmentId = randomUUID();
+		const invoiceIds = [randomUUID(), randomUUID()];
+		const lessonId = randomUUID();
+		await db.insert(teacher).values({
+			id: teacherId,
+			organizationId: ids.organizationA,
+			name: "时间线教师",
+			subjects: ["英语"],
+			weeklyCapacityHours: 20,
+		});
+		await db.insert(classGroup).values({
+			id: classGroupId,
+			organizationId: ids.organizationA,
+			courseId: ids.courseA,
+			campusId: ids.campusA,
+			teacherId,
+			name: "时间线班级",
+			status: "running",
+			capacity: 20,
+			scheduleText: "周六 09:00",
+			startDate: "2026-07-01",
+		});
+		await db.insert(enrollment).values({
+			id: enrollmentId,
+			organizationId: ids.organizationA,
+			studentId: created.id,
+			courseId: ids.courseA,
+			classGroupId,
+			purchasedLessons: 10,
+			remainingLessons: 9,
+			amountInCents: 10_000,
+			paidAmountInCents: 5_000,
+			status: "active",
+			enrolledAt,
+		});
+		await db.insert(invoice).values(
+			invoiceIds.map((id, index) => ({
+				id,
+				organizationId: ids.organizationA,
+				studentId: created.id,
+				enrollmentId,
+				amountInCents: index === 0 ? 5_000 : 2_000,
+				paidAmountInCents: index === 0 ? 5_000 : 0,
+				status: index === 0 ? ("paid" as const) : ("pending" as const),
+				dueDate: "2026-07-31",
+				issuedAt,
+				paidAt: index === 0 ? receivedAt : null,
+			})),
+		);
+		await db.insert(payment).values({
+			organizationId: ids.organizationA,
+			invoiceId: invoiceIds[0] as string,
+			amountInCents: 5_000,
+			receivedAt,
+			method: "bank_transfer",
+			operatorUserId: ids.managerUserId,
+			operatorName: "学员测试管理员",
+			requestId: randomUUID(),
+			createdAt: recordedAt,
+		});
+		await db.insert(lesson).values({
+			id: lessonId,
+			organizationId: ids.organizationA,
+			classGroupId,
+			teacherId,
+			campusId: ids.campusA,
+			room: "A101",
+			startsAt,
+			endsAt: new Date(startsAt.getTime() + 60 * 60 * 1000),
+			status: "completed",
+			completedAt: recordedAt,
+			completedByUserId: ids.managerUserId,
+		});
+		const [attendanceRecord] = await db
+			.insert(attendance)
+			.values({
+				lessonId,
+				studentId: created.id,
+				status: "present",
+				recordedByUserId: ids.managerUserId,
+				updatedAt: recordedAt,
+			})
+			.returning({ id: attendance.id });
+		assert.ok(attendanceRecord);
+		const [consumptionRecord] = await db
+			.insert(lessonConsumption)
+			.values({
+				organizationId: ids.organizationA,
+				enrollmentId,
+				lessonId,
+				attendanceStatus: "present",
+				previousRemainingLessons: 10,
+				remainingLessons: 9,
+				consumedByUserId: ids.managerUserId,
+				consumedAt: recordedAt,
+			})
+			.returning({ id: lessonConsumption.id });
+		assert.ok(consumptionRecord);
+
+		const updated = await updateStudentRecord({
+			organizationId: ids.organizationA,
+			userId: ids.operatorUserId,
+			campusAccess: selectedA,
+			id: created.id,
+			expectedUpdatedAt: created.updatedAt,
+			data: {
+				name: created.name,
+				birthDate: created.birthDate,
+				status: "active",
+				contacts: created.contacts,
+				tagIds: [],
+			},
+		});
+		await updateStudentRecord({
+			organizationId: ids.organizationA,
+			userId: ids.operatorUserId,
+			campusAccess: selectedA,
+			id: created.id,
+			expectedUpdatedAt: updated.updatedAt,
+			data: {
+				name: `${updated.name}（资料更新）`,
+				birthDate: updated.birthDate,
+				status: "active",
+				contacts: updated.contacts,
+				tagIds: [],
+			},
+		});
+		const statusEvents = await db
+			.select()
+			.from(studentStatusEvent)
+			.where(eq(studentStatusEvent.studentId, created.id));
+		assert.equal(statusEvents.length, 1);
+		assert.equal(statusEvents[0]?.beforeStatus, "trial");
+		assert.equal(statusEvents[0]?.afterStatus, "active");
+
+		const timelineItems = [];
+		let cursor: string | undefined;
+		do {
+			const page = await listStudentTimelineRecords({
+				organizationId: ids.organizationA,
+				campusAccess: allAccess,
+				studentId: created.id,
+				includeFinancial: true,
+				cursor,
+				pageSize: 2,
+			});
+			timelineItems.push(...page.items);
+			cursor = page.nextCursor ?? undefined;
+		} while (cursor);
+		assert.equal(
+			new Set(timelineItems.map((item) => item.id)).size,
+			timelineItems.length,
+		);
+		assert.deepEqual(
+			new Set(timelineItems.map((item) => item.kind)),
+			new Set([
+				"student_status_changed",
+				"lesson_consumed",
+				"attendance_recorded",
+				"payment_received",
+				"invoice_issued",
+				"enrollment_created",
+			]),
+		);
+		const lessonEvents = timelineItems.filter(
+			(item) => item.lessonId === lessonId,
+		);
+		assert.deepEqual(
+			lessonEvents.map((item) => item.kind),
+			["lesson_consumed", "attendance_recorded"],
+		);
+		assert.ok(
+			lessonEvents.every(
+				(item) => item.occurredAt.getTime() === startsAt.getTime(),
+			),
+		);
+		assert.ok(
+			lessonEvents.every(
+				(item) => item.recordedAt?.getTime() === recordedAt.getTime(),
+			),
+		);
+		const invoiceEvents = timelineItems.filter(
+			(item) => item.kind === "invoice_issued",
+		);
+		assert.deepEqual(
+			invoiceEvents.map((item) => item.sourceId),
+			[...invoiceIds].sort().reverse(),
+		);
+
+		const restricted = await listStudentTimelineRecords({
+			organizationId: ids.organizationA,
+			campusAccess: selectedA,
+			studentId: created.id,
+			includeFinancial: false,
+			pageSize: 50,
+		});
+		assert.ok(
+			restricted.items.every(
+				(item) =>
+					!(
+						[
+							"invoice_issued",
+							"payment_received",
+							"enrollment_renewed",
+							"enrollment_transferred",
+							"refund_created",
+						] as const
+					).includes(
+						item.kind as
+							| "invoice_issued"
+							| "payment_received"
+							| "enrollment_renewed"
+							| "enrollment_transferred"
+							| "refund_created",
+					),
+			),
+		);
+		const restrictedEnrollment = restricted.items.find(
+			(item) => item.kind === "enrollment_created",
+		);
+		assert.ok(restrictedEnrollment);
+		assert.equal(restrictedEnrollment.amountInCents, null);
+		assert.equal(restrictedEnrollment.invoiceId, null);
+
+		await expectStudentError(
+			listStudentTimelineRecords({
+				organizationId: ids.organizationB,
+				campusAccess: allAccess,
+				studentId: created.id,
+				includeFinancial: true,
+				pageSize: 20,
+			}),
+			"STUDENT_NOT_FOUND",
+		);
+		await expectStudentError(
+			listStudentTimelineRecords({
+				organizationId: ids.organizationA,
+				campusAccess: {
+					kind: "selected",
+					campusIds: [ids.campusAOther],
+				},
+				studentId: created.id,
+				includeFinancial: true,
+				pageSize: 20,
+			}),
+			"CAMPUS_OUT_OF_SCOPE",
+		);
+		await expectStudentError(
+			listStudentTimelineRecords({
+				organizationId: ids.organizationA,
+				campusAccess: allAccess,
+				studentId: created.id,
+				includeFinancial: true,
+				cursor: "invalid-cursor",
+				pageSize: 20,
+			}),
+			"INVALID_CURSOR",
+		);
+
+		const ownerClient = createSessionClient(
+			ids.managerUserId,
+			"学员测试管理员",
+			ids.organizationA,
+		);
+		const ownerTimeline = await ownerClient.training.students.timeline({
+			studentId: created.id,
+			pageSize: 50,
+		});
+		assert.ok(
+			ownerTimeline.items.some(
+				(item) =>
+					item.kind === "invoice_issued" && item.source.type === "invoice",
+			),
+		);
+		assert.ok(
+			ownerTimeline.items.some(
+				(item) =>
+					item.kind === "lesson_consumed" &&
+					item.source.type === "lesson" &&
+					item.occurredAt === startsAt.toISOString() &&
+					item.recordedAt === recordedAt.toISOString(),
+			),
+		);
+
+		const consultantClient = createSessionClient(
+			ids.operatorUserId,
+			"学员测试操作人",
+			ids.organizationA,
+		);
+		const consultantTimeline =
+			await consultantClient.training.students.timeline({
+				studentId: created.id,
+				pageSize: 50,
+			});
+		assert.ok(
+			consultantTimeline.items.every((item) => item.source.type !== "invoice"),
+		);
+		assert.ok(
+			consultantTimeline.items.every(
+				(item) =>
+					item.kind !== "invoice_issued" && item.kind !== "payment_received",
+			),
 		);
 	} finally {
 		await cleanupFixture(ids);

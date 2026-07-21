@@ -129,6 +129,80 @@ await db.transaction(async (tx) => {
   const preview = await loadMergePreviewInTransaction(tx, input);
   assertNoMergeConflicts(preview);
   await moveSafeAssociations(tx, preview);
-  await writeOrganizationAuditEvent(tx, { action: "student_merged", ...audit });
+	await writeOrganizationAuditEvent(tx, { action: "student_merged", ...audit });
 });
+```
+
+## Scenario: 学员业务时间线
+
+### 1. Scope / Trigger
+
+- 适用于在学员详情统一追溯报名、报名生命周期、账单、收款、续费、转课、退款、考勤、课消和学员状态变化。
+- 时间线是既有业务事实的只读投影，不建立资金、课时或报名镜像，也不以当前状态反推或覆盖历史。
+
+### 2. Signatures
+
+- DB：`listStudentTimelineRecords({ organizationId, campusAccess, studentId, includeFinancial, cursor?, pageSize })`。
+- API：`training.students.timeline({ studentId, cursor?, pageSize })`，每页 1～50 项，默认 20 项。
+- 响应：`{ items, nextCursor }`；事件拥有稳定 `id`、`kind`、`occurredAt`、可空 `recordedAt/actorName`、受控摘要字段，以及 `source: none | invoice | lesson` 判别联合。
+- 状态写入：`updateStudentRecord` 仅在 `beforeStatus !== afterStatus` 时，于同一事务追加 `studentStatusEvent`；旧数据不回填。
+
+### 3. Contracts
+
+- 聚合来源的唯一事实仍是 enrollment、lifecycle event、invoice、payment、renewal、transfer、refund、attendance、lesson consumption 和 student status event；取消、退款等反向动作追加新事件，不改写原事件。
+- 考勤和课消的 `occurredAt` 使用课次 `startsAt`，实际登记/课消时间放入 `recordedAt`。其余事件使用领域发生时间。
+- 全局顺序固定为 `occurredAt DESC, kindRank DESC, sourceId DESC`；游标编码相同三元组，下一页使用严格小于比较。新增事件种类时必须分配稳定且唯一意图明确的 `kindRank`。
+- DB 先按 `organizationId + studentId` 验证学员，再校验学员校区范围。API 使用 `studentProcedure`：teacher/finance 不可访问；consultant 可见招生与教学事件，但账单、收款、续费、转课、退款全部不返回，报名事件的金额和账单来源也必须置空。
+- `invoiceId` 和 `lessonId` 只用于受控导航。`/finance?invoiceId=...` 与 `/academic?tab=lessons&lessonId=...` 的目标查询继续执行自身角色、机构和校区鉴权，URL 参数不能替代授权。
+- Web 必须覆盖初始加载、空态、错误重试、加载更多和移动端单列布局。深链接直接使用 `Link`，并以 `buttonVariants` 复用按钮外观；不要把 `Link` 放入 Base UI `Button` 的 `render` 插槽，否则会产生原生按钮/锚点语义冲突。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 学员不属于当前机构 | `STUDENT_NOT_FOUND` → API `NOT_FOUND` |
+| 学员校区不在当前范围 | `CAMPUS_OUT_OF_SCOPE` → API `FORBIDDEN` |
+| 游标不是受支持的 base64url 三元组 | `INVALID_CURSOR` → API `BAD_REQUEST` |
+| consultant 请求时间线 | 服务端剔除全部财务事件和财务来源，不依赖前端隐藏 |
+| teacher/finance 调用时间线 | `studentProcedure` 在路由层拒绝 |
+| 深链接目标不存在或越权 | 由 finance/academic 目标过程按自身规则拒绝，不泄露跨机构资源 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：补录 7 月 4 日课次的考勤于 7 月 10 日完成；事件排在 7 月 4 日，摘要同时展示实际登记时间 7 月 10 日。
+- Good：同一发生时间跨页时，`kindRank + sourceId` 保证事件不重复、不漏失、不随机换位。
+- Base：功能上线前的学员没有状态历史，仍展示可验证的报名、财务和教学事实，不伪造“初始状态”事件。
+- Bad：把所有事实复制进统一 event 表、按 `createdAt` 排补录考勤，或先返回完整财务事件再让前端隐藏；这些做法会造成事实漂移、历史位置错误或数据泄露。
+
+### 6. Tests Required
+
+- PostgreSQL 集成测试必须让真实 UNION 投影执行，覆盖报名、财务、考勤、课消和状态事件的跨来源排序。
+- 以小页长遍历全部页，断言稳定 ID 无重复、无遗漏；覆盖同一时间不同 kindRank，以及同类事件按 sourceId 的确定顺序。
+- 断言考勤/课消 `occurredAt = lesson.startsAt`、`recordedAt` 保留实际写入时间。
+- 状态实际改变写一条事件，状态不变的资料更新不写事件；旧学员不要求回填。
+- consultant 响应不得含 invoice/payment/renewal/transfer/refund，报名金额和 invoice source 必须为 null；机构、校区、无效游标和 API ISO 序列化均需断言。
+- 浏览器验证账单深链接在当前列表筛选不包含目标时仍能打开详情，课次深链接能切换 tab、滚动并高亮目标；桌面和 390px 窄屏均需检查。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+// 先返回全部事实，再由前端隐藏顾问不应看到的金额和账单。
+const items = await listTimeline({ studentId });
+return role === "consultant" ? items.map(maskInBrowser) : items;
+```
+
+#### Correct
+
+```ts
+const items = await listStudentTimelineRecords({
+	organizationId,
+	campusAccess,
+	studentId,
+	includeFinancial: ["owner", "admin", "campus_manager"].includes(role),
+	cursor,
+	pageSize,
+});
+// DB 投影在返回前已经移除隐藏事件、金额和账单来源。
 ```

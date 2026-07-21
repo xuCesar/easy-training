@@ -48,7 +48,7 @@ import {
 	SchoolIcon,
 	UsersRoundIcon,
 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { orpc, queryClient } from "@/utils/orpc";
 import { BulkRescheduleDialog } from "./bulk-reschedule-dialog";
@@ -76,11 +76,13 @@ const tabs: Array<{ id: AcademicTab; label: string }> = [
 
 export function AcademicWorkspace({
 	initialTab,
+	initialLessonId,
 	organizationId,
 	sessionUserId,
 	role,
 }: {
 	initialTab: AcademicTab;
+	initialLessonId?: string;
 	organizationId: string;
 	sessionUserId: string | undefined;
 	role: string;
@@ -162,6 +164,13 @@ export function AcademicWorkspace({
 		...lessonsOptions,
 		queryKey: [...lessonsOptions.queryKey, context, { campusId }],
 	});
+	useEffect(() => {
+		if (!initialLessonId || initialTab !== "lessons" || lessonsQuery.isPending)
+			return;
+		document
+			.getElementById(`lesson-${initialLessonId}`)
+			?.scrollIntoView({ behavior: "smooth", block: "center" });
+	}, [initialLessonId, initialTab, lessonsQuery.isPending]);
 
 	function refresh() {
 		return invalidateAcademicQueries();
@@ -265,6 +274,7 @@ export function AcademicWorkspace({
 					isPending={lessonsQuery.isPending}
 					isError={lessonsQuery.isError}
 					campusId={campusId}
+					highlightedLessonId={initialLessonId}
 					onCampusChange={setCampusId}
 					onSchedule={() => setEditor({ kind: "lesson", value: null })}
 					onCancel={setCancelTarget}
@@ -642,6 +652,7 @@ function LessonsPanel({
 	isPending,
 	isError,
 	campusId,
+	highlightedLessonId,
 	onCampusChange,
 	onSchedule,
 	onCancel,
@@ -655,6 +666,7 @@ function LessonsPanel({
 	isPending: boolean;
 	isError: boolean;
 	campusId: string | undefined;
+	highlightedLessonId?: string;
 	onCampusChange: (value: string | undefined) => void;
 	onSchedule: () => void;
 	onCancel: (item: Lesson) => void;
@@ -708,7 +720,8 @@ function LessonsPanel({
 					{lessons.map((item) => (
 						<article
 							key={item.id}
-							className="grid gap-3 border p-3 md:grid-cols-[10rem_minmax(12rem,1fr)_repeat(3,minmax(0,1fr))_auto] md:items-center"
+							id={`lesson-${item.id}`}
+							className={`grid gap-3 border p-3 md:grid-cols-[10rem_minmax(12rem,1fr)_repeat(3,minmax(0,1fr))_auto] md:items-center ${highlightedLessonId === item.id ? "border-primary ring-2 ring-primary/30" : ""}`}
 						>
 							<label className="flex items-center gap-2 text-xs md:col-span-full">
 								<input
