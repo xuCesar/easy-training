@@ -33,6 +33,68 @@ export type FinancialReceiptRecord = {
 	trend: FinancialReceiptTrendPoint[];
 	missingAttributionCount: number;
 };
+
+export type FinancialMetricQualityRecord = {
+	missingAttributionCount: number;
+	missingNameSnapshotCount: number;
+	missingFinancialFactCount: number;
+};
+
+export async function getFinancialMetricQuality(input: {
+	scope: FinancialMetricScope;
+	from: Date;
+	to: Date;
+}): Promise<FinancialMetricQualityRecord> {
+	const [facts, missingFacts] = await Promise.all([
+		db
+			.select({
+				campusAttributionKind: invoiceMetricFact.campusAttributionKind,
+				campusNameSnapshot: invoiceMetricFact.campusNameSnapshot,
+				courseAttributionKind: invoiceMetricFact.courseAttributionKind,
+				courseNameSnapshot: invoiceMetricFact.courseNameSnapshot,
+			})
+			.from(invoiceMetricFact)
+			.innerJoin(invoice, eq(invoiceMetricFact.invoiceId, invoice.id))
+			.where(
+				and(
+					eq(invoiceMetricFact.organizationId, input.scope.organizationId),
+					gte(invoice.issuedAt, input.from),
+					lt(invoice.issuedAt, input.to),
+				),
+			),
+		db
+			.select({ count: sql<number>`count(*)::int` })
+			.from(invoice)
+			.leftJoin(
+				invoiceMetricFact,
+				and(
+					eq(invoiceMetricFact.invoiceId, invoice.id),
+					eq(invoiceMetricFact.organizationId, invoice.organizationId),
+				),
+			)
+			.where(
+				and(
+					eq(invoice.organizationId, input.scope.organizationId),
+					gte(invoice.issuedAt, input.from),
+					lt(invoice.issuedAt, input.to),
+					sql`${invoiceMetricFact.invoiceId} is null`,
+				),
+			),
+	]);
+	return {
+		missingAttributionCount: facts.filter(
+			(row) => row.campusAttributionKind === "unknown",
+		).length,
+		missingNameSnapshotCount: facts.filter(
+			(row) =>
+				(row.campusAttributionKind === "linked" &&
+					row.campusNameSnapshot === null) ||
+				(row.courseAttributionKind === "linked" &&
+					row.courseNameSnapshot === null),
+		).length,
+		missingFinancialFactCount: missingFacts[0]?.count ?? 0,
+	};
+}
 export type FinancialReceiptEvent = {
 	id: string;
 	kind: "payment" | "reversal" | "refund";

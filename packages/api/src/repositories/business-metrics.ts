@@ -9,6 +9,7 @@ import {
 	getFinancialAgingInvoicePage,
 	getFinancialAgingRecord,
 	getFinancialCohortRecord,
+	getFinancialMetricQuality,
 	getFinancialReceiptEventPage,
 	getFinancialReceiptRecord,
 } from "@easy-training/db/repositories/financial-metrics";
@@ -232,37 +233,54 @@ export async function getBusinessMetricFinancial(
 		to: new Date(window.comparisonRange.to),
 	};
 	const agingSnapshotAt = new Date(Math.min(range.to.getTime(), now.getTime()));
-	const [receipt, comparisonReceipt, cohort, comparisonCohort, aging] =
-		await withFinancialQueryErrors(() =>
-			Promise.all([
-				getFinancialReceiptRecord({
-					scope: repositoryScope,
-					...range,
-					granularity: window.granularity,
-				}),
-				getFinancialReceiptRecord({
-					scope: repositoryScope,
-					...comparisonRange,
-					granularity: window.granularity,
-				}),
-				getFinancialCohortRecord({
-					scope: repositoryScope,
-					...range,
-					asOf: now,
-				}),
-				getFinancialCohortRecord({
-					scope: repositoryScope,
-					...comparisonRange,
-					asOf: now,
-				}),
-				getFinancialAgingRecord({
-					scope: repositoryScope,
-					snapshotAt: agingSnapshotAt,
-				}),
-			]),
-		);
+	const [
+		receipt,
+		comparisonReceipt,
+		cohort,
+		comparisonCohort,
+		aging,
+		quality,
+		comparisonQuality,
+	] = await withFinancialQueryErrors(() =>
+		Promise.all([
+			getFinancialReceiptRecord({
+				scope: repositoryScope,
+				...range,
+				granularity: window.granularity,
+			}),
+			getFinancialReceiptRecord({
+				scope: repositoryScope,
+				...comparisonRange,
+				granularity: window.granularity,
+			}),
+			getFinancialCohortRecord({
+				scope: repositoryScope,
+				...range,
+				asOf: now,
+			}),
+			getFinancialCohortRecord({
+				scope: repositoryScope,
+				...comparisonRange,
+				asOf: now,
+			}),
+			getFinancialAgingRecord({
+				scope: repositoryScope,
+				snapshotAt: agingSnapshotAt,
+			}),
+			getFinancialMetricQuality({
+				scope: repositoryScope,
+				...range,
+			}),
+			getFinancialMetricQuality({
+				scope: repositoryScope,
+				...comparisonRange,
+			}),
+		]),
+	);
 	const missingAttributionCount = Math.max(
 		receipt.missingAttributionCount,
+		quality.missingAttributionCount,
+		comparisonQuality.missingAttributionCount,
 		cohort.factCoverageMissingCount,
 		comparisonCohort.factCoverageMissingCount,
 		aging.missingFactCount,
@@ -271,11 +289,20 @@ export async function getBusinessMetricFinancial(
 		...base,
 		definitionVersion: FINANCIAL_METRIC_DEFINITION_VERSION,
 		dataQuality: {
-			missingAttributionCount,
-			missingNameSnapshotCount: 0,
+			missingAttributionCount:
+				scope.campusAccess.kind === "all" ? missingAttributionCount : 0,
+			missingNameSnapshotCount:
+				scope.campusAccess.kind === "all"
+					? quality.missingNameSnapshotCount +
+						comparisonQuality.missingNameSnapshotCount
+					: 0,
 			missingFinancialFactCount:
-				cohort.factCoverageMissingCount +
-				comparisonCohort.factCoverageMissingCount,
+				scope.campusAccess.kind === "all"
+					? quality.missingFinancialFactCount +
+						comparisonQuality.missingFinancialFactCount +
+						cohort.factCoverageMissingCount +
+						comparisonCohort.factCoverageMissingCount
+					: 0,
 			adjustmentChainAnomalyCount:
 				cohort.adjustmentChainAnomalyCount +
 				comparisonCohort.adjustmentChainAnomalyCount +
@@ -287,7 +314,10 @@ export async function getBusinessMetricFinancial(
 				comparisonCohort.settlementAnomalyCount +
 				aging.negativeBalanceAnomalyCount,
 			scopeCoverageIncomplete:
-				scope.campusAccess.kind !== "all" && missingAttributionCount > 0,
+				scope.campusAccess.kind !== "all" &&
+				(missingAttributionCount > 0 ||
+					quality.missingFinancialFactCount > 0 ||
+					comparisonQuality.missingFinancialFactCount > 0),
 		},
 		data: {
 			paymentsInCents: receipt.paymentsInCents,
