@@ -26,6 +26,97 @@ export type FinancialReceiptRecord = {
 	missingAttributionCount: number;
 };
 
+export type FinancialCohortInvoice = {
+	issuedAt: Date;
+	amountInCents: number;
+	settledInWindowInCents: number;
+	financialFactsComplete: boolean;
+};
+
+export type FinancialCohortRecord = {
+	matureInvoiceCount: number;
+	immatureInvoiceCount: number;
+	zeroAmountInvoiceCount: number;
+	numeratorInCents: number;
+	denominatorInCents: number;
+	minimumRemainingObservationDays: number | null;
+	chronologyAnomalyCount: number;
+	settlementAnomalyCount: number;
+	factCoverageMissingCount: number;
+};
+
+export function calculateFinancialCohort(input: {
+	invoices: FinancialCohortInvoice[];
+	asOf: Date;
+}): FinancialCohortRecord {
+	const result: FinancialCohortRecord = {
+		matureInvoiceCount: 0,
+		immatureInvoiceCount: 0,
+		zeroAmountInvoiceCount: 0,
+		numeratorInCents: 0,
+		denominatorInCents: 0,
+		minimumRemainingObservationDays: null,
+		chronologyAnomalyCount: 0,
+		settlementAnomalyCount: 0,
+		factCoverageMissingCount: 0,
+	};
+	for (const invoice of input.invoices) {
+		const windowEnd = new Date(invoice.issuedAt.getTime() + 30 * 86_400_000);
+		if (windowEnd > input.asOf) {
+			result.immatureInvoiceCount += 1;
+			const remaining = Math.ceil(
+				(windowEnd.getTime() - input.asOf.getTime()) / 86_400_000,
+			);
+			result.minimumRemainingObservationDays =
+				result.minimumRemainingObservationDays === null
+					? remaining
+					: Math.min(result.minimumRemainingObservationDays, remaining);
+			continue;
+		}
+		result.matureInvoiceCount += 1;
+		if (invoice.amountInCents === 0) {
+			result.zeroAmountInvoiceCount += 1;
+			continue;
+		}
+		if (!invoice.financialFactsComplete) {
+			result.factCoverageMissingCount += 1;
+			continue;
+		}
+		if (
+			invoice.settledInWindowInCents < 0 ||
+			invoice.settledInWindowInCents > invoice.amountInCents
+		) {
+			result.settlementAnomalyCount += 1;
+			continue;
+		}
+		result.numeratorInCents += invoice.settledInWindowInCents;
+		result.denominatorInCents += invoice.amountInCents;
+	}
+	return result;
+}
+
+export type FinancialAgingBucket =
+	| "notDue"
+	| "overdue1To30"
+	| "overdue31To60"
+	| "overdue61To90"
+	| "overdueOver90";
+
+export function getFinancialAgingBucket(
+	dueDate: string,
+	snapshotAt: Date,
+): FinancialAgingBucket {
+	const due = new Date(`${dueDate}T00:00:00+08:00`);
+	const daysOverdue = Math.floor(
+		(snapshotAt.getTime() - due.getTime()) / 86_400_000,
+	);
+	if (daysOverdue <= 0) return "notDue";
+	if (daysOverdue <= 30) return "overdue1To30";
+	if (daysOverdue <= 60) return "overdue31To60";
+	if (daysOverdue <= 90) return "overdue61To90";
+	return "overdueOver90";
+}
+
 function campusCondition(access: CampusAccess) {
 	if (access.kind === "none") return sql`false`;
 	if (access.kind === "selected") {
