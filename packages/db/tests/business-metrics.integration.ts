@@ -42,12 +42,16 @@ import {
 	enrollmentRegistration,
 	enrollmentRenewal,
 	invoice,
+	invoiceMetricFact,
 	lead,
 	leadMilestoneEvent,
 	lesson,
 	lessonConsumption,
 	makeupLesson,
 	organization,
+	payment,
+	paymentReversal,
+	refund,
 	renewalOpportunity,
 	renewalOpportunityConversion,
 	student,
@@ -406,8 +410,99 @@ async function seedMetricFixture(ids: MetricFixtureIds) {
 				: "course_renewal") as "course_enrollment" | "course_renewal",
 			amountInCents: 100_000,
 			dueDate: "2026-07-31",
+			issuedAt: new Date(
+				[
+					"2026-06-01T02:00:00.000Z",
+					"2026-07-01T02:00:00.000Z",
+					"2026-07-10T02:00:00.000Z",
+					"2026-07-20T02:00:00.000Z",
+				][index] ?? "2026-07-01T02:00:00.000Z",
+			),
 		})),
 	);
+	await db.insert(invoiceMetricFact).values(
+		ids.invoices.map((invoiceId, index) => ({
+			invoiceId,
+			organizationId: organizationA,
+			campusId: campusA,
+			campusAttributionKind: "linked" as const,
+			campusNameSnapshot: "A 校区",
+			courseId: ids.course,
+			courseAttributionKind: "linked" as const,
+			courseNameSnapshot: "经营指标课程",
+			source: (index === 0 ? "lead_conversion" : "renewal") as
+				| "lead_conversion"
+				| "renewal",
+			provenance: "native" as const,
+			occurredAt: new Date(
+				[
+					"2026-06-01T02:00:00.000Z",
+					"2026-07-01T02:00:00.000Z",
+					"2026-07-10T02:00:00.000Z",
+					"2026-07-20T02:00:00.000Z",
+				][index] ?? "2026-07-01T02:00:00.000Z",
+			),
+		})),
+	);
+	const fixturePayments = [randomUUID(), randomUUID(), randomUUID()];
+	await db.insert(payment).values([
+		{
+			id: fixturePayments[0] as string,
+			organizationId: organizationA,
+			invoiceId: requiredAt(ids.invoices, 0),
+			amountInCents: 70_000,
+			receivedAt: new Date("2026-07-05T02:00:00.000Z"),
+			method: "bank_transfer",
+			operatorUserId: ids.users.owner,
+			operatorName: "owner",
+			requestId: randomUUID(),
+		},
+		{
+			id: fixturePayments[1] as string,
+			organizationId: organizationA,
+			invoiceId: requiredAt(ids.invoices, 1),
+			amountInCents: 100_000,
+			receivedAt: new Date("2026-07-20T02:00:00.000Z"),
+			method: "bank_transfer",
+			operatorUserId: ids.users.owner,
+			operatorName: "owner",
+			requestId: randomUUID(),
+		},
+		{
+			id: fixturePayments[2] as string,
+			organizationId: organizationA,
+			invoiceId: requiredAt(ids.invoices, 2),
+			amountInCents: 50_000,
+			receivedAt: new Date("2026-07-21T02:00:00.000Z"),
+			method: "bank_transfer",
+			operatorUserId: ids.users.owner,
+			operatorName: "owner",
+			requestId: randomUUID(),
+		},
+	]);
+	await db.insert(paymentReversal).values({
+		organizationId: organizationA,
+		campusId: campusA,
+		invoiceId: requiredAt(ids.invoices, 2),
+		paymentId: fixturePayments[2] as string,
+		amountInCents: 20_000,
+		reason: "fixture",
+		reversedAt: new Date("2026-07-25T02:00:00.000Z"),
+		operatorUserId: ids.users.owner,
+		operatorName: "owner",
+		requestId: randomUUID(),
+	});
+	await db.insert(refund).values({
+		organizationId: organizationA,
+		invoiceId: requiredAt(ids.invoices, 1),
+		amountInCents: 20_000,
+		refundedAt: new Date("2026-07-26T02:00:00.000Z"),
+		method: "bank_transfer",
+		reason: "fixture",
+		operatorUserId: ids.users.owner,
+		operatorName: "owner",
+		requestId: randomUUID(),
+	});
 	await db.insert(enrollmentRegistration).values({
 		organizationId: organizationA,
 		requestId: randomUUID(),
@@ -615,6 +710,9 @@ test("固定 fixture 返回销售、教学、消课和续费金值", async () =>
 		const renewal = businessMetricRenewalResultSchema.parse(
 			await getBusinessMetricRenewal(scope, { range }, fixtureNow),
 		);
+		const financial = businessMetricFinancialResultSchema.parse(
+			await getBusinessMetricFinancial(scope, { range }, fixtureNow),
+		);
 
 		assert.deepEqual(sales.data.conversionRate, {
 			status: "available",
@@ -656,6 +754,23 @@ test("固定 fixture 返回销售、教学、消课和续费金值", async () =>
 		assert.equal(renewal.data.earlyRenewalCount, 1);
 		assert.equal(renewal.data.renewalAmountInCents, 120_000);
 		assert.equal(renewal.dataQuality.missingPurchaseCycleCount, 5);
+		assert.equal(financial.data.netReceiptsInCents, 180_000);
+		assert.deepEqual(financial.data.cohortCollectionRate, {
+			status: "available",
+			value: 110_000 / 300_000,
+			numerator: 110_000,
+			denominator: 300_000,
+		});
+		assert.equal(financial.data.matureCohortInvoiceCount, 3);
+		assert.equal(financial.data.immatureCohortInvoiceCount, 0);
+		assert.equal(financial.data.agingTotalInCents, 200_000);
+		assert.deepEqual(financial.data.agingBuckets, [
+			{ kind: "notDue", amountInCents: 0, invoiceCount: 0 },
+			{ kind: "overdue1To30", amountInCents: 200_000, invoiceCount: 3 },
+			{ kind: "overdue31To60", amountInCents: 0, invoiceCount: 0 },
+			{ kind: "overdue61To90", amountInCents: 0, invoiceCount: 0 },
+			{ kind: "overdueOver90", amountInCents: 0, invoiceCount: 0 },
+		]);
 	} finally {
 		await cleanupMetricFixture(ids);
 	}
