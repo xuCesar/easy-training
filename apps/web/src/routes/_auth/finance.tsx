@@ -13,7 +13,20 @@ import { FinanceWorkspace } from "@/features/training/finance-workspace";
 import { useOrganization } from "@/features/training/organization-context";
 
 export const Route = createFileRoute("/_auth/finance")({
-	validateSearch: z.object({ invoiceId: z.uuid().optional() }),
+	validateSearch: z.object({
+		invoiceId: z
+			.string()
+			.optional()
+			.transform((value) =>
+				z.uuid().safeParse(value).success ? value : undefined,
+			),
+		receiptId: z
+			.string()
+			.optional()
+			.transform((value) =>
+				z.uuid().safeParse(value).success ? value : undefined,
+			),
+	}),
 	component: FinanceRoute,
 });
 

@@ -38,3 +38,33 @@ export const academicManagementRoles: ReadonlySet<OrganizationRole> = new Set([
 export const teacherWorkspaceRoles: ReadonlySet<OrganizationRole> = new Set([
 	"teacher",
 ]);
+
+export const globalSearchKinds = [
+	"lead",
+	"student",
+	"course",
+	"class",
+	"lesson",
+	"invoice",
+	"receipt",
+] as const;
+
+export type GlobalSearchKind = (typeof globalSearchKinds)[number];
+
+/** 全局搜索唯一的角色—资源决策表，DB 层只接收已裁剪的资源集合。 */
+export function getGlobalSearchKindsForRole(
+	role: OrganizationRole,
+): readonly GlobalSearchKind[] {
+	switch (role) {
+		case "owner":
+		case "admin":
+		case "campus_manager":
+			return globalSearchKinds;
+		case "consultant":
+			return ["lead", "student"];
+		case "finance":
+			return ["invoice", "receipt"];
+		case "teacher":
+			return ["lesson"];
+	}
+}

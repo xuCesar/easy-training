@@ -81,6 +81,8 @@ import {
 	getReceiptByPaymentInputSchema,
 	getReceiptByPaymentResultSchema,
 	getReceiptDocumentInputSchema,
+	globalSearchInputSchema,
+	globalSearchResultSchema,
 	independentEnrollmentOptionsInputSchema,
 	independentEnrollmentOptionsSchema,
 	invitationListResultSchema,
@@ -219,6 +221,7 @@ import {
 	getManualInvoiceOptions,
 	listInvoices,
 } from "../repositories/finance";
+import { searchGlobal } from "../repositories/global-search";
 import {
 	addLeadFollowUp,
 	createLead,
@@ -350,6 +353,22 @@ export const appRouter = {
 		};
 	}),
 	training: {
+		search: {
+			global: organizationProcedure
+				.input(globalSearchInputSchema)
+				.output(globalSearchResultSchema)
+				.handler(({ context, input }) =>
+					searchGlobal(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+		},
 		organization: {
 			current: currentOrganizationProcedure
 				.output(currentOrganizationSchema)

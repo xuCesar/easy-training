@@ -18,11 +18,19 @@ const academicTabs = [
 	"courses",
 	"teachers",
 ] as const;
+const optionalUuid = z
+	.string()
+	.optional()
+	.transform((value) =>
+		z.uuid().safeParse(value).success ? value : undefined,
+	);
 
 export const Route = createFileRoute("/_auth/academic")({
 	validateSearch: z.object({
 		tab: z.enum(academicTabs).optional(),
-		lessonId: z.uuid().optional(),
+		lessonId: optionalUuid,
+		courseId: optionalUuid,
+		classGroupId: optionalUuid,
 	}),
 	component: AcademicRoute,
 });

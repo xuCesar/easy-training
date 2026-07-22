@@ -16,6 +16,7 @@ export * from "./repositories/enrollment-finance-adjustments";
 export * from "./repositories/enrollment-lifecycle";
 export * from "./repositories/enrollment-registration";
 export * from "./repositories/finance";
+export * from "./repositories/global-search";
 export * from "./repositories/leads";
 export * from "./repositories/operations";
 export * from "./repositories/organization";

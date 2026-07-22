@@ -76,12 +76,23 @@ import {
 	useState,
 } from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 
 import { LeadConversionDialog } from "@/features/training/lead-conversion-dialog";
 import { useOrganization } from "@/features/training/organization-context";
 import { client, orpc, queryClient } from "@/utils/orpc";
 
-export const Route = createFileRoute("/_auth/leads")({ component: LeadsRoute });
+export const Route = createFileRoute("/_auth/leads")({
+	validateSearch: z.object({
+		leadId: z
+			.string()
+			.optional()
+			.transform((value) =>
+				z.uuid().safeParse(value).success ? value : undefined,
+			),
+	}),
+	component: LeadsRoute,
+});
 
 type LeadFilterStage = "all" | Exclude<LeadStage, "enrolled">;
 type LeadFormValues = {

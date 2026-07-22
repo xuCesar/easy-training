@@ -9,7 +9,6 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@easy-training/ui/components/dropdown-menu";
-import { Input } from "@easy-training/ui/components/input";
 import { Separator } from "@easy-training/ui/components/separator";
 import {
 	Sheet,
@@ -52,7 +51,7 @@ import {
 } from "lucide-react";
 import { useLayoutEffect, useState } from "react";
 import { toast } from "sonner";
-
+import { GlobalSearchDialog } from "@/features/training/global-search-dialog";
 import { OrganizationProvider } from "@/features/training/organization-context";
 import { authClient } from "@/lib/auth-client";
 import {
@@ -129,6 +128,7 @@ const ORGANIZATION_SWITCH_MUTATION_KEY = "organization-switch";
 
 function AuthLayout() {
 	const [mobileNavOpen, setMobileNavOpen] = useState(false);
+	const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
 	const [isSwitchingOrganization, setIsSwitchingOrganization] = useState(false);
 	const [readyOrganizationId, setReadyOrganizationId] = useState<string | null>(
 		null,
@@ -345,17 +345,24 @@ function AuthLayout() {
 								</>
 							)}
 						</div>
-						<div className="ml-auto hidden w-full max-w-sm md:block">
-							<div className="relative">
-								<SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-								<Input
-									aria-label="全局搜索"
-									className="pl-8"
-									placeholder="搜索功能即将开放"
-									disabled
-								/>
-							</div>
-						</div>
+						<button
+							type="button"
+							onClick={() => setGlobalSearchOpen(true)}
+							className="ml-auto hidden w-full max-w-sm items-center gap-2 border bg-background px-2.5 py-1.5 text-left text-muted-foreground text-sm md:flex"
+						>
+							<SearchIcon className="size-4" />
+							<span className="flex-1">搜索</span>
+							<kbd className="text-xs">⌘K</kbd>
+						</button>
+						<Button
+							variant="ghost"
+							size="icon"
+							className="md:hidden"
+							aria-label="打开全局搜索"
+							onClick={() => setGlobalSearchOpen(true)}
+						>
+							<SearchIcon />
+						</Button>
 						<DropdownMenu>
 							<DropdownMenuTrigger
 								render={
@@ -474,6 +481,12 @@ function AuthLayout() {
 							</DropdownMenuContent>
 						</DropdownMenu>
 					</header>
+					<GlobalSearchDialog
+						open={globalSearchOpen}
+						onOpenChange={setGlobalSearchOpen}
+						contextKey={`${organization?.id ?? ""}:${organization?.role ?? ""}`}
+						role={organization?.role}
+					/>
 					<main className="mx-auto w-full max-w-7xl p-4 lg:p-6">
 						{isSwitchingOrganization ? (
 							<OrganizationSwitchingState />

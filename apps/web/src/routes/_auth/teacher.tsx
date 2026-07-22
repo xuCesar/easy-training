@@ -1,9 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { z } from "zod";
 
 import { useOrganization } from "@/features/training/organization-context";
 import { TeacherWorkbench } from "@/features/training/teacher-workbench";
 
 export const Route = createFileRoute("/_auth/teacher")({
+	validateSearch: z.object({
+		lessonId: z
+			.string()
+			.optional()
+			.transform((value) =>
+				z.uuid().safeParse(value).success ? value : undefined,
+			),
+	}),
 	component: TeacherRoute,
 });
 

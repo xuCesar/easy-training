@@ -75,12 +75,21 @@ import {
 	useState,
 } from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 import { IndependentEnrollmentDialog } from "@/features/training/independent-enrollment-dialog";
 import { useOrganization } from "@/features/training/organization-context";
 import { StudentTimelineSheet } from "@/features/training/student-timeline-sheet";
 import { client, orpc, queryClient } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth/students")({
+	validateSearch: z.object({
+		studentId: z
+			.string()
+			.optional()
+			.transform((value) =>
+				z.uuid().safeParse(value).success ? value : undefined,
+			),
+	}),
 	component: StudentsRoute,
 });
 
