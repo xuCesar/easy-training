@@ -3,6 +3,7 @@ import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "../index";
 import {
 	invoice,
+	invoiceAdjustment,
 	invoiceMetricFact,
 	payment,
 	paymentReversal,
@@ -199,6 +200,154 @@ export async function getFinancialCohortRecord(input: {
 			financialFactsComplete: true,
 		})),
 	});
+}
+
+export type FinancialAgingRecord = {
+	snapshotAt: Date;
+	buckets: Array<{
+		kind: FinancialAgingBucket;
+		amountInCents: number;
+		invoiceCount: number;
+	}>;
+	totalInCents: number;
+	negativeBalanceAnomalyCount: number;
+	missingFactCount: number;
+};
+
+export async function getFinancialAgingRecord(input: {
+	scope: FinancialMetricScope;
+	snapshotAt: Date;
+}): Promise<FinancialAgingRecord> {
+	const rows = await db
+		.select({
+			id: invoice.id,
+			amountInCents: invoice.amountInCents,
+			dueDate: invoice.dueDate,
+		})
+		.from(invoice)
+		.innerJoin(
+			invoiceMetricFact,
+			and(
+				eq(invoiceMetricFact.invoiceId, invoice.id),
+				eq(invoiceMetricFact.organizationId, invoice.organizationId),
+			),
+		)
+		.where(
+			and(
+				eq(invoice.organizationId, input.scope.organizationId),
+				lt(invoice.issuedAt, input.snapshotAt),
+				campusCondition(input.scope.campusAccess),
+			),
+		);
+	const ids = rows.map((row) => row.id);
+	const [adjustments, payments, reversals] = await Promise.all([
+		ids.length === 0
+			? Promise.resolve([])
+			: db
+					.select({
+						invoiceId: invoiceAdjustment.invoiceId,
+						amountInCents: invoiceAdjustment.afterAmountInCents,
+						dueDate: invoiceAdjustment.afterDueDate,
+						createdAt: invoiceAdjustment.createdAt,
+					})
+					.from(invoiceAdjustment)
+					.where(
+						and(
+							eq(invoiceAdjustment.organizationId, input.scope.organizationId),
+							inArray(invoiceAdjustment.invoiceId, ids),
+							lt(invoiceAdjustment.createdAt, input.snapshotAt),
+						),
+					),
+		ids.length === 0
+			? Promise.resolve([])
+			: db
+					.select({
+						invoiceId: payment.invoiceId,
+						amountInCents: payment.amountInCents,
+					})
+					.from(payment)
+					.where(
+						and(
+							eq(payment.organizationId, input.scope.organizationId),
+							inArray(payment.invoiceId, ids),
+							lt(payment.receivedAt, input.snapshotAt),
+						),
+					),
+		ids.length === 0
+			? Promise.resolve([])
+			: db
+					.select({
+						invoiceId: paymentReversal.invoiceId,
+						amountInCents: paymentReversal.amountInCents,
+					})
+					.from(paymentReversal)
+					.where(
+						and(
+							eq(paymentReversal.organizationId, input.scope.organizationId),
+							inArray(paymentReversal.invoiceId, ids),
+							lt(paymentReversal.reversedAt, input.snapshotAt),
+						),
+					),
+	]);
+	const terms = new Map(
+		rows.map((row) => [
+			row.id,
+			{ amountInCents: row.amountInCents, dueDate: row.dueDate },
+		]),
+	);
+	for (const adjustment of adjustments.sort(
+		(a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+	))
+		terms.set(adjustment.invoiceId, {
+			amountInCents: adjustment.amountInCents,
+			dueDate: adjustment.dueDate,
+		});
+	const settled = new Map<string, number>();
+	for (const row of payments)
+		settled.set(
+			row.invoiceId,
+			(settled.get(row.invoiceId) ?? 0) + row.amountInCents,
+		);
+	for (const row of reversals)
+		settled.set(
+			row.invoiceId,
+			(settled.get(row.invoiceId) ?? 0) - row.amountInCents,
+		);
+	const kinds: FinancialAgingBucket[] = [
+		"notDue",
+		"overdue1To30",
+		"overdue31To60",
+		"overdue61To90",
+		"overdueOver90",
+	];
+	const buckets = new Map(
+		kinds.map((kind) => [kind, { kind, amountInCents: 0, invoiceCount: 0 }]),
+	);
+	let negativeBalanceAnomalyCount = 0;
+	for (const row of rows) {
+		const term = terms.get(row.id);
+		if (!term) continue;
+		const outstanding = term.amountInCents - (settled.get(row.id) ?? 0);
+		if (outstanding < 0) {
+			negativeBalanceAnomalyCount += 1;
+			continue;
+		}
+		const bucket = buckets.get(
+			getFinancialAgingBucket(term.dueDate, input.snapshotAt),
+		);
+		if (bucket && outstanding > 0) {
+			bucket.amountInCents += outstanding;
+			bucket.invoiceCount += 1;
+		}
+	}
+	const values = [...buckets.values()];
+	return {
+		snapshotAt: input.snapshotAt,
+		buckets: values,
+		totalInCents: values.reduce((sum, bucket) => sum + bucket.amountInCents, 0),
+		negativeBalanceAnomalyCount,
+		missingFactCount: 0,
+	};
 }
 
 export type FinancialAgingBucket =
