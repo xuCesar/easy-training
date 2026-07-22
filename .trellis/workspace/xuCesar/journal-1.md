@@ -898,3 +898,39 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: 完成 P2 核心经营指标
+
+**Date**: 2026-07-22
+**Task**: 完成 P2 核心经营指标
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+完成招生、到课补课、消课与续费的稳定经营事实、版本化指标查询、角色权限、经营分析页面及受控下钻；74 项集成测试和完整质量门通过，GitHub #38 已关闭并同步路线图 #6。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4f4c798` | (see git log) |
+| `33501dd` | (see git log) |
+| `165b440` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
