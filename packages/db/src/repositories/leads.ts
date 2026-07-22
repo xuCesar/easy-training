@@ -20,6 +20,8 @@ import {
 	course,
 	lead,
 	leadActivity,
+	leadMilestoneEvent,
+	leadOwnerAssignmentEvent,
 	organizationMember,
 	user,
 } from "../schema";
@@ -63,6 +65,8 @@ export type LeadRecordRow = {
 	campusId: string | null;
 	interestedCourseId: string | null;
 	ownerUserId: string | null;
+	providerUserId: string | null;
+	providerName: string | null;
 	createdAt: Date;
 	updatedAt: Date;
 };
@@ -82,6 +86,8 @@ export type LeadActivityRow = {
 export type CreateLeadRecordInput = {
 	organizationId: string;
 	ownerUserId: string;
+	providerUserId: string | null;
+	assignmentSource?: "creation" | "import";
 	/** 未指定时保持旧接口语义：负责人同时是活动操作者。 */
 	operatorUserId?: string;
 	campusAccess: CampusAccess;
@@ -111,7 +117,8 @@ export class LeadRepositoryError extends Error {
 			| "IDEMPOTENCY_CONFLICT"
 			| "INVALID_CURSOR"
 			| "CAMPUS_OUT_OF_SCOPE"
-			| "CAMPUS_INACTIVE",
+			| "CAMPUS_INACTIVE"
+			| "PROVIDER_NOT_ELIGIBLE",
 	) {
 		super(code);
 		this.name = "LeadRepositoryError";
@@ -180,6 +187,8 @@ const leadRecordSelection = {
 	campusId: lead.campusId,
 	interestedCourseId: lead.interestedCourseId,
 	ownerUserId: lead.ownerUserId,
+	providerUserId: lead.providerUserId,
+	providerName: lead.providerNameSnapshot,
 	createdAt: lead.createdAt,
 	updatedAt: lead.updatedAt,
 };
@@ -197,6 +206,8 @@ function toLeadRecord(row: {
 	campusId: string | null;
 	interestedCourseId: string | null;
 	ownerUserId: string | null;
+	providerUserId: string | null;
+	providerName: string | null;
 	createdAt: Date;
 	updatedAt: Date;
 }): LeadRecordRow | null {
@@ -352,6 +363,7 @@ function leadPayloadMatches(
 		interestedCourseId: string | null;
 		nextFollowAt: Date | null;
 		note: string | null;
+		providerUserId: string | null;
 	},
 	input: CreateLeadRecordInput,
 ): boolean {
@@ -363,7 +375,8 @@ function leadPayloadMatches(
 		record.campusId === input.campusId &&
 		record.interestedCourseId === input.interestedCourseId &&
 		record.nextFollowAt?.getTime() === input.nextFollowAt?.getTime() &&
-		record.note === input.note
+		record.note === input.note &&
+		record.providerUserId === input.providerUserId
 	);
 }
 
@@ -494,6 +507,7 @@ export async function createLeadRecordInTransaction(
 			interestedCourseId: lead.interestedCourseId,
 			nextFollowAt: lead.nextFollowAt,
 			note: lead.note,
+			providerUserId: lead.providerUserId,
 		})
 		.from(lead)
 		.where(
@@ -518,6 +532,46 @@ export async function createLeadRecordInTransaction(
 		.where(eq(user.id, operatorUserId))
 		.limit(1);
 	if (!operator) throw new Error("Lead operator was not found.");
+	const [owner] = await tx
+		.select({ name: user.name })
+		.from(organizationMember)
+		.innerJoin(user, eq(user.id, organizationMember.userId))
+		.where(
+			and(
+				eq(organizationMember.organizationId, input.organizationId),
+				eq(organizationMember.userId, input.ownerUserId),
+				inArray(organizationMember.role, [
+					"owner",
+					"admin",
+					"campus_manager",
+					"consultant",
+				]),
+			),
+		)
+		.limit(1);
+	if (!owner) throw new Error("Lead owner was not found.");
+	const [provider] = input.providerUserId
+		? await tx
+				.select({ name: user.name })
+				.from(organizationMember)
+				.innerJoin(user, eq(user.id, organizationMember.userId))
+				.where(
+					and(
+						eq(organizationMember.organizationId, input.organizationId),
+						eq(organizationMember.userId, input.providerUserId),
+						inArray(organizationMember.role, [
+							"owner",
+							"admin",
+							"campus_manager",
+							"consultant",
+						]),
+					),
+				)
+				.limit(1)
+		: [];
+	if (input.providerUserId && !provider) {
+		throw new LeadRepositoryError("PROVIDER_NOT_ELIGIBLE");
+	}
 
 	const [created] = await tx
 		.insert(lead)
@@ -526,6 +580,9 @@ export async function createLeadRecordInTransaction(
 			campusId: input.campusId,
 			interestedCourseId: input.interestedCourseId,
 			ownerUserId: input.ownerUserId,
+			providerUserId: input.providerUserId,
+			providerNameSnapshot: provider?.name ?? null,
+			createdCampusId: input.campusId,
 			name: input.name,
 			phone: input.phone,
 			source: input.source,
@@ -547,6 +604,30 @@ export async function createLeadRecordInTransaction(
 		operatorUserId,
 		operatorName: operator.name,
 	});
+	await tx.insert(leadOwnerAssignmentEvent).values({
+		organizationId: input.organizationId,
+		leadId: created.id,
+		campusId: input.campusId,
+		nextOwnerUserId: input.ownerUserId,
+		nextOwnerNameSnapshot: owner.name,
+		operatorUserId,
+		source: input.assignmentSource ?? "creation",
+		requestId: input.requestId,
+	});
+	if (input.stage === "contacted" || input.stage === "trialBooked") {
+		await tx.insert(leadMilestoneEvent).values({
+			organizationId: input.organizationId,
+			leadId: created.id,
+			cycleNumber: 1,
+			kind: stageToDatabase[input.stage],
+			campusId: input.campusId,
+			providerUserId: input.providerUserId,
+			providerNameSnapshot: provider?.name ?? null,
+			operatorUserId,
+			sourceType: input.assignmentSource === "import" ? "lead_import" : "lead",
+			sourceId: created.id,
+		});
+	}
 
 	return { id: created.id, replayed: false };
 }
@@ -703,7 +784,15 @@ export async function addLeadFollowUpRecord(input: {
 
 	const leadId = await db.transaction(async (tx) => {
 		const [current] = await tx
-			.select({ id: lead.id, stage: lead.stage, campusId: lead.campusId })
+			.select({
+				id: lead.id,
+				stage: lead.stage,
+				campusId: lead.campusId,
+				ownerUserId: lead.ownerUserId,
+				providerUserId: lead.providerUserId,
+				providerNameSnapshot: lead.providerNameSnapshot,
+				currentCycleNumber: lead.currentCycleNumber,
+			})
 			.from(lead)
 			.where(
 				and(
@@ -729,12 +818,24 @@ export async function addLeadFollowUpRecord(input: {
 			.where(eq(user.id, input.operatorUserId))
 			.limit(1);
 		if (!operator) throw new Error("Lead operator was not found.");
+		const [owner] = current.ownerUserId
+			? await tx
+					.select({ name: user.name })
+					.from(user)
+					.where(eq(user.id, current.ownerUserId))
+					.limit(1)
+			: [];
+		const isReopened = current.stage === "lost" && input.stage !== "lost";
+		const cycleNumber = isReopened
+			? current.currentCycleNumber + 1
+			: current.currentCycleNumber;
 
 		await tx
 			.update(lead)
 			.set({
 				stage: stageToDatabase[input.stage],
 				nextFollowAt: input.nextFollowAt,
+				currentCycleNumber: cycleNumber,
 				updatedAt: new Date(),
 			})
 			.where(
@@ -743,17 +844,65 @@ export async function addLeadFollowUpRecord(input: {
 					eq(lead.organizationId, input.organizationId),
 				),
 			);
-		await tx.insert(leadActivity).values({
-			organizationId: input.organizationId,
-			leadId: current.id,
-			type: "followed_up",
-			content: input.content,
-			stage: stageToDatabase[input.stage],
-			nextFollowAt: input.nextFollowAt,
-			lostReason: input.stage === "lost" ? input.lostReason : null,
-			operatorUserId: input.operatorUserId,
-			operatorName: operator.name,
-		});
+		const [activity] = await tx
+			.insert(leadActivity)
+			.values({
+				organizationId: input.organizationId,
+				leadId: current.id,
+				type: "followed_up",
+				content: input.content,
+				stage: stageToDatabase[input.stage],
+				nextFollowAt: input.nextFollowAt,
+				lostReason: input.stage === "lost" ? input.lostReason : null,
+				operatorUserId: input.operatorUserId,
+				operatorName: operator.name,
+			})
+			.returning({ id: leadActivity.id });
+		if (!activity) throw new Error("Lead activity did not return a record.");
+
+		const milestones: Array<typeof leadMilestoneEvent.$inferInsert> = [];
+		if (isReopened) {
+			milestones.push({
+				organizationId: input.organizationId,
+				leadId: current.id,
+				cycleNumber,
+				kind: "reopened",
+				campusId: current.campusId,
+				providerUserId: current.providerUserId,
+				providerNameSnapshot: current.providerNameSnapshot,
+				operatorUserId: input.operatorUserId,
+				sourceType: "lead_activity",
+				sourceId: activity.id,
+			});
+		}
+		if (
+			current.stage !== stageToDatabase[input.stage] &&
+			(input.stage === "contacted" ||
+				input.stage === "trialBooked" ||
+				input.stage === "lost")
+		) {
+			milestones.push({
+				organizationId: input.organizationId,
+				leadId: current.id,
+				cycleNumber,
+				kind: stageToDatabase[input.stage],
+				campusId: current.campusId,
+				providerUserId: current.providerUserId,
+				providerNameSnapshot: current.providerNameSnapshot,
+				attributionUserId: input.stage === "lost" ? current.ownerUserId : null,
+				attributionNameSnapshot:
+					input.stage === "lost" ? (owner?.name ?? null) : null,
+				operatorUserId: input.operatorUserId,
+				sourceType: "lead_activity",
+				sourceId: activity.id,
+			});
+		}
+		if (milestones.length > 0) {
+			await tx
+				.insert(leadMilestoneEvent)
+				.values(milestones)
+				.onConflictDoNothing();
+		}
 
 		return current.id;
 	});

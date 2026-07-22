@@ -683,6 +683,8 @@ export async function confirmLeadImport(input: {
 			await createLeadRecordInTransaction(tx, {
 				organizationId: input.organizationId,
 				ownerUserId: row.ownerUserId,
+				providerUserId: row.ownerUserId,
+				assignmentSource: "import",
 				operatorUserId: input.userId,
 				campusAccess,
 				requestId: crypto.randomUUID(),

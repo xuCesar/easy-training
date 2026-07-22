@@ -7,9 +7,11 @@ import {
 	classGroup,
 	course,
 	enrollment,
+	enrollmentPurchaseCycle,
 	invoice,
 	lead,
 	leadActivity,
+	leadMilestoneEvent,
 	organizationMember,
 	student,
 	studentContact,
@@ -372,6 +374,7 @@ export async function convertLeadRecord(
 ): Promise<ConvertLeadRecordResult> {
 	try {
 		return await db.transaction(async (tx) => {
+			const conversionOccurredAt = new Date();
 			await tx.execute(
 				sql`SELECT pg_advisory_xact_lock(hashtext(${input.organizationId}))`,
 			);
@@ -399,6 +402,9 @@ export async function convertLeadRecord(
 					phone: lead.phone,
 					stage: lead.stage,
 					campusId: lead.campusId,
+					providerUserId: lead.providerUserId,
+					providerNameSnapshot: lead.providerNameSnapshot,
+					currentCycleNumber: lead.currentCycleNumber,
 				})
 				.from(lead)
 				.where(
@@ -622,6 +628,16 @@ export async function convertLeadRecord(
 					campusId: studentCampusId,
 				});
 			}
+			const [conversionOwner] = input.conversionOwnerUserId
+				? await tx
+						.select({ name: user.name })
+						.from(user)
+						.where(eq(user.id, input.conversionOwnerUserId))
+						.limit(1)
+				: [];
+			if (input.conversionOwnerUserId && !conversionOwner) {
+				throw new EnrollmentConversionError("STUDENT_OWNER_NOT_ELIGIBLE");
+			}
 			if (existingStudentRecord && input.adjustStudentOwner) {
 				if (!studentOwnerManagementRoles.has(currentMember.role)) {
 					throw new EnrollmentConversionError("STUDENT_OWNER_ADJUST_FORBIDDEN");
@@ -749,6 +765,8 @@ export async function convertLeadRecord(
 					leadId: input.leadId,
 					studentId,
 					conversionOwnerUserId: input.conversionOwnerUserId,
+					conversionOwnerNameSnapshot: conversionOwner?.name ?? null,
+					conversionCampusId: leadRecord.campusId,
 					courseId: input.courseId,
 					classGroupId: input.classGroupId,
 					purchasedLessons: input.purchasedLessons,
@@ -774,7 +792,7 @@ export async function convertLeadRecord(
 					amountInCents: input.amountInCents,
 					dueDate: input.invoiceDueDate,
 					status: isComplimentaryEnrollment ? "paid" : "pending",
-					paidAt: isComplimentaryEnrollment ? new Date() : null,
+					paidAt: isComplimentaryEnrollment ? conversionOccurredAt : null,
 					createdByUserId: input.operatorUserId,
 					createdByName: operator.name,
 				})
@@ -788,12 +806,25 @@ export async function convertLeadRecord(
 				invoiceId: createdInvoice.id,
 				sourceType: "enrollment_conversion",
 				sourceId: createdInvoice.id,
-				occurredAt: new Date(),
+				occurredAt: conversionOccurredAt,
+			});
+
+			await tx.insert(enrollmentPurchaseCycle).values({
+				organizationId: input.organizationId,
+				enrollmentId: createdEnrollment.id,
+				sequence: 1,
+				source: "initial",
+				sourceLeadId: input.leadId,
+				purchasedLessons: input.purchasedLessons,
+				startingRemainingLessons: input.purchasedLessons,
+				amountInCents: input.amountInCents,
+				campusId: leadRecord.campusId,
+				startedAt: conversionOccurredAt,
 			});
 
 			const [updatedLead] = await tx
 				.update(lead)
-				.set({ stage: "enrolled", updatedAt: new Date() })
+				.set({ stage: "enrolled", updatedAt: conversionOccurredAt })
 				.where(
 					and(
 						eq(lead.id, input.leadId),
@@ -807,14 +838,37 @@ export async function convertLeadRecord(
 				throw new EnrollmentConversionError("LEAD_NOT_CONVERTIBLE");
 			}
 
-			await tx.insert(leadActivity).values({
+			const [conversionActivity] = await tx
+				.insert(leadActivity)
+				.values({
+					organizationId: input.organizationId,
+					leadId: updatedLead.id,
+					type: "converted",
+					content: "完成报名转化",
+					stage: "enrolled",
+					operatorUserId: input.operatorUserId,
+					operatorName: operator.name,
+					createdAt: conversionOccurredAt,
+				})
+				.returning({ id: leadActivity.id });
+			if (!conversionActivity) {
+				throw new Error("Lead conversion activity did not return a record.");
+			}
+
+			await tx.insert(leadMilestoneEvent).values({
 				organizationId: input.organizationId,
 				leadId: updatedLead.id,
-				type: "converted",
-				content: "完成报名转化",
-				stage: "enrolled",
+				cycleNumber: leadRecord.currentCycleNumber,
+				kind: "converted",
+				campusId: leadRecord.campusId,
+				providerUserId: leadRecord.providerUserId,
+				providerNameSnapshot: leadRecord.providerNameSnapshot,
+				attributionUserId: input.conversionOwnerUserId,
+				attributionNameSnapshot: conversionOwner?.name ?? null,
 				operatorUserId: input.operatorUserId,
-				operatorName: operator.name,
+				sourceType: "lead_activity",
+				sourceId: conversionActivity.id,
+				occurredAt: conversionOccurredAt,
 			});
 
 			return {

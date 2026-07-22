@@ -5,11 +5,15 @@ import {
 	campus,
 	course,
 	enrollment,
+	enrollmentLifecycleEvent,
+	enrollmentPurchaseCycle,
 	enrollmentRenewal,
 	enrollmentTransfer,
 	invoice,
 	invoiceFollowUp,
 	refund,
+	renewalOpportunity,
+	renewalOpportunityConversion,
 	student,
 	user,
 } from "../schema";
@@ -201,6 +205,57 @@ type RenewalInput = {
 	requestId: string;
 };
 
+const renewalObservationWindowMs = 30 * 24 * 60 * 60 * 1000;
+
+async function isRenewalOpportunityWithinObservationWindow(
+	tx: Transaction,
+	input: {
+		enrollmentId: string;
+		triggeredAt: Date;
+		convertedAt: Date;
+	},
+): Promise<boolean> {
+	const lifecycleEvents = await tx
+		.select({
+			kind: enrollmentLifecycleEvent.kind,
+			effectiveAt: enrollmentLifecycleEvent.effectiveAt,
+		})
+		.from(enrollmentLifecycleEvent)
+		.where(
+			and(
+				eq(enrollmentLifecycleEvent.enrollmentId, input.enrollmentId),
+				inArray(enrollmentLifecycleEvent.kind, ["frozen", "resumed"]),
+				sql`${enrollmentLifecycleEvent.effectiveAt} > ${input.triggeredAt}`,
+				sql`${enrollmentLifecycleEvent.effectiveAt} <= ${input.convertedAt}`,
+			),
+		)
+		.orderBy(
+			asc(enrollmentLifecycleEvent.effectiveAt),
+			asc(enrollmentLifecycleEvent.id),
+		);
+
+	let frozenAt: Date | null = null;
+	let frozenDurationMs = 0;
+	for (const event of lifecycleEvents) {
+		if (event.kind === "frozen" && frozenAt === null) {
+			frozenAt = event.effectiveAt;
+		} else if (event.kind === "resumed" && frozenAt !== null) {
+			frozenDurationMs += event.effectiveAt.getTime() - frozenAt.getTime();
+			frozenAt = null;
+		}
+	}
+	if (frozenAt !== null) {
+		frozenDurationMs += input.convertedAt.getTime() - frozenAt.getTime();
+	}
+
+	return (
+		input.convertedAt.getTime() -
+			input.triggeredAt.getTime() -
+			frozenDurationMs <=
+		renewalObservationWindowMs
+	);
+}
+
 export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 	enrollmentId: string;
 	invoiceId: string;
@@ -212,6 +267,7 @@ export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 	}
 	try {
 		return await db.transaction(async (tx) => {
+			const renewedAt = new Date();
 			const access = await getCurrentWriteCampusAccess(tx, {
 				organizationId: input.organizationId,
 				userId: input.operatorUserId,
@@ -252,6 +308,7 @@ export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 					id: enrollment.id,
 					studentId: enrollment.studentId,
 					campusId: student.campusId,
+					remainingLessons: enrollment.remainingLessons,
 					status: enrollment.status,
 				})
 				.from(enrollment)
@@ -313,12 +370,73 @@ export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 				.returning({ id: enrollmentRenewal.id });
 			if (!createdRenewal)
 				throw new EnrollmentFinanceAdjustmentError("RESOURCE_UNAVAILABLE");
+
+			const [latestPurchaseCycle] = await tx
+				.select({ sequence: enrollmentPurchaseCycle.sequence })
+				.from(enrollmentPurchaseCycle)
+				.where(
+					and(
+						eq(enrollmentPurchaseCycle.organizationId, input.organizationId),
+						eq(enrollmentPurchaseCycle.enrollmentId, source.id),
+					),
+				)
+				.orderBy(desc(enrollmentPurchaseCycle.sequence))
+				.limit(1)
+				.for("update");
+			await tx.insert(enrollmentPurchaseCycle).values({
+				organizationId: input.organizationId,
+				enrollmentId: source.id,
+				sequence: (latestPurchaseCycle?.sequence ?? 0) + 1,
+				source: "renewal",
+				sourceRenewalId: createdRenewal.id,
+				purchasedLessons: input.addedLessons,
+				startingRemainingLessons: source.remainingLessons + input.addedLessons,
+				amountInCents: input.amountInCents,
+				campusId: source.campusId,
+				startedAt: renewedAt,
+			});
+
+			const [openOpportunity] = await tx
+				.select({
+					id: renewalOpportunity.id,
+					triggeredAt: renewalOpportunity.triggeredAt,
+				})
+				.from(renewalOpportunity)
+				.leftJoin(
+					renewalOpportunityConversion,
+					eq(renewalOpportunityConversion.opportunityId, renewalOpportunity.id),
+				)
+				.where(
+					and(
+						eq(renewalOpportunity.organizationId, input.organizationId),
+						eq(renewalOpportunity.enrollmentId, source.id),
+						sql`${renewalOpportunityConversion.id} is null`,
+					),
+				)
+				.orderBy(desc(renewalOpportunity.triggeredAt))
+				.limit(1)
+				.for("update", { of: renewalOpportunity });
+			if (
+				openOpportunity &&
+				(await isRenewalOpportunityWithinObservationWindow(tx, {
+					enrollmentId: source.id,
+					triggeredAt: openOpportunity.triggeredAt,
+					convertedAt: renewedAt,
+				}))
+			) {
+				await tx.insert(renewalOpportunityConversion).values({
+					organizationId: input.organizationId,
+					opportunityId: openOpportunity.id,
+					renewalId: createdRenewal.id,
+					convertedAt: renewedAt,
+				});
+			}
 			await startArrearsCycleIfNeeded(tx, {
 				organizationId: input.organizationId,
 				invoiceId: createdInvoice.id,
 				sourceType: "enrollment_renewal",
 				sourceId: createdRenewal.id,
-				occurredAt: new Date(),
+				occurredAt: renewedAt,
 			});
 			await tx
 				.update(enrollment)
@@ -372,6 +490,7 @@ export async function transferEnrollmentRecord(input: {
 }> {
 	try {
 		return await db.transaction(async (tx) => {
+			const transferredAt = new Date();
 			const access = await getCurrentWriteCampusAccess(tx, {
 				organizationId: input.organizationId,
 				userId: input.operatorUserId,
@@ -491,6 +610,18 @@ export async function transferEnrollmentRecord(input: {
 				.returning({ id: enrollmentTransfer.id });
 			if (!createdTransfer)
 				throw new EnrollmentFinanceAdjustmentError("RESOURCE_UNAVAILABLE");
+			await tx.insert(enrollmentPurchaseCycle).values({
+				organizationId: input.organizationId,
+				enrollmentId: target.id,
+				sequence: 1,
+				source: "transfer",
+				sourceTransferId: createdTransfer.id,
+				purchasedLessons: source.remainingLessons,
+				startingRemainingLessons: source.remainingLessons,
+				amountInCents: 0,
+				campusId: source.campusId,
+				startedAt: transferredAt,
+			});
 			await tx
 				.update(enrollment)
 				.set({ status: "transferred", remainingLessons: 0, classGroupId: null })

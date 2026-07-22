@@ -9,6 +9,7 @@ import {
 	classroom,
 	course,
 	enrollment,
+	enrollmentPurchaseCycle,
 	enrollmentRegistration,
 	invoice,
 	lesson,
@@ -134,6 +135,8 @@ export type CreateIndependentEnrollmentRecordInput = {
 	organizationId: string;
 	operatorUserId: string;
 	student: RegistrationStudentChoice;
+	source: "walk_in" | "phone" | "referral" | "online" | "other";
+	providerUserId: string | null;
 	conversionOwnerUserId: string | null;
 	adjustStudentOwner: boolean;
 	courseId: string;
@@ -195,6 +198,8 @@ function inputHash(input: CreateIndependentEnrollmentRecordInput): string {
 		.update(
 			JSON.stringify({
 				student: input.student,
+				source: input.source,
+				providerUserId: input.providerUserId,
 				conversionOwnerUserId: input.conversionOwnerUserId,
 				adjustStudentOwner: input.adjustStudentOwner,
 				courseId: input.courseId,
@@ -556,6 +561,7 @@ export async function createIndependentEnrollmentRecord(
 	const hash = inputHash(input);
 	try {
 		return await db.transaction(async (tx) => {
+			const registrationOccurredAt = new Date();
 			const access = await getCurrentAccess(tx, input);
 			const replay = await getReplay(tx, {
 				organizationId: input.organizationId,
@@ -672,6 +678,30 @@ export async function createIndependentEnrollmentRecord(
 					campusId: studentCampusId,
 				});
 			}
+			if (input.providerUserId) {
+				await assertEligibleStudentOwner(tx, {
+					organizationId: input.organizationId,
+					ownerUserId: input.providerUserId,
+					campusId: studentCampusId,
+				});
+			}
+			const participantIds = [
+				input.conversionOwnerUserId,
+				input.providerUserId,
+			].filter((userId): userId is string => userId !== null);
+			const participantNames =
+				participantIds.length > 0
+					? await tx
+							.select({ id: user.id, name: user.name })
+							.from(user)
+							.where(inArray(user.id, participantIds))
+					: [];
+			const participantNameById = new Map(
+				participantNames.map((participant) => [
+					participant.id,
+					participant.name,
+				]),
+			);
 			if (existingStudentRecord && input.adjustStudentOwner) {
 				if (!canOverridePackageTerms(access.role)) {
 					throw new EnrollmentRegistrationError(
@@ -775,6 +805,10 @@ export async function createIndependentEnrollmentRecord(
 					leadId: null,
 					studentId,
 					conversionOwnerUserId: input.conversionOwnerUserId,
+					conversionOwnerNameSnapshot: input.conversionOwnerUserId
+						? (participantNameById.get(input.conversionOwnerUserId) ?? null)
+						: null,
+					conversionCampusId: studentCampusId,
 					courseId: input.courseId,
 					classGroupId: input.classGroupId,
 					purchasedLessons: input.purchasedLessons,
@@ -805,7 +839,7 @@ export async function createIndependentEnrollmentRecord(
 					amountInCents: input.amountInCents,
 					dueDate: input.invoiceDueDate,
 					status: isComplimentary ? "paid" : "pending",
-					paidAt: isComplimentary ? new Date() : null,
+					paidAt: isComplimentary ? registrationOccurredAt : null,
 					createdByUserId: input.operatorUserId,
 					createdByName: operator.name,
 				})
@@ -824,17 +858,36 @@ export async function createIndependentEnrollmentRecord(
 					invoiceId: createdInvoice.id,
 					classGroupId: input.classGroupId,
 					campusId: studentCampusId,
+					source: input.source,
+					providerUserId: input.providerUserId,
+					providerNameSnapshot: input.providerUserId
+						? (participantNameById.get(input.providerUserId) ?? null)
+						: null,
 					operatorUserId: input.operatorUserId,
+					createdAt: registrationOccurredAt,
 				})
 				.returning({ id: enrollmentRegistration.id });
 			if (!registration)
 				throw new EnrollmentRegistrationError("RESOURCE_UNAVAILABLE");
+
+			await tx.insert(enrollmentPurchaseCycle).values({
+				organizationId: input.organizationId,
+				enrollmentId: createdEnrollment.id,
+				sequence: 1,
+				source: "initial",
+				sourceRegistrationId: registration.id,
+				purchasedLessons: input.purchasedLessons,
+				startingRemainingLessons: input.purchasedLessons,
+				amountInCents: input.amountInCents,
+				campusId: studentCampusId,
+				startedAt: registrationOccurredAt,
+			});
 			await startArrearsCycleIfNeeded(tx, {
 				organizationId: input.organizationId,
 				invoiceId: createdInvoice.id,
 				sourceType: "enrollment_registration",
 				sourceId: registration.id,
-				occurredAt: new Date(),
+				occurredAt: registrationOccurredAt,
 			});
 
 			await writeOrganizationAuditEvent(tx, {
@@ -853,7 +906,8 @@ export async function createIndependentEnrollmentRecord(
 					purchasedLessons: input.purchasedLessons,
 					amountInCents: input.amountInCents,
 					invoiceDueDate: input.invoiceDueDate,
-					source: "independent",
+					source: input.source,
+					providerUserId: input.providerUserId,
 					requestId: input.requestId,
 				},
 			});

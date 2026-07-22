@@ -45,6 +45,7 @@ import {
 	campus,
 	course,
 	enrollment,
+	enrollmentPurchaseCycle,
 	enrollmentRenewal,
 	enrollmentTransfer,
 	invoice,
@@ -148,6 +149,9 @@ async function cleanupFixture(ids: FixtureIds) {
 	await db
 		.delete(refund)
 		.where(inArray(refund.organizationId, organizationIds));
+	await db
+		.delete(enrollmentPurchaseCycle)
+		.where(inArray(enrollmentPurchaseCycle.organizationId, organizationIds));
 	await db
 		.delete(enrollmentTransfer)
 		.where(inArray(enrollmentTransfer.organizationId, organizationIds));
@@ -1202,6 +1206,28 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 			.from(enrollmentRenewal)
 			.where(eq(enrollmentRenewal.requestId, renewalRequestId));
 		assert.ok(renewalRecord);
+		const renewalCycles = await db
+			.select({
+				sequence: enrollmentPurchaseCycle.sequence,
+				source: enrollmentPurchaseCycle.source,
+				sourceRenewalId: enrollmentPurchaseCycle.sourceRenewalId,
+				purchasedLessons: enrollmentPurchaseCycle.purchasedLessons,
+				startingRemainingLessons:
+					enrollmentPurchaseCycle.startingRemainingLessons,
+			})
+			.from(enrollmentPurchaseCycle)
+			.where(
+				eq(enrollmentPurchaseCycle.enrollmentId, ids.enrollmentIdempotent),
+			);
+		assert.deepEqual(renewalCycles, [
+			{
+				sequence: 1,
+				source: "renewal",
+				sourceRenewalId: renewalRecord.id,
+				purchasedLessons: 2,
+				startingRemainingLessons: 5,
+			},
+		]);
 		const renewalAuditEvents = await db
 			.select({
 				action: organizationAuditEvent.action,
@@ -1281,6 +1307,26 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 				eq(enrollmentTransfer.targetEnrollmentId, transfer.targetEnrollmentId),
 			);
 		assert.ok(transferRecord);
+		const [transferCycle] = await db
+			.select({
+				sequence: enrollmentPurchaseCycle.sequence,
+				source: enrollmentPurchaseCycle.source,
+				sourceTransferId: enrollmentPurchaseCycle.sourceTransferId,
+				purchasedLessons: enrollmentPurchaseCycle.purchasedLessons,
+				startingRemainingLessons:
+					enrollmentPurchaseCycle.startingRemainingLessons,
+			})
+			.from(enrollmentPurchaseCycle)
+			.where(
+				eq(enrollmentPurchaseCycle.enrollmentId, transfer.targetEnrollmentId),
+			);
+		assert.deepEqual(transferCycle, {
+			sequence: 1,
+			source: "transfer",
+			sourceTransferId: transferRecord.id,
+			purchasedLessons: 10,
+			startingRemainingLessons: 10,
+		});
 		const transferAuditEvents = await db
 			.select({
 				action: organizationAuditEvent.action,

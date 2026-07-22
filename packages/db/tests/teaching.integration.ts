@@ -62,6 +62,8 @@ import {
 	course,
 	enrollment,
 	enrollmentLifecycleEvent,
+	enrollmentPurchaseCycle,
+	lead,
 	lesson,
 	lessonConsumption,
 	lessonScheduleBatch,
@@ -71,6 +73,7 @@ import {
 	organizationAuditEvent,
 	organizationMember,
 	organizationMemberCampus,
+	renewalOpportunity,
 	student,
 	studentBulkOperationBatch,
 	teacher,
@@ -98,6 +101,9 @@ async function cleanup(ids: FixtureIds) {
 		.delete(organizationAuditEvent)
 		.where(eq(organizationAuditEvent.organizationId, ids.organizationId));
 	await db
+		.delete(renewalOpportunity)
+		.where(eq(renewalOpportunity.organizationId, ids.organizationId));
+	await db
 		.delete(lessonConsumption)
 		.where(eq(lessonConsumption.organizationId, ids.organizationId));
 	await db
@@ -119,9 +125,13 @@ async function cleanup(ids: FixtureIds) {
 		.delete(enrollmentLifecycleEvent)
 		.where(eq(enrollmentLifecycleEvent.organizationId, ids.organizationId));
 	await db
+		.delete(enrollmentPurchaseCycle)
+		.where(eq(enrollmentPurchaseCycle.organizationId, ids.organizationId));
+	await db
 		.delete(enrollment)
 		.where(eq(enrollment.organizationId, ids.organizationId));
 	await db.delete(lesson).where(eq(lesson.organizationId, ids.organizationId));
+	await db.delete(lead).where(eq(lead.organizationId, ids.organizationId));
 	await db
 		.delete(lessonScheduleRule)
 		.where(eq(lessonScheduleRule.organizationId, ids.organizationId));
@@ -2364,6 +2374,7 @@ test("结课原子写入考勤和消课，重复或并发结课不会重复扣�
 				courseId: course.id,
 				classGroupId: group.id,
 				studentName: "到课学员",
+				remainingLessons: 2,
 			}),
 			createEnrollmentFixture({
 				ids,
@@ -2384,6 +2395,30 @@ test("结课原子写入考勤和消课，重复或并发结课不会重复扣�
 				studentName: "请假学员",
 			}),
 		]);
+		const purchaseCycleSourceLeadId = randomUUID();
+		await db.insert(lead).values({
+			id: purchaseCycleSourceLeadId,
+			organizationId: ids.organizationId,
+			campusId: ids.campusA,
+			name: "续费机会来源线索",
+			phone: "13800000001",
+			source: "集成测试",
+		});
+		const [purchaseCycle] = await db
+			.insert(enrollmentPurchaseCycle)
+			.values({
+				organizationId: ids.organizationId,
+				enrollmentId: attendees[0].enrollmentId,
+				sequence: 1,
+				source: "initial",
+				sourceLeadId: purchaseCycleSourceLeadId,
+				purchasedLessons: 2,
+				startingRemainingLessons: 2,
+				amountInCents: 1_000,
+				campusId: ids.campusA,
+			})
+			.returning({ id: enrollmentPurchaseCycle.id });
+		assert.ok(purchaseCycle);
 		const lessonOne = await createLessonRecord({
 			organizationId: ids.organizationId,
 			userId: ids.adminId,
@@ -2413,6 +2448,23 @@ test("结课原子写入考勤和消课，重复或并发结课不会重复扣�
 			.where(eq(lessonConsumption.lessonId, lessonOne.id));
 		assert.equal(attendanceRows.length, 4);
 		assert.equal(consumptionRows.length, 2);
+		const [opportunity] = await db
+			.select({
+				enrollmentId: renewalOpportunity.enrollmentId,
+				purchaseCycleId: renewalOpportunity.purchaseCycleId,
+				thresholdLessons: renewalOpportunity.thresholdLessons,
+				remainingLessons: renewalOpportunity.remainingLessons,
+				campusId: renewalOpportunity.campusId,
+			})
+			.from(renewalOpportunity)
+			.where(eq(renewalOpportunity.enrollmentId, attendees[0].enrollmentId));
+		assert.deepEqual(opportunity, {
+			enrollmentId: attendees[0].enrollmentId,
+			purchaseCycleId: purchaseCycle.id,
+			thresholdLessons: 1,
+			remainingLessons: 1,
+			campusId: ids.campusA,
+		});
 		const completionAuditsForFirstLesson = await db
 			.select({
 				organizationId: organizationAuditEvent.organizationId,
@@ -2459,7 +2511,7 @@ test("结课原子写入考勤和消课，重复或并发结课不会重复扣�
 			balances
 				.map((item) => item.remainingLessons)
 				.sort((left, right) => left - right),
-			[2, 2, 3, 3],
+			[1, 2, 3, 3],
 		);
 		await expectError(
 			completeLessonRecord({

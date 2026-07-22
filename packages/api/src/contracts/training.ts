@@ -294,6 +294,8 @@ export interface LeadRecord {
 	campusId: EntityId | null;
 	interestedCourseId: EntityId | null;
 	ownerUserId: EntityId | null;
+	providerUserId: EntityId | null;
+	providerName: string;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -330,6 +332,7 @@ const createLeadDataSchema = z.object({
 	interestedCourseId: nullableUuidSchema.default(null),
 	nextFollowAt: z.iso.datetime({ offset: true }).nullable().default(null),
 	note: z.string().trim().max(1000).nullable().default(null),
+	providerUserId: z.string().min(1).max(255).nullable().optional(),
 	requestId: z.uuid(),
 });
 
@@ -394,6 +397,8 @@ export const leadRecordSchema = z.object({
 	campusId: z.uuid().nullable(),
 	interestedCourseId: z.uuid().nullable(),
 	ownerUserId: z.string().nullable(),
+	providerUserId: z.string().nullable(),
+	providerName: z.string(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 });
@@ -843,9 +848,19 @@ export const independentEnrollmentOptionsSchema = z.object({
 	classes: z.array(conversionClassSchema),
 });
 
+export const directEnrollmentSourceSchema = z.enum([
+	"walk_in",
+	"phone",
+	"referral",
+	"online",
+	"other",
+]);
+
 export const createIndependentEnrollmentInputSchema = z.object({
 	requestId: z.uuid(),
 	student: independentStudentChoiceSchema,
+	source: directEnrollmentSourceSchema,
+	providerUserId: z.string().min(1).max(255).nullable().default(null),
 	conversionOwnerUserId: z.string().min(1).max(255).nullable().default(null),
 	adjustStudentOwner: z.boolean().default(false),
 	courseId: z.uuid(),

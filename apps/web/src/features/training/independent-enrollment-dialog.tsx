@@ -64,6 +64,7 @@ type EnrollmentErrorKey =
 	| "contactName"
 	| "contactPhone"
 	| "contactRelationship"
+	| "source"
 	| "courseId"
 	| "classGroupId"
 	| "purchasedLessons"
@@ -179,6 +180,9 @@ function IndependentEnrollmentForm({
 		initialCourse ? formatCentsAsYuan(initialCourse.listPriceInCents) : "",
 	);
 	const [invoiceDueDate, setInvoiceDueDate] = useState(getShanghaiToday);
+	const [source, setSource] =
+		useState<CreateIndependentEnrollmentInput["source"]>("walk_in");
+	const [providerUserId, setProviderUserId] = useState<string | null>(null);
 	const [conversionOwnerUserId, setConversionOwnerUserId] = useState<
 		string | null
 	>(null);
@@ -218,16 +222,17 @@ function IndependentEnrollmentForm({
 		enabled: Boolean(selectedCampusId),
 	});
 	useEffect(() => {
-		if (
-			conversionOwnerUserId &&
-			ownerCandidatesQuery.data &&
-			!ownerCandidatesQuery.data.items.some(
-				(candidate) => candidate.userId === conversionOwnerUserId,
-			)
-		) {
+		if (!ownerCandidatesQuery.data) return;
+		const candidateIds = new Set(
+			ownerCandidatesQuery.data.items.map((candidate) => candidate.userId),
+		);
+		if (conversionOwnerUserId && !candidateIds.has(conversionOwnerUserId)) {
 			setConversionOwnerUserId(null);
 		}
-	}, [conversionOwnerUserId, ownerCandidatesQuery.data]);
+		if (providerUserId && !candidateIds.has(providerUserId)) {
+			setProviderUserId(null);
+		}
+	}, [conversionOwnerUserId, ownerCandidatesQuery.data, providerUserId]);
 	const availableClasses = useMemo(
 		() =>
 			options.classes.filter(
@@ -275,6 +280,7 @@ function IndependentEnrollmentForm({
 				nextErrors.contactPhone = "请填写主要联系人手机号";
 		}
 		if (!courseId) nextErrors.courseId = "请选择课程";
+		if (!source) nextErrors.source = "请选择报名来源";
 		if (lessons === null)
 			nextErrors.purchasedLessons = "请输入 1 至 1000 的整数课时";
 		if (amountInCents === null)
@@ -298,6 +304,8 @@ function IndependentEnrollmentForm({
 							studentId: selectedStudent?.id ?? "",
 							expectedVersion: selectedStudent?.version ?? 0,
 						},
+						source,
+						providerUserId,
 						conversionOwnerUserId,
 						adjustStudentOwner,
 						courseId,
@@ -318,6 +326,8 @@ function IndependentEnrollmentForm({
 								relationship: contactRelationship.trim() || null,
 							},
 						},
+						source,
+						providerUserId,
 						conversionOwnerUserId,
 						adjustStudentOwner: false,
 						courseId,
@@ -432,6 +442,78 @@ function IndependentEnrollmentForm({
 					}}
 				/>
 			)}
+
+			<div className="grid min-w-0 gap-4 sm:grid-cols-2">
+				<Field invalid={Boolean(errors.source)}>
+					<FieldLabel htmlFor="independent-enrollment-source">
+						报名来源
+					</FieldLabel>
+					<Select
+						value={source}
+						onValueChange={(value) => {
+							if (!value) return;
+							setSource(value as CreateIndependentEnrollmentInput["source"]);
+							clearError("source");
+						}}
+					>
+						<SelectTrigger
+							id="independent-enrollment-source"
+							className="w-full"
+						>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="walk_in">线下咨询</SelectItem>
+							<SelectItem value="phone">电话咨询</SelectItem>
+							<SelectItem value="referral">转介绍</SelectItem>
+							<SelectItem value="online">线上渠道</SelectItem>
+							<SelectItem value="other">其他</SelectItem>
+						</SelectContent>
+					</Select>
+					<FieldError match={Boolean(errors.source)}>
+						{errors.source}
+					</FieldError>
+				</Field>
+
+				<Field>
+					<FieldLabel htmlFor="independent-enrollment-provider">
+						线索提供人
+					</FieldLabel>
+					<Select
+						value={providerUserId ?? "unassigned"}
+						onValueChange={(value) =>
+							setProviderUserId(value === "unassigned" ? null : (value ?? null))
+						}
+						disabled={!selectedCampusId || ownerCandidatesQuery.isPending}
+					>
+						<SelectTrigger
+							id="independent-enrollment-provider"
+							className="w-full"
+						>
+							<SelectValue>
+								{() =>
+									providerUserId
+										? (ownerCandidatesQuery.data?.items.find(
+												(candidate) => candidate.userId === providerUserId,
+											)?.name ?? "请选择")
+										: "无提供人"
+								}
+							</SelectValue>
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="unassigned">无提供人</SelectItem>
+							{(ownerCandidatesQuery.data?.items ?? []).map((candidate) => (
+								<SelectItem key={candidate.userId} value={candidate.userId}>
+									{candidate.name} · {candidate.email}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					<p className="text-muted-foreground text-xs">
+						仅记录获客贡献，可与成交归属人不同。
+					</p>
+				</Field>
+			</div>
 
 			<Field>
 				<FieldLabel htmlFor="independent-enrollment-owner">

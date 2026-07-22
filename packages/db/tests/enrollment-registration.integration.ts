@@ -13,6 +13,7 @@ import {
 	classGroup,
 	course,
 	enrollment,
+	enrollmentPurchaseCycle,
 	enrollmentRegistration,
 	invoice,
 	invoiceArrearsCycle,
@@ -154,6 +155,9 @@ async function cleanup(ids: Ids) {
 		.delete(organizationAuditEvent)
 		.where(eq(organizationAuditEvent.organizationId, ids.organizationId));
 	await db
+		.delete(enrollmentPurchaseCycle)
+		.where(eq(enrollmentPurchaseCycle.organizationId, ids.organizationId));
+	await db
 		.delete(enrollmentRegistration)
 		.where(eq(enrollmentRegistration.organizationId, ids.organizationId));
 	await db
@@ -202,6 +206,8 @@ function baseInput(ids: Ids, requestId = randomUUID()) {
 			studentId: ids.studentId,
 			expectedVersion: 1,
 		},
+		source: "walk_in" as const,
+		providerUserId: ids.userId,
 		conversionOwnerUserId: ids.userId,
 		adjustStudentOwner: false,
 		courseId: ids.courseId,
@@ -249,12 +255,45 @@ test("独立报名原子创建、重放、续费拦截与并发名额保护", as
 				leadId: enrollment.leadId,
 				status: enrollment.status,
 				conversionOwnerUserId: enrollment.conversionOwnerUserId,
+				conversionOwnerNameSnapshot: enrollment.conversionOwnerNameSnapshot,
+				conversionCampusId: enrollment.conversionCampusId,
 			})
 			.from(enrollment)
 			.where(eq(enrollment.id, result.enrollmentId));
 		assert.equal(createdEnrollment?.leadId, null);
 		assert.equal(createdEnrollment?.status, "active");
 		assert.equal(createdEnrollment?.conversionOwnerUserId, ids.userId);
+		assert.equal(createdEnrollment?.conversionOwnerNameSnapshot, "报名操作人");
+		assert.equal(createdEnrollment?.conversionCampusId, ids.campusId);
+		const [createdRegistration] = await db
+			.select({
+				source: enrollmentRegistration.source,
+				providerUserId: enrollmentRegistration.providerUserId,
+				providerNameSnapshot: enrollmentRegistration.providerNameSnapshot,
+			})
+			.from(enrollmentRegistration)
+			.where(eq(enrollmentRegistration.enrollmentId, result.enrollmentId));
+		assert.deepEqual(createdRegistration, {
+			source: "walk_in",
+			providerUserId: ids.userId,
+			providerNameSnapshot: "报名操作人",
+		});
+		const [purchaseCycle] = await db
+			.select({
+				sequence: enrollmentPurchaseCycle.sequence,
+				source: enrollmentPurchaseCycle.source,
+				purchasedLessons: enrollmentPurchaseCycle.purchasedLessons,
+				startingRemainingLessons:
+					enrollmentPurchaseCycle.startingRemainingLessons,
+			})
+			.from(enrollmentPurchaseCycle)
+			.where(eq(enrollmentPurchaseCycle.enrollmentId, result.enrollmentId));
+		assert.deepEqual(purchaseCycle, {
+			sequence: 1,
+			source: "initial",
+			purchasedLessons: 12,
+			startingRemainingLessons: 12,
+		});
 		const [unchangedExistingStudent] = await db
 			.select({ ownerUserId: student.ownerUserId })
 			.from(student)

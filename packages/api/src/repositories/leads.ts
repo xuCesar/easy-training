@@ -45,6 +45,7 @@ function toLeadRecord(row: LeadRecordRow): LeadRecord {
 		...row,
 		interestedCourse: row.interestedCourse ?? "",
 		owner: row.owner ?? "",
+		providerName: row.providerName ?? "",
 		nextFollowAt: row.nextFollowAt?.toISOString() ?? null,
 		note: row.note ?? "",
 		createdAt: row.createdAt.toISOString(),
@@ -89,6 +90,10 @@ function throwRepositoryError(error: LeadRepositoryError): never {
 		case "CAMPUS_INACTIVE":
 			throw new ORPCError("CONFLICT", {
 				message: "校区已停用，不能继续写入。",
+			});
+		case "PROVIDER_NOT_ELIGIBLE":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "线索提供人已不具备当前机构的招生资格。",
 			});
 	}
 }
@@ -222,8 +227,12 @@ export async function createLead(
 		const result = await createLeadRecord({
 			organizationId: scope.organizationId,
 			ownerUserId: scope.userId,
-			campusAccess: scope.campusAccess,
 			...input,
+			providerUserId:
+				input.providerUserId === undefined
+					? scope.userId
+					: input.providerUserId,
+			campusAccess: scope.campusAccess,
 			nextFollowAt: input.nextFollowAt ? new Date(input.nextFollowAt) : null,
 		});
 

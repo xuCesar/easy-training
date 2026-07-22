@@ -5,6 +5,10 @@ import {
 	LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE,
 	LEAD_IMPORT_RPC_BODY_LIMIT_BYTES,
 } from "@easy-training/api/contracts/training";
+import {
+	BusinessMetricRangeError,
+	resolveBusinessMetricWindow,
+} from "@easy-training/api/repositories/business-metrics-time";
 
 import { createApp } from "./app";
 
@@ -120,4 +124,79 @@ test("readiness returns 503 when the database check fails", async () => {
 
 	assert.equal(response.status, 503);
 	assert.equal(await response.text(), "Service Unavailable");
+});
+
+test("business metric month range uses Shanghai calendar and capped comparison", () => {
+	const result = resolveBusinessMetricWindow(
+		{ preset: "month" },
+		new Date("2026-03-31T16:30:00.000Z"),
+	);
+
+	assert.deepEqual(result, {
+		range: {
+			from: "2026-03-31T16:00:00.000Z",
+			to: "2026-03-31T16:30:00.000Z",
+		},
+		comparisonRange: {
+			from: "2026-02-28T16:00:00.000Z",
+			to: "2026-02-28T16:30:00.000Z",
+		},
+		granularity: "day",
+	});
+});
+
+test("business metric rolling and custom ranges use stable comparison and granularity", () => {
+	assert.deepEqual(
+		resolveBusinessMetricWindow(
+			{ preset: "last7Days" },
+			new Date("2026-07-22T04:00:00.000Z"),
+		),
+		{
+			range: {
+				from: "2026-07-15T16:00:00.000Z",
+				to: "2026-07-22T04:00:00.000Z",
+			},
+			comparisonRange: {
+				from: "2026-07-09T04:00:00.000Z",
+				to: "2026-07-15T16:00:00.000Z",
+			},
+			granularity: "day",
+		},
+	);
+
+	const custom = resolveBusinessMetricWindow({
+		preset: "custom",
+		from: "2026-01-01",
+		to: "2026-08-01",
+	});
+	assert.equal(custom.granularity, "week");
+	assert.deepEqual(custom.range, {
+		from: "2025-12-31T16:00:00.000Z",
+		to: "2026-07-31T16:00:00.000Z",
+	});
+});
+
+test("business metric custom range rejects invalid and oversized windows", () => {
+	assert.throws(
+		() =>
+			resolveBusinessMetricWindow({
+				preset: "custom",
+				from: "2026-02-01",
+				to: "2026-02-01",
+			}),
+		(error) =>
+			error instanceof BusinessMetricRangeError &&
+			error.code === "INVALID_RANGE",
+	);
+	assert.throws(
+		() =>
+			resolveBusinessMetricWindow({
+				preset: "custom",
+				from: "2024-01-01",
+				to: "2026-01-03",
+			}),
+		(error) =>
+			error instanceof BusinessMetricRangeError &&
+			error.code === "RANGE_TOO_LARGE",
+	);
 });

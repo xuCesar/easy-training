@@ -718,6 +718,7 @@ test("校区范围阻止越权写入，停用校区拒绝新的线索写入", as
 			createLeadRecord({
 				organizationId: ids.organizationA,
 				ownerUserId: ids.owner,
+				providerUserId: null,
 				campusAccess: { kind: "all" },
 				name: "停用校区线索",
 				phone: "13800000000",

@@ -123,6 +123,21 @@ export const leadActivityType = pgEnum("lead_activity_type", [
 	"followed_up",
 	"converted",
 ]);
+export const leadOwnerAssignmentSource = pgEnum(
+	"lead_owner_assignment_source",
+	["creation", "import", "manual", "conversion"],
+);
+export const leadMilestoneKind = pgEnum("lead_milestone_kind", [
+	"contacted",
+	"trial_booked",
+	"lost",
+	"reopened",
+	"converted",
+]);
+export const metricFactProvenance = pgEnum("metric_fact_provenance", [
+	"native",
+	"migrated",
+]);
 export const studentStatus = pgEnum("student_status", [
 	"active",
 	"trial",
@@ -207,6 +222,10 @@ export const enrollmentLifecycleKind = pgEnum("enrollment_lifecycle_kind", [
 	"class_withdrawn",
 	"class_assigned",
 ]);
+export const enrollmentPurchaseCycleSource = pgEnum(
+	"enrollment_purchase_cycle_source",
+	["initial", "renewal", "transfer"],
+);
 export const invoiceStatus = pgEnum("invoice_status", [
 	"paid",
 	"pending",
@@ -900,6 +919,14 @@ export const lead = pgTable(
 		ownerUserId: text("owner_user_id").references(() => user.id, {
 			onDelete: "set null",
 		}),
+		providerUserId: text("provider_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		providerNameSnapshot: text("provider_name_snapshot"),
+		createdCampusId: uuid("created_campus_id").references(() => campus.id, {
+			onDelete: "set null",
+		}),
+		currentCycleNumber: integer("current_cycle_number").default(1).notNull(),
 		name: text("name").notNull(),
 		phone: text("phone").notNull(),
 		source: text("source").notNull(),
@@ -916,6 +943,10 @@ export const lead = pgTable(
 			.notNull(),
 	},
 	(table) => [
+		check(
+			"lead_current_cycle_positive_check",
+			sql`${table.currentCycleNumber} > 0`,
+		),
 		index("lead_org_stage_idx").on(table.organizationId, table.stage),
 		index("lead_owner_follow_idx").on(table.ownerUserId, table.nextFollowAt),
 		index("lead_org_created_idx").on(
@@ -933,9 +964,119 @@ export const lead = pgTable(
 			table.ownerUserId,
 			table.createdAt,
 		),
+		index("lead_org_provider_created_idx").on(
+			table.organizationId,
+			table.providerUserId,
+			table.createdAt,
+		),
 		uniqueIndex("lead_org_request_uidx").on(
 			table.organizationId,
 			table.requestId,
+		),
+	],
+);
+
+export const leadOwnerAssignmentEvent = pgTable(
+	"lead_owner_assignment_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		leadId: uuid("lead_id")
+			.notNull()
+			.references(() => lead.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id").references(() => campus.id, {
+			onDelete: "set null",
+		}),
+		previousOwnerUserId: text("previous_owner_user_id").references(
+			() => user.id,
+			{ onDelete: "set null" },
+		),
+		previousOwnerNameSnapshot: text("previous_owner_name_snapshot"),
+		nextOwnerUserId: text("next_owner_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		nextOwnerNameSnapshot: text("next_owner_name_snapshot"),
+		operatorUserId: text("operator_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		source: leadOwnerAssignmentSource("source").notNull(),
+		requestId: uuid("request_id"),
+		occurredAt: timestamp("occurred_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("lead_owner_event_org_request_uidx")
+			.on(table.organizationId, table.requestId)
+			.where(sql`${table.requestId} is not null`),
+		index("lead_owner_event_lead_occurred_idx").on(
+			table.leadId,
+			table.occurredAt,
+			table.id,
+		),
+	],
+);
+
+export const leadMilestoneEvent = pgTable(
+	"lead_milestone_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		leadId: uuid("lead_id")
+			.notNull()
+			.references(() => lead.id, { onDelete: "cascade" }),
+		cycleNumber: integer("cycle_number").notNull(),
+		kind: leadMilestoneKind("kind").notNull(),
+		campusId: uuid("campus_id").references(() => campus.id, {
+			onDelete: "set null",
+		}),
+		providerUserId: text("provider_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		providerNameSnapshot: text("provider_name_snapshot"),
+		attributionUserId: text("attribution_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		attributionNameSnapshot: text("attribution_name_snapshot"),
+		operatorUserId: text("operator_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		sourceType: text("source_type").notNull(),
+		sourceId: uuid("source_id"),
+		provenance: metricFactProvenance("provenance").default("native").notNull(),
+		occurredAt: timestamp("occurred_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		check("lead_milestone_cycle_positive_check", sql`${table.cycleNumber} > 0`),
+		uniqueIndex("lead_milestone_cycle_kind_uidx").on(
+			table.organizationId,
+			table.leadId,
+			table.cycleNumber,
+			table.kind,
+		),
+		uniqueIndex("lead_milestone_cycle_outcome_uidx")
+			.on(table.organizationId, table.leadId, table.cycleNumber)
+			.where(sql`${table.kind} in ('lost', 'converted')`),
+		index("lead_milestone_org_campus_time_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.occurredAt,
+		),
+		index("lead_milestone_org_attr_time_idx").on(
+			table.organizationId,
+			table.attributionUserId,
+			table.occurredAt,
+		),
+		index("lead_milestone_org_provider_time_idx").on(
+			table.organizationId,
+			table.providerUserId,
+			table.occurredAt,
 		),
 	],
 );
@@ -1196,6 +1337,11 @@ export const enrollment = pgTable(
 			() => user.id,
 			{ onDelete: "set null" },
 		),
+		conversionOwnerNameSnapshot: text("conversion_owner_name_snapshot"),
+		conversionCampusId: uuid("conversion_campus_id").references(
+			() => campus.id,
+			{ onDelete: "set null" },
+		),
 		courseId: uuid("course_id")
 			.notNull()
 			.references(() => course.id),
@@ -1330,6 +1476,11 @@ export const enrollmentRegistration = pgTable(
 		campusId: uuid("campus_id")
 			.notNull()
 			.references(() => campus.id),
+		source: text("source"),
+		providerUserId: text("provider_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		providerNameSnapshot: text("provider_name_snapshot"),
 		operatorUserId: text("operator_user_id")
 			.notNull()
 			.references(() => user.id),
@@ -1633,6 +1784,183 @@ export const lessonConsumption = pgTable(
 		index("lesson_consumption_org_lesson_idx").on(
 			table.organizationId,
 			table.lessonId,
+		),
+	],
+);
+
+export const enrollmentPurchaseCycle = pgTable(
+	"enrollment_purchase_cycle",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		enrollmentId: uuid("enrollment_id")
+			.notNull()
+			.references(() => enrollment.id, { onDelete: "cascade" }),
+		sequence: integer("sequence").notNull(),
+		source: enrollmentPurchaseCycleSource("source").notNull(),
+		sourceLeadId: uuid("source_lead_id").references(() => lead.id, {
+			onDelete: "set null",
+		}),
+		sourceRegistrationId: uuid("source_registration_id").references(
+			() => enrollmentRegistration.id,
+			{ onDelete: "set null" },
+		),
+		sourceRenewalId: uuid("source_renewal_id").references(
+			() => enrollmentRenewal.id,
+			{ onDelete: "set null" },
+		),
+		sourceTransferId: uuid("source_transfer_id").references(
+			() => enrollmentTransfer.id,
+			{ onDelete: "set null" },
+		),
+		purchasedLessons: integer("purchased_lessons").notNull(),
+		startingRemainingLessons: integer("starting_remaining_lessons").notNull(),
+		amountInCents: integer("amount_in_cents").notNull(),
+		campusId: uuid("campus_id").references(() => campus.id, {
+			onDelete: "set null",
+		}),
+		provenance: metricFactProvenance("provenance").default("native").notNull(),
+		startedAt: timestamp("started_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		check("purchase_cycle_sequence_positive_check", sql`${table.sequence} > 0`),
+		check(
+			"purchase_cycle_lessons_positive_check",
+			sql`${table.purchasedLessons} > 0`,
+		),
+		check(
+			"purchase_cycle_starting_remaining_check",
+			sql`${table.startingRemainingLessons} >= 0`,
+		),
+		check("purchase_cycle_amount_check", sql`${table.amountInCents} >= 0`),
+		check(
+			"purchase_cycle_source_consistency_check",
+			sql`
+				(
+					${table.source} = 'initial'
+					and ${table.sourceRenewalId} is null
+					and ${table.sourceTransferId} is null
+					and num_nonnulls(${table.sourceLeadId}, ${table.sourceRegistrationId}) = 1
+				)
+				or (
+					${table.source} = 'renewal'
+					and ${table.sourceLeadId} is null
+					and ${table.sourceRegistrationId} is null
+					and ${table.sourceRenewalId} is not null
+					and ${table.sourceTransferId} is null
+				)
+				or (
+					${table.source} = 'transfer'
+					and ${table.sourceLeadId} is null
+					and ${table.sourceRegistrationId} is null
+					and ${table.sourceRenewalId} is null
+					and ${table.sourceTransferId} is not null
+				)
+			`,
+		),
+		uniqueIndex("purchase_cycle_enrollment_sequence_uidx").on(
+			table.enrollmentId,
+			table.sequence,
+		),
+		uniqueIndex("purchase_cycle_registration_uidx")
+			.on(table.sourceRegistrationId)
+			.where(sql`${table.sourceRegistrationId} is not null`),
+		uniqueIndex("purchase_cycle_renewal_uidx")
+			.on(table.sourceRenewalId)
+			.where(sql`${table.sourceRenewalId} is not null`),
+		uniqueIndex("purchase_cycle_transfer_uidx")
+			.on(table.sourceTransferId)
+			.where(sql`${table.sourceTransferId} is not null`),
+		index("purchase_cycle_org_campus_started_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.startedAt,
+		),
+	],
+);
+
+export const renewalOpportunity = pgTable(
+	"renewal_opportunity",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		enrollmentId: uuid("enrollment_id")
+			.notNull()
+			.references(() => enrollment.id, { onDelete: "cascade" }),
+		purchaseCycleId: uuid("purchase_cycle_id")
+			.notNull()
+			.references(() => enrollmentPurchaseCycle.id, { onDelete: "cascade" }),
+		triggeringLessonConsumptionId: uuid("triggering_lesson_consumption_id")
+			.notNull()
+			.references(() => lessonConsumption.id),
+		thresholdLessons: integer("threshold_lessons").notNull(),
+		remainingLessons: integer("remaining_lessons").notNull(),
+		campusId: uuid("campus_id").references(() => campus.id, {
+			onDelete: "set null",
+		}),
+		provenance: metricFactProvenance("provenance").default("native").notNull(),
+		triggeredAt: timestamp("triggered_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		check(
+			"renewal_opportunity_threshold_positive_check",
+			sql`${table.thresholdLessons} > 0`,
+		),
+		check(
+			"renewal_opportunity_remaining_check",
+			sql`${table.remainingLessons} >= 0`,
+		),
+		check(
+			"renewal_opportunity_reached_threshold_check",
+			sql`${table.remainingLessons} <= ${table.thresholdLessons}`,
+		),
+		uniqueIndex("renewal_opportunity_cycle_uidx").on(table.purchaseCycleId),
+		uniqueIndex("renewal_opportunity_consumption_uidx").on(
+			table.triggeringLessonConsumptionId,
+		),
+		index("renewal_opportunity_org_campus_triggered_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.triggeredAt,
+		),
+	],
+);
+
+export const renewalOpportunityConversion = pgTable(
+	"renewal_opportunity_conversion",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		opportunityId: uuid("opportunity_id")
+			.notNull()
+			.references(() => renewalOpportunity.id, { onDelete: "cascade" }),
+		renewalId: uuid("renewal_id")
+			.notNull()
+			.references(() => enrollmentRenewal.id),
+		convertedAt: timestamp("converted_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("renewal_opportunity_conversion_opportunity_uidx").on(
+			table.opportunityId,
+		),
+		uniqueIndex("renewal_opportunity_conversion_renewal_uidx").on(
+			table.renewalId,
+		),
+		index("renewal_opportunity_conversion_org_time_idx").on(
+			table.organizationId,
+			table.convertedAt,
 		),
 	],
 );

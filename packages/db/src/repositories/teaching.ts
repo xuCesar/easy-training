@@ -27,11 +27,13 @@ import {
 	course,
 	enrollment,
 	enrollmentLifecycleEvent,
+	enrollmentPurchaseCycle,
 	lesson,
 	lessonConsumption,
 	makeupLesson,
 	organizationMember,
 	organizationMemberCampus,
+	renewalOpportunity,
 	student,
 	teacher,
 	teacherCampus,
@@ -3217,19 +3219,69 @@ export async function completeLessonRecord(input: {
 					},
 				});
 			if (item.status === "present" || item.status === "late") {
-				await tx.insert(lessonConsumption).values({
-					organizationId: input.organizationId,
-					enrollmentId: membership.id,
-					lessonId: lessonRecord.id,
-					attendanceStatus: item.status,
-					previousRemainingLessons: membership.remainingLessons,
-					remainingLessons: membership.remainingLessons - 1,
-					consumedByUserId: input.userId,
-				});
+				const [createdConsumption] = await tx
+					.insert(lessonConsumption)
+					.values({
+						organizationId: input.organizationId,
+						enrollmentId: membership.id,
+						lessonId: lessonRecord.id,
+						attendanceStatus: item.status,
+						previousRemainingLessons: membership.remainingLessons,
+						remainingLessons: membership.remainingLessons - 1,
+						consumedByUserId: input.userId,
+						consumedAt: completedAt,
+					})
+					.returning({ id: lessonConsumption.id });
+				if (!createdConsumption) {
+					throw new Error("Lesson consumption did not return a record.");
+				}
 				await tx
 					.update(enrollment)
 					.set({ remainingLessons: membership.remainingLessons - 1 })
 					.where(eq(enrollment.id, membership.id));
+
+				const [purchaseCycle] = await tx
+					.select({
+						id: enrollmentPurchaseCycle.id,
+						purchasedLessons: enrollmentPurchaseCycle.purchasedLessons,
+					})
+					.from(enrollmentPurchaseCycle)
+					.where(
+						and(
+							eq(enrollmentPurchaseCycle.organizationId, input.organizationId),
+							eq(enrollmentPurchaseCycle.enrollmentId, membership.id),
+						),
+					)
+					.orderBy(desc(enrollmentPurchaseCycle.sequence))
+					.limit(1)
+					.for("update");
+				if (purchaseCycle) {
+					const thresholdLessons = Math.max(
+						1,
+						Math.ceil(purchaseCycle.purchasedLessons * 0.2),
+					);
+					const remainingLessons = membership.remainingLessons - 1;
+					if (
+						membership.remainingLessons > thresholdLessons &&
+						remainingLessons <= thresholdLessons
+					) {
+						await tx
+							.insert(renewalOpportunity)
+							.values({
+								organizationId: input.organizationId,
+								enrollmentId: membership.id,
+								purchaseCycleId: purchaseCycle.id,
+								triggeringLessonConsumptionId: createdConsumption.id,
+								thresholdLessons,
+								remainingLessons,
+								campusId: lessonRecord.campusId,
+								triggeredAt: completedAt,
+							})
+							.onConflictDoNothing({
+								target: renewalOpportunity.purchaseCycleId,
+							});
+					}
+				}
 			}
 			if (membership.makeupLessonId) {
 				const nextMakeupStatus =

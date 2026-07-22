@@ -232,6 +232,13 @@
       "when": 1784717812699,
       "tag": "0032_sudden_corsair",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1784730925568,
+      "tag": "0033_big_baron_strucker",
+      "breakpoints": true
     }
   ]
 }
