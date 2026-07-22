@@ -5,7 +5,12 @@ import {
 	getBusinessMetricRenewalRecord,
 	getBusinessMetricSalesRecord,
 } from "@easy-training/db/repositories/business-metrics";
-import { getFinancialReceiptRecord } from "@easy-training/db/repositories/financial-metrics";
+import {
+	getFinancialAgingRecord,
+	getFinancialCohortRecord,
+	getFinancialReceiptEventPage,
+	getFinancialReceiptRecord,
+} from "@easy-training/db/repositories/financial-metrics";
 import { ORPCError } from "@orpc/server";
 
 import type { OrganizationRole } from "../authorization/training";
@@ -18,7 +23,10 @@ import {
 	type BusinessMetricDataQuality,
 	type BusinessMetricDrilldownInput,
 	type BusinessMetricDrilldownResult,
+	type BusinessMetricFinancialDrilldownInput,
+	type BusinessMetricFinancialDrilldownResult,
 	type BusinessMetricFinancialReceiptResult,
+	type BusinessMetricFinancialResult,
 	type BusinessMetricQueryInput,
 	type BusinessMetricRatio,
 	type BusinessMetricRenewalResult,
@@ -127,21 +135,38 @@ function assertRenewalAccess(role: OrganizationRole): void {
 	}
 }
 
-export async function getBusinessMetricFinancialReceipts(
-	scope: BusinessMetricScope,
-	input: BusinessMetricQueryInput,
-	now = new Date(),
-): Promise<BusinessMetricFinancialReceiptResult> {
+function assertFinancialAccess(role: OrganizationRole): void {
 	if (
-		scope.role !== "owner" &&
-		scope.role !== "admin" &&
-		scope.role !== "campus_manager" &&
-		scope.role !== "finance"
+		role !== "owner" &&
+		role !== "admin" &&
+		role !== "campus_manager" &&
+		role !== "finance"
 	) {
 		throw new ORPCError("FORBIDDEN", {
 			message: "当前角色无权读取财务经营指标。",
 		});
 	}
+}
+
+async function withFinancialQueryErrors<T>(
+	operation: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await operation();
+	} catch (error) {
+		if (error instanceof ORPCError) throw error;
+		throw new ORPCError("INTERNAL_SERVER_ERROR", {
+			message: "暂时无法加载财务经营指标，请稍后重试。",
+		});
+	}
+}
+
+export async function getBusinessMetricFinancialReceipts(
+	scope: BusinessMetricScope,
+	input: BusinessMetricQueryInput,
+	now = new Date(),
+): Promise<BusinessMetricFinancialReceiptResult> {
+	assertFinancialAccess(scope.role);
 	const { window, base } = envelope(scope, input, now);
 	const recordInput = {
 		scope: {
@@ -181,6 +206,165 @@ export async function getBusinessMetricFinancialReceipts(
 				bucketStart: new Date(point.bucketStart).toISOString(),
 			})),
 		},
+	};
+}
+
+export async function getBusinessMetricFinancial(
+	scope: BusinessMetricScope,
+	input: BusinessMetricQueryInput,
+	now = new Date(),
+): Promise<BusinessMetricFinancialResult> {
+	assertFinancialAccess(scope.role);
+	const { window, base } = envelope(scope, input, now);
+	const repositoryScope = {
+		organizationId: scope.organizationId,
+		campusAccess: scope.campusAccess,
+	};
+	const range = {
+		from: new Date(window.range.from),
+		to: new Date(window.range.to),
+	};
+	const comparisonRange = {
+		from: new Date(window.comparisonRange.from),
+		to: new Date(window.comparisonRange.to),
+	};
+	const agingSnapshotAt = new Date(Math.min(range.to.getTime(), now.getTime()));
+	const [receipt, comparisonReceipt, cohort, comparisonCohort, aging] =
+		await withFinancialQueryErrors(() =>
+			Promise.all([
+				getFinancialReceiptRecord({
+					scope: repositoryScope,
+					...range,
+					granularity: window.granularity,
+				}),
+				getFinancialReceiptRecord({
+					scope: repositoryScope,
+					...comparisonRange,
+					granularity: window.granularity,
+				}),
+				getFinancialCohortRecord({
+					scope: repositoryScope,
+					...range,
+					asOf: now,
+				}),
+				getFinancialCohortRecord({
+					scope: repositoryScope,
+					...comparisonRange,
+					asOf: now,
+				}),
+				getFinancialAgingRecord({
+					scope: repositoryScope,
+					snapshotAt: agingSnapshotAt,
+				}),
+			]),
+		);
+	const missingAttributionCount = Math.max(
+		receipt.missingAttributionCount,
+		cohort.factCoverageMissingCount,
+		comparisonCohort.factCoverageMissingCount,
+		aging.missingFactCount,
+	);
+	return {
+		...base,
+		definitionVersion: FINANCIAL_METRIC_DEFINITION_VERSION,
+		dataQuality: {
+			missingAttributionCount,
+			missingNameSnapshotCount: 0,
+			missingFinancialFactCount:
+				cohort.factCoverageMissingCount +
+				comparisonCohort.factCoverageMissingCount,
+			adjustmentChainAnomalyCount:
+				cohort.adjustmentChainAnomalyCount +
+				comparisonCohort.adjustmentChainAnomalyCount +
+				aging.adjustmentChainAnomalyCount,
+			chronologyAnomalyCount:
+				cohort.chronologyAnomalyCount + comparisonCohort.chronologyAnomalyCount,
+			settlementAnomalyCount:
+				cohort.settlementAnomalyCount +
+				comparisonCohort.settlementAnomalyCount +
+				aging.negativeBalanceAnomalyCount,
+			scopeCoverageIncomplete:
+				scope.campusAccess.kind !== "all" && missingAttributionCount > 0,
+		},
+		data: {
+			paymentsInCents: receipt.paymentsInCents,
+			reversalsInCents: receipt.reversalsInCents,
+			refundsInCents: receipt.refundsInCents,
+			netReceiptsInCents: receipt.netReceiptsInCents,
+			comparisonNetReceiptsInCents: comparisonReceipt.netReceiptsInCents,
+			trend: receipt.trend.map((point) => ({
+				...point,
+				bucketStart: new Date(point.bucketStart).toISOString(),
+			})),
+			cohortCollectionRate: ratio(
+				cohort.numeratorInCents,
+				cohort.denominatorInCents,
+			),
+			comparisonCohortCollectionRate: ratio(
+				comparisonCohort.numeratorInCents,
+				comparisonCohort.denominatorInCents,
+			),
+			matureCohortInvoiceCount: cohort.matureInvoiceCount,
+			immatureCohortInvoiceCount: cohort.immatureInvoiceCount,
+			zeroAmountCohortInvoiceCount: cohort.zeroAmountInvoiceCount,
+			minimumRemainingObservationDays: cohort.minimumRemainingObservationDays,
+			agingSnapshotAt: aging.snapshotAt.toISOString(),
+			agingBuckets: aging.buckets,
+			agingTotalInCents: aging.totalInCents,
+		},
+	};
+}
+
+export async function getBusinessMetricFinancialDrilldown(
+	scope: BusinessMetricScope,
+	input: BusinessMetricFinancialDrilldownInput,
+	now = new Date(),
+): Promise<BusinessMetricFinancialDrilldownResult> {
+	assertFinancialAccess(scope.role);
+	const { window, base } = envelope(scope, input, now);
+	const result = await withFinancialQueryErrors(() =>
+		getFinancialReceiptEventPage({
+			scope: {
+				organizationId: scope.organizationId,
+				campusAccess: scope.campusAccess,
+			},
+			from: new Date(window.range.from),
+			to: new Date(window.range.to),
+			limit: input.limit,
+			cursor: input.cursor
+				? {
+						occurredAt: new Date(input.cursor.occurredAt),
+						id: input.cursor.id,
+					}
+				: undefined,
+		}),
+	);
+	const missingAttributionCount = 0;
+	return {
+		...base,
+		definitionVersion: FINANCIAL_METRIC_DEFINITION_VERSION,
+		dataQuality: {
+			missingAttributionCount,
+			scopeCoverageIncomplete:
+				scope.campusAccess.kind !== "all" && missingAttributionCount > 0,
+		},
+		items: result.events.map((event) => ({
+			kind: "financialEvent" as const,
+			id: event.id,
+			invoiceId: event.invoiceId,
+			eventType: event.kind,
+			amountInCents: event.amountInCents,
+			signedAmountInCents:
+				event.kind === "payment" ? event.amountInCents : -event.amountInCents,
+			occurredAt: new Date(event.occurredAt).toISOString(),
+			detailPath: `/finance/invoices/${event.invoiceId}`,
+		})),
+		nextCursor: result.nextCursor
+			? {
+					occurredAt: new Date(result.nextCursor.occurredAt).toISOString(),
+					id: result.nextCursor.id,
+				}
+			: null,
 	};
 }
 

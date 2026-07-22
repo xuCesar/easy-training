@@ -34,16 +34,22 @@ export const businessMetricDrilldownKindSchema = z.enum([
 	"renewalOpportunities",
 ]);
 
+const businessMetricCursorSchema = z.object({
+	occurredAt: z.iso.datetime({ offset: true }),
+	id: z.uuid(),
+});
+
 export const businessMetricDrilldownInputSchema =
 	businessMetricQueryInputSchema.extend({
 		kind: businessMetricDrilldownKindSchema,
 		limit: z.number().int().min(1).max(50).default(20),
-		cursor: z
-			.object({
-				occurredAt: z.iso.datetime({ offset: true }),
-				id: z.uuid(),
-			})
-			.optional(),
+		cursor: businessMetricCursorSchema.optional(),
+	});
+
+export const businessMetricFinancialDrilldownInputSchema =
+	businessMetricQueryInputSchema.extend({
+		limit: z.number().int().min(1).max(50).default(20),
+		cursor: businessMetricCursorSchema.optional(),
 	});
 
 export const businessMetricGranularitySchema = z.enum(["day", "week", "month"]);
@@ -245,6 +251,33 @@ export const businessMetricFinancialReceiptResultSchema = z.object({
 	}),
 });
 
+export const businessMetricFinancialDrilldownItemSchema = z.object({
+	kind: z.literal("financialEvent"),
+	id: z.uuid(),
+	invoiceId: z.uuid(),
+	eventType: z.enum(["payment", "reversal", "refund"]),
+	amountInCents: z.number().int().positive(),
+	signedAmountInCents: z.number().int(),
+	occurredAt: z.iso.datetime({ offset: true }),
+	detailPath: z.string().min(1),
+});
+
+export const businessMetricFinancialDrilldownResultSchema = z.object({
+	contractVersion: z.literal(BUSINESS_METRIC_CONTRACT_VERSION),
+	definitionVersion: z.literal(FINANCIAL_METRIC_DEFINITION_VERSION),
+	timezone: z.literal(BUSINESS_METRIC_TIMEZONE),
+	asOf: z.iso.datetime({ offset: true }),
+	range: resolvedBusinessMetricRangeSchema,
+	comparisonRange: resolvedBusinessMetricRangeSchema,
+	granularity: businessMetricGranularitySchema,
+	dataQuality: z.object({
+		missingAttributionCount: z.number().int().nonnegative(),
+		scopeCoverageIncomplete: z.boolean(),
+	}),
+	items: z.array(businessMetricFinancialDrilldownItemSchema),
+	nextCursor: businessMetricCursorSchema.nullable(),
+});
+
 export const businessMetricDrilldownItemSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("salesCycle"),
@@ -303,6 +336,9 @@ export type BusinessMetricDrilldownKind = z.infer<
 export type BusinessMetricDrilldownInput = z.infer<
 	typeof businessMetricDrilldownInputSchema
 >;
+export type BusinessMetricFinancialDrilldownInput = z.infer<
+	typeof businessMetricFinancialDrilldownInputSchema
+>;
 export type BusinessMetricGranularity = z.infer<
 	typeof businessMetricGranularitySchema
 >;
@@ -333,6 +369,9 @@ export type BusinessMetricFinancialResult = z.infer<
 >;
 export type BusinessMetricFinancialReceiptResult = z.infer<
 	typeof businessMetricFinancialReceiptResultSchema
+>;
+export type BusinessMetricFinancialDrilldownResult = z.infer<
+	typeof businessMetricFinancialDrilldownResultSchema
 >;
 export type BusinessMetricDrilldownResult = z.infer<
 	typeof businessMetricDrilldownResultSchema

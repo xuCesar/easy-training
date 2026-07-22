@@ -7,6 +7,8 @@ import {
 	businessMetricAttendanceResultSchema,
 	businessMetricConsumptionResultSchema,
 	businessMetricDrilldownResultSchema,
+	businessMetricFinancialDrilldownResultSchema,
+	businessMetricFinancialResultSchema,
 	businessMetricRenewalResultSchema,
 	businessMetricSalesResultSchema,
 } from "../../api/src/contracts/business-metrics";
@@ -15,6 +17,8 @@ import {
 	getBusinessMetricAttendance,
 	getBusinessMetricConsumption,
 	getBusinessMetricDrilldown,
+	getBusinessMetricFinancial,
+	getBusinessMetricFinancialDrilldown,
 	getBusinessMetricRenewal,
 	getBusinessMetricSales,
 } from "../../api/src/repositories/business-metrics";
@@ -124,6 +128,35 @@ test("经营指标角色权限和无效范围使用明确错误语义", async ()
 		),
 		(error: unknown) =>
 			error instanceof Error && error.message.includes("晚于"),
+	);
+});
+
+test("财务 summary 与事件下钻在空机构保持契约和权限稳定", async () => {
+	const scope = {
+		organizationId: emptyScope.organizationId,
+		userId: "financial-metric-user",
+		role: "owner" as const,
+		campusAccess: emptyScope.campusAccess,
+	};
+	const input = { range: { preset: "month" as const } };
+	const summary = businessMetricFinancialResultSchema.parse(
+		await getBusinessMetricFinancial(scope, input, now),
+	);
+	assert.equal(summary.data.netReceiptsInCents, 0);
+	assert.equal(summary.data.agingTotalInCents, 0);
+	const drilldown = businessMetricFinancialDrilldownResultSchema.parse(
+		await getBusinessMetricFinancialDrilldown(
+			scope,
+			{ ...input, limit: 50 },
+			now,
+		),
+	);
+	assert.deepEqual(drilldown.items, []);
+	assert.equal(drilldown.nextCursor, null);
+	await assert.rejects(
+		getBusinessMetricFinancial({ ...scope, role: "consultant" }, input, now),
+		(error: unknown) =>
+			error instanceof Error && error.message.includes("财务经营指标"),
 	);
 });
 
