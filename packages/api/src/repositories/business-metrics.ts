@@ -6,6 +6,7 @@ import {
 	getBusinessMetricSalesRecord,
 } from "@easy-training/db/repositories/business-metrics";
 import {
+	getFinancialAgingInvoicePage,
 	getFinancialAgingRecord,
 	getFinancialCohortRecord,
 	getFinancialReceiptEventPage,
@@ -23,6 +24,8 @@ import {
 	type BusinessMetricDataQuality,
 	type BusinessMetricDrilldownInput,
 	type BusinessMetricDrilldownResult,
+	type BusinessMetricFinancialAgingDrilldownInput,
+	type BusinessMetricFinancialAgingDrilldownResult,
 	type BusinessMetricFinancialDrilldownInput,
 	type BusinessMetricFinancialDrilldownResult,
 	type BusinessMetricFinancialReceiptResult,
@@ -358,6 +361,57 @@ export async function getBusinessMetricFinancialDrilldown(
 				event.kind === "payment" ? event.amountInCents : -event.amountInCents,
 			occurredAt: new Date(event.occurredAt).toISOString(),
 			detailPath: `/finance/invoices/${event.invoiceId}`,
+		})),
+		nextCursor: result.nextCursor
+			? {
+					occurredAt: new Date(result.nextCursor.occurredAt).toISOString(),
+					id: result.nextCursor.id,
+				}
+			: null,
+	};
+}
+
+export async function getBusinessMetricFinancialAgingDrilldown(
+	scope: BusinessMetricScope,
+	input: BusinessMetricFinancialAgingDrilldownInput,
+	now = new Date(),
+): Promise<BusinessMetricFinancialAgingDrilldownResult> {
+	assertFinancialAccess(scope.role);
+	const { window, base } = envelope(scope, input, now);
+	const snapshotAt = new Date(
+		Math.min(new Date(window.range.to).getTime(), now.getTime()),
+	);
+	const result = await withFinancialQueryErrors(() =>
+		getFinancialAgingInvoicePage({
+			scope: {
+				organizationId: scope.organizationId,
+				campusAccess: scope.campusAccess,
+			},
+			snapshotAt,
+			limit: input.limit,
+			cursor: input.cursor
+				? {
+						occurredAt: new Date(input.cursor.occurredAt),
+						id: input.cursor.id,
+					}
+				: undefined,
+		}),
+	);
+	return {
+		...base,
+		definitionVersion: FINANCIAL_METRIC_DEFINITION_VERSION,
+		dataQuality: {
+			missingAttributionCount: 0,
+			scopeCoverageIncomplete: false,
+		},
+		items: result.items.map((item) => ({
+			kind: "financialAgingInvoice" as const,
+			invoiceId: item.invoiceId,
+			occurredAt: new Date(item.occurredAt).toISOString(),
+			amountInCents: item.amountInCents,
+			outstandingInCents: item.outstandingInCents,
+			agingBucket: item.agingBucket,
+			detailPath: `/finance/invoices/${item.invoiceId}`,
 		})),
 		nextCursor: result.nextCursor
 			? {

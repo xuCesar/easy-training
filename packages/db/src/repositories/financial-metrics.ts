@@ -366,6 +366,7 @@ export async function getFinancialCohortRecord(input: {
 			id: invoice.id,
 			issuedAt: invoice.issuedAt,
 			amountInCents: invoice.amountInCents,
+			dueDate: invoice.dueDate,
 			version: invoice.version,
 		})
 		.from(invoice)
@@ -395,7 +396,9 @@ export async function getFinancialCohortRecord(input: {
 				beforeVersion: invoiceAdjustment.beforeVersion,
 				afterVersion: invoiceAdjustment.afterVersion,
 				beforeAmountInCents: invoiceAdjustment.beforeAmountInCents,
+				beforeDueDate: invoiceAdjustment.beforeDueDate,
 				amountInCents: invoiceAdjustment.afterAmountInCents,
+				dueDate: invoiceAdjustment.afterDueDate,
 				createdAt: invoiceAdjustment.createdAt,
 			})
 			.from(invoiceAdjustment)
@@ -742,6 +745,200 @@ export async function getFinancialAgingRecord(input: {
 		negativeBalanceAnomalyCount,
 		adjustmentChainAnomalyCount,
 		missingFactCount: 0,
+	};
+}
+
+export type FinancialAgingInvoiceRecord = {
+	invoiceId: string;
+	occurredAt: Date;
+	amountInCents: number;
+	outstandingInCents: number;
+	agingBucket: FinancialAgingBucket;
+};
+
+export type FinancialAgingInvoicePage = {
+	items: FinancialAgingInvoiceRecord[];
+	nextCursor: FinancialReceiptEventCursor | null;
+};
+
+/** 返回历史账龄中可核对的正余额账单，游标按账单开具时间和 ID 稳定排序。 */
+export async function getFinancialAgingInvoicePage(input: {
+	scope: FinancialMetricScope;
+	snapshotAt: Date;
+	limit: number;
+	cursor?: FinancialReceiptEventCursor;
+}): Promise<FinancialAgingInvoicePage> {
+	const limit = Math.min(Math.max(input.limit, 1), 50);
+	const rows = await db
+		.select({
+			id: invoice.id,
+			issuedAt: invoice.issuedAt,
+			amountInCents: invoice.amountInCents,
+			dueDate: invoice.dueDate,
+			version: invoice.version,
+		})
+		.from(invoice)
+		.innerJoin(
+			invoiceMetricFact,
+			and(
+				eq(invoiceMetricFact.invoiceId, invoice.id),
+				eq(invoiceMetricFact.organizationId, invoice.organizationId),
+			),
+		)
+		.where(
+			and(
+				eq(invoice.organizationId, input.scope.organizationId),
+				lt(invoice.issuedAt, input.snapshotAt),
+				campusCondition(input.scope.campusAccess),
+				afterFinancialEventCursor(invoice.issuedAt, invoice.id, input.cursor),
+			),
+		)
+		.orderBy(asc(invoice.issuedAt), asc(invoice.id))
+		.limit(limit + 1);
+	const ids = rows.map((row) => row.id);
+	if (ids.length === 0) return { items: [], nextCursor: null };
+	const [adjustments, payments, reversals] = await Promise.all([
+		db
+			.select({
+				invoiceId: invoiceAdjustment.invoiceId,
+				id: invoiceAdjustment.id,
+				beforeVersion: invoiceAdjustment.beforeVersion,
+				afterVersion: invoiceAdjustment.afterVersion,
+				beforeAmountInCents: invoiceAdjustment.beforeAmountInCents,
+				beforeDueDate: invoiceAdjustment.beforeDueDate,
+				amountInCents: invoiceAdjustment.afterAmountInCents,
+				dueDate: invoiceAdjustment.afterDueDate,
+				createdAt: invoiceAdjustment.createdAt,
+			})
+			.from(invoiceAdjustment)
+			.where(
+				and(
+					eq(invoiceAdjustment.organizationId, input.scope.organizationId),
+					inArray(invoiceAdjustment.invoiceId, ids),
+				),
+			),
+		db
+			.select({
+				invoiceId: payment.invoiceId,
+				amountInCents: payment.amountInCents,
+			})
+			.from(payment)
+			.where(
+				and(
+					eq(payment.organizationId, input.scope.organizationId),
+					inArray(payment.invoiceId, ids),
+					lt(payment.receivedAt, input.snapshotAt),
+				),
+			),
+		db
+			.select({
+				invoiceId: paymentReversal.invoiceId,
+				amountInCents: paymentReversal.amountInCents,
+			})
+			.from(paymentReversal)
+			.where(
+				and(
+					eq(paymentReversal.organizationId, input.scope.organizationId),
+					inArray(paymentReversal.invoiceId, ids),
+					lt(paymentReversal.reversedAt, input.snapshotAt),
+				),
+			),
+	]);
+	const terms = new Map(
+		rows.map((row) => [
+			row.id,
+			{ amountInCents: row.amountInCents, dueDate: row.dueDate },
+		]),
+	);
+	const versions = new Map(rows.map((row) => [row.id, row.version]));
+	const grouped = new Map<string, typeof adjustments>();
+	for (const adjustment of adjustments) {
+		const list = grouped.get(adjustment.invoiceId) ?? [];
+		list.push(adjustment);
+		grouped.set(adjustment.invoiceId, list);
+	}
+	const invalid = new Set<string>();
+	for (const [invoiceId, values] of grouped) {
+		const chain = values.sort(
+			(a, b) =>
+				a.createdAt.getTime() - b.createdAt.getTime() ||
+				a.afterVersion - b.afterVersion ||
+				a.id.localeCompare(b.id),
+		);
+		let valid = chain[0]?.beforeVersion === 1;
+		for (let index = 1; index < chain.length; index += 1) {
+			const previous = chain[index - 1];
+			const current = chain[index];
+			if (
+				!previous ||
+				!current ||
+				current.beforeVersion !== previous.afterVersion ||
+				current.beforeAmountInCents !== previous.amountInCents
+			) {
+				valid = false;
+				break;
+			}
+		}
+		if (chain.at(-1)?.afterVersion !== versions.get(invoiceId)) valid = false;
+		if (!valid) {
+			invalid.add(invoiceId);
+			continue;
+		}
+		const first = chain[0];
+		if (first)
+			terms.set(invoiceId, {
+				amountInCents: first.beforeAmountInCents,
+				dueDate: first.beforeDueDate,
+			});
+		for (const adjustment of chain) {
+			if (adjustment.createdAt < input.snapshotAt) {
+				terms.set(invoiceId, {
+					amountInCents: adjustment.amountInCents,
+					dueDate: adjustment.dueDate,
+				});
+			}
+		}
+	}
+	for (const row of rows) {
+		if (row.version > 1 && !grouped.has(row.id)) invalid.add(row.id);
+	}
+	const settled = new Map<string, number>();
+	for (const row of payments)
+		settled.set(
+			row.invoiceId,
+			(settled.get(row.invoiceId) ?? 0) + row.amountInCents,
+		);
+	for (const row of reversals)
+		settled.set(
+			row.invoiceId,
+			(settled.get(row.invoiceId) ?? 0) - row.amountInCents,
+		);
+	const items = rows
+		.filter((row) => !invalid.has(row.id))
+		.map((row) => {
+			const term = terms.get(row.id);
+			const amount = term?.amountInCents ?? row.amountInCents;
+			const outstanding = amount - (settled.get(row.id) ?? 0);
+			return {
+				invoiceId: row.id,
+				occurredAt: row.issuedAt,
+				amountInCents: amount,
+				outstandingInCents: outstanding,
+				agingBucket: getFinancialAgingBucket(
+					term?.dueDate ?? row.dueDate,
+					input.snapshotAt,
+				),
+			};
+		})
+		.filter((item) => item.outstandingInCents > 0);
+	const page = items.slice(0, limit);
+	const last = page.at(-1);
+	return {
+		items: page,
+		nextCursor:
+			rows.length > limit && last
+				? { occurredAt: last.occurredAt, id: last.invoiceId }
+				: null,
 	};
 }
 

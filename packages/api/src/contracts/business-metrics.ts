@@ -278,6 +278,38 @@ export const businessMetricFinancialDrilldownResultSchema = z.object({
 	nextCursor: businessMetricCursorSchema.nullable(),
 });
 
+export const businessMetricFinancialAgingDrilldownInputSchema =
+	businessMetricQueryInputSchema.extend({
+		limit: z.number().int().min(1).max(50).default(20),
+		cursor: businessMetricCursorSchema.optional(),
+	});
+
+export const businessMetricFinancialAgingDrilldownResultSchema = z.object({
+	contractVersion: z.literal(BUSINESS_METRIC_CONTRACT_VERSION),
+	definitionVersion: z.literal(FINANCIAL_METRIC_DEFINITION_VERSION),
+	timezone: z.literal(BUSINESS_METRIC_TIMEZONE),
+	asOf: z.iso.datetime({ offset: true }),
+	range: resolvedBusinessMetricRangeSchema,
+	comparisonRange: resolvedBusinessMetricRangeSchema,
+	granularity: businessMetricGranularitySchema,
+	dataQuality: z.object({
+		missingAttributionCount: z.number().int().nonnegative(),
+		scopeCoverageIncomplete: z.boolean(),
+	}),
+	items: z.array(
+		z.object({
+			kind: z.literal("financialAgingInvoice"),
+			invoiceId: z.uuid(),
+			occurredAt: z.iso.datetime({ offset: true }),
+			amountInCents: z.number().int().positive(),
+			outstandingInCents: z.number().int().positive(),
+			agingBucket: financialMetricAgingBucketSchema.shape.kind,
+			detailPath: z.string().min(1),
+		}),
+	),
+	nextCursor: businessMetricCursorSchema.nullable(),
+});
+
 export const businessMetricDrilldownItemSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("salesCycle"),
@@ -339,6 +371,9 @@ export type BusinessMetricDrilldownInput = z.infer<
 export type BusinessMetricFinancialDrilldownInput = z.infer<
 	typeof businessMetricFinancialDrilldownInputSchema
 >;
+export type BusinessMetricFinancialAgingDrilldownInput = z.infer<
+	typeof businessMetricFinancialAgingDrilldownInputSchema
+>;
 export type BusinessMetricGranularity = z.infer<
 	typeof businessMetricGranularitySchema
 >;
@@ -372,6 +407,9 @@ export type BusinessMetricFinancialReceiptResult = z.infer<
 >;
 export type BusinessMetricFinancialDrilldownResult = z.infer<
 	typeof businessMetricFinancialDrilldownResultSchema
+>;
+export type BusinessMetricFinancialAgingDrilldownResult = z.infer<
+	typeof businessMetricFinancialAgingDrilldownResultSchema
 >;
 export type BusinessMetricDrilldownResult = z.infer<
 	typeof businessMetricDrilldownResultSchema

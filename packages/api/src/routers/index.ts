@@ -5,6 +5,8 @@ import {
 	businessMetricConsumptionResultSchema,
 	businessMetricDrilldownInputSchema,
 	businessMetricDrilldownResultSchema,
+	businessMetricFinancialAgingDrilldownInputSchema,
+	businessMetricFinancialAgingDrilldownResultSchema,
 	businessMetricFinancialDrilldownInputSchema,
 	businessMetricFinancialDrilldownResultSchema,
 	businessMetricFinancialReceiptResultSchema,
@@ -241,6 +243,7 @@ import {
 	getBusinessMetricConsumption,
 	getBusinessMetricDrilldown,
 	getBusinessMetricFinancial,
+	getBusinessMetricFinancialAgingDrilldown,
 	getBusinessMetricFinancialDrilldown,
 	getBusinessMetricFinancialReceipts,
 	getBusinessMetricRenewal,
@@ -2171,6 +2174,20 @@ export const appRouter = {
 				.output(businessMetricFinancialDrilldownResultSchema)
 				.handler(({ context, input }) =>
 					getBusinessMetricFinancialDrilldown(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			financialAgingDrilldown: organizationProcedure
+				.input(businessMetricFinancialAgingDrilldownInputSchema)
+				.output(businessMetricFinancialAgingDrilldownResultSchema)
+				.handler(({ context, input }) =>
+					getBusinessMetricFinancialAgingDrilldown(
 						{
 							organizationId: context.organization.id,
 							userId: context.session.user.id,

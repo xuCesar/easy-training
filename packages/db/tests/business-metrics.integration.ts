@@ -7,6 +7,7 @@ import {
 	businessMetricAttendanceResultSchema,
 	businessMetricConsumptionResultSchema,
 	businessMetricDrilldownResultSchema,
+	businessMetricFinancialAgingDrilldownResultSchema,
 	businessMetricFinancialDrilldownResultSchema,
 	businessMetricFinancialResultSchema,
 	businessMetricRenewalResultSchema,
@@ -18,6 +19,7 @@ import {
 	getBusinessMetricConsumption,
 	getBusinessMetricDrilldown,
 	getBusinessMetricFinancial,
+	getBusinessMetricFinancialAgingDrilldown,
 	getBusinessMetricFinancialDrilldown,
 	getBusinessMetricRenewal,
 	getBusinessMetricSales,
@@ -153,6 +155,16 @@ test("财务 summary 与事件下钻在空机构保持契约和权限稳定", as
 	);
 	assert.deepEqual(drilldown.items, []);
 	assert.equal(drilldown.nextCursor, null);
+	const agingDrilldown =
+		businessMetricFinancialAgingDrilldownResultSchema.parse(
+			await getBusinessMetricFinancialAgingDrilldown(
+				scope,
+				{ ...input, limit: 50 },
+				now,
+			),
+		);
+	assert.deepEqual(agingDrilldown.items, []);
+	assert.equal(agingDrilldown.nextCursor, null);
 	await assert.rejects(
 		getBusinessMetricFinancial({ ...scope, role: "consultant" }, input, now),
 		(error: unknown) =>
