@@ -83,6 +83,8 @@ const businessMetricEnvelopeBaseSchema = z.object({
 
 export const businessMetricSalesDataSchema = z.object({
 	conversionRate: businessMetricRatioSchema,
+	comparisonConversionRate: businessMetricRatioSchema,
+	campusBenchmarkConversionRate: businessMetricRatioSchema,
 	closedCycleCount: z.number().int().nonnegative(),
 	openCycleCount: z.number().int().nonnegative(),
 	createdLeadCount: z.number().int().nonnegative(),
@@ -96,6 +98,7 @@ export const businessMetricSalesDataSchema = z.object({
 
 export const businessMetricAttendanceDataSchema = z.object({
 	attendanceRate: businessMetricRatioSchema,
+	comparisonAttendanceRate: businessMetricRatioSchema,
 	lateRate: businessMetricRatioSchema,
 	leaveRate: businessMetricRatioSchema,
 	absenceRate: businessMetricRatioSchema,
@@ -106,15 +109,18 @@ export const businessMetricAttendanceDataSchema = z.object({
 
 export const businessMetricConsumptionDataSchema = z.object({
 	consumedLessonCount: z.number().int().nonnegative(),
+	comparisonConsumedLessonCount: z.number().int().nonnegative(),
 	trend: z.array(businessMetricTrendPointSchema),
 });
 
 export const businessMetricRenewalDataSchema = z.object({
 	renewalRate: businessMetricRatioSchema,
+	comparisonRenewalRate: businessMetricRatioSchema,
 	opportunityCount: z.number().int().nonnegative(),
 	succeededOpportunityCount: z.number().int().nonnegative(),
 	unsucceededOpportunityCount: z.number().int().nonnegative(),
 	immatureOpportunityCount: z.number().int().nonnegative(),
+	minimumRemainingObservationDays: z.number().int().nonnegative().nullable(),
 	earlyRenewalCount: z.number().int().nonnegative(),
 	renewalAmountInCents: z.number().int().nonnegative(),
 	renewalLessonCount: z.number().int().nonnegative(),

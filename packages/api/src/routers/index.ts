@@ -1,6 +1,14 @@
 import type { RouterClient } from "@orpc/server";
 
 import {
+	businessMetricAttendanceResultSchema,
+	businessMetricConsumptionResultSchema,
+	businessMetricQueryInputSchema,
+	businessMetricRenewalResultSchema,
+	businessMetricSalesResultSchema,
+} from "../contracts/business-metrics";
+
+import {
 	addArrearsNoteInputSchema,
 	addLeadFollowUpInputSchema,
 	adjustInvoiceInputSchema,
@@ -222,6 +230,12 @@ import {
 	studentProcedure,
 	teacherWorkspaceProcedure,
 } from "../index";
+import {
+	getBusinessMetricAttendance,
+	getBusinessMetricConsumption,
+	getBusinessMetricRenewal,
+	getBusinessMetricSales,
+} from "../repositories/business-metrics";
 import {
 	createClassroom,
 	listClassrooms,
@@ -2126,6 +2140,64 @@ export const appRouter = {
 						),
 					),
 			},
+		},
+		analytics: {
+			sales: organizationProcedure
+				.input(businessMetricQueryInputSchema)
+				.output(businessMetricSalesResultSchema)
+				.handler(({ context, input }) =>
+					getBusinessMetricSales(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			attendance: organizationProcedure
+				.input(businessMetricQueryInputSchema)
+				.output(businessMetricAttendanceResultSchema)
+				.handler(({ context, input }) =>
+					getBusinessMetricAttendance(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			consumption: organizationProcedure
+				.input(businessMetricQueryInputSchema)
+				.output(businessMetricConsumptionResultSchema)
+				.handler(({ context, input }) =>
+					getBusinessMetricConsumption(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			renewal: organizationProcedure
+				.input(businessMetricQueryInputSchema)
+				.output(businessMetricRenewalResultSchema)
+				.handler(({ context, input }) =>
+					getBusinessMetricRenewal(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
 		},
 		snapshot: organizationProcedure
 			.output(dashboardSnapshotSchema)
