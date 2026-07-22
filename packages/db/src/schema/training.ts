@@ -2078,8 +2078,7 @@ export const invoiceMetricFact = pgTable(
 			"invoice_metric_fact_campus_attribution_check",
 			sql`
 				(${table.campusAttributionKind} = 'linked'
-					and ${table.campusId} is not null
-					and ${table.campusNameSnapshot} is not null)
+					and ${table.campusId} is not null)
 				or (${table.campusAttributionKind} = 'unknown'
 					and ${table.campusId} is null
 					and ${table.campusNameSnapshot} is null)
@@ -2089,8 +2088,7 @@ export const invoiceMetricFact = pgTable(
 			"invoice_metric_fact_course_attribution_check",
 			sql`
 				(${table.courseAttributionKind} = 'linked'
-					and ${table.courseId} is not null
-					and ${table.courseNameSnapshot} is not null)
+					and ${table.courseId} is not null)
 				or (${table.courseAttributionKind} in ('not_applicable', 'unknown')
 					and ${table.courseId} is null
 					and ${table.courseNameSnapshot} is null)
@@ -2101,6 +2099,11 @@ export const invoiceMetricFact = pgTable(
 			sql`
 				${table.provenance} <> 'native'
 				or (${table.campusAttributionKind} = 'linked'
+					and ${table.campusNameSnapshot} is not null
+					and (
+						${table.courseAttributionKind} = 'not_applicable'
+						or ${table.courseNameSnapshot} is not null
+					)
 					and ${table.courseAttributionKind} in ('linked', 'not_applicable'))
 			`,
 		),

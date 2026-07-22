@@ -40,6 +40,7 @@ import { getTrainingDashboardSnapshot } from "../../api/src/repositories/trainin
 import { appRouter } from "../../api/src/routers";
 import { db } from "../src";
 import { startArrearsCycleIfNeeded } from "../src/repositories/arrears-workflow";
+import { backfillInvoiceMetricFacts } from "../src/repositories/invoice-metric-facts";
 import { listOrganizationAuditEvents } from "../src/repositories/operations";
 import {
 	campus,
@@ -934,6 +935,27 @@ test("手工开单与账单调整保持幂等、版本和报名金额隔离", as
 			courseId: ids.courseA,
 			courseAttributionKind: "linked",
 			source: "manual",
+		});
+		await db
+			.delete(invoiceMetricFact)
+			.where(eq(invoiceMetricFact.invoiceId, created.invoiceId));
+		await backfillInvoiceMetricFacts({ organizationId: ids.organizationA });
+		const [derivedManualMetricFact] = await db
+			.select({
+				campusId: invoiceMetricFact.campusId,
+				campusNameSnapshot: invoiceMetricFact.campusNameSnapshot,
+				courseId: invoiceMetricFact.courseId,
+				courseNameSnapshot: invoiceMetricFact.courseNameSnapshot,
+				provenance: invoiceMetricFact.provenance,
+			})
+			.from(invoiceMetricFact)
+			.where(eq(invoiceMetricFact.invoiceId, created.invoiceId));
+		assert.deepEqual(derivedManualMetricFact, {
+			campusId: ids.campusA,
+			campusNameSnapshot: null,
+			courseId: ids.courseA,
+			courseNameSnapshot: null,
+			provenance: "derived",
 		});
 		await expectOrpcError(
 			createManualInvoice(financeScope, {
