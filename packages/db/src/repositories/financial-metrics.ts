@@ -1,7 +1,13 @@
 import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
 
 import { db } from "../index";
-import { invoiceMetricFact, payment, paymentReversal, refund } from "../schema";
+import {
+	invoice,
+	invoiceMetricFact,
+	payment,
+	paymentReversal,
+	refund,
+} from "../schema";
 import type { CampusAccess } from "./organization";
 
 export type FinancialMetricScope = {
@@ -93,6 +99,106 @@ export function calculateFinancialCohort(input: {
 		result.denominatorInCents += invoice.amountInCents;
 	}
 	return result;
+}
+
+export async function getFinancialCohortRecord(input: {
+	scope: FinancialMetricScope;
+	from: Date;
+	to: Date;
+	asOf: Date;
+}): Promise<FinancialCohortRecord> {
+	const invoices = await db
+		.select({
+			id: invoice.id,
+			issuedAt: invoice.issuedAt,
+			amountInCents: invoice.amountInCents,
+		})
+		.from(invoice)
+		.innerJoin(
+			invoiceMetricFact,
+			and(
+				eq(invoiceMetricFact.invoiceId, invoice.id),
+				eq(invoiceMetricFact.organizationId, invoice.organizationId),
+			),
+		)
+		.where(
+			and(
+				eq(invoice.organizationId, input.scope.organizationId),
+				gte(invoice.issuedAt, input.from),
+				lt(invoice.issuedAt, input.to),
+				campusCondition(input.scope.campusAccess),
+			),
+		);
+	const invoiceIds = invoices.map((row) => row.id);
+	if (invoiceIds.length === 0)
+		return calculateFinancialCohort({ invoices: [], asOf: input.asOf });
+	const [payments, reversals, refunds] = await Promise.all([
+		db
+			.select({
+				invoiceId: payment.invoiceId,
+				amountInCents: payment.amountInCents,
+				occurredAt: payment.receivedAt,
+			})
+			.from(payment)
+			.where(
+				and(
+					eq(payment.organizationId, input.scope.organizationId),
+					inArray(payment.invoiceId, invoiceIds),
+				),
+			),
+		db
+			.select({
+				invoiceId: paymentReversal.invoiceId,
+				amountInCents: paymentReversal.amountInCents,
+				occurredAt: paymentReversal.reversedAt,
+			})
+			.from(paymentReversal)
+			.where(
+				and(
+					eq(paymentReversal.organizationId, input.scope.organizationId),
+					inArray(paymentReversal.invoiceId, invoiceIds),
+				),
+			),
+		db
+			.select({
+				invoiceId: refund.invoiceId,
+				amountInCents: refund.amountInCents,
+				occurredAt: refund.refundedAt,
+			})
+			.from(refund)
+			.where(
+				and(
+					eq(refund.organizationId, input.scope.organizationId),
+					inArray(refund.invoiceId, invoiceIds),
+				),
+			),
+	]);
+	const issuedAtById = new Map(invoices.map((row) => [row.id, row.issuedAt]));
+	const settled = new Map<string, number>();
+	const add = (invoiceId: string, amount: number, occurredAt: Date) => {
+		const issuedAt = issuedAtById.get(invoiceId);
+		if (
+			issuedAt &&
+			occurredAt >= issuedAt &&
+			occurredAt < new Date(issuedAt.getTime() + 30 * 86_400_000)
+		)
+			settled.set(invoiceId, (settled.get(invoiceId) ?? 0) + amount);
+	};
+	for (const row of payments)
+		add(row.invoiceId, row.amountInCents, row.occurredAt);
+	for (const row of reversals)
+		add(row.invoiceId, -row.amountInCents, row.occurredAt);
+	for (const row of refunds)
+		add(row.invoiceId, -row.amountInCents, row.occurredAt);
+	return calculateFinancialCohort({
+		asOf: input.asOf,
+		invoices: invoices.map((row) => ({
+			issuedAt: row.issuedAt,
+			amountInCents: row.amountInCents,
+			settledInWindowInCents: settled.get(row.id) ?? 0,
+			financialFactsComplete: true,
+		})),
+	});
 }
 
 export type FinancialAgingBucket =
