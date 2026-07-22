@@ -65,3 +65,70 @@ const conversionRate = ratio(converted, closed);
 ```
 
 在 API 边界完成时间序列化，并由统一 ratio helper 保留不可计算原因。
+
+## Scenario: 财务回款、cohort、账龄与受控下钻
+
+### 1. Scope / Trigger
+
+- 适用于 `training.analytics.financial`、`financialDrilldown` 和
+  `financialAgingDrilldown`，以及所有读取 `invoice_metric_fact` 的 DB 查询。
+- 财务角色为 owner、admin、campus_manager、finance；consultant 与 teacher 必须返回 `FORBIDDEN`。
+
+### 2. Signatures
+
+- DB：`getFinancialReceiptRecord`、`getFinancialCohortRecord`、`getFinancialAgingRecord`、`getFinancialReceiptEventPage`、`getFinancialAgingInvoicePage`。
+- API：`getBusinessMetricFinancial(scope, input, asOf?)`。
+- API 下钻：输入最多 50 条，游标为 `{ occurredAt, id }`；事件类型为 payment、reversal、refund，账龄下钻使用账单 issuedAt 作为 occurredAt。
+
+### 3. Contracts
+
+- 财务结果固定 `contractVersion=1`、`definitionVersion=2026-07-23`、`timezone=Asia/Shanghai`，金额全部为整数分。
+- 净回款按资金事实自身发生时间计入：payment 为正，payment reversal 与已批准 refund 为负；退款申请未生成 refund 事实前不参与指标。
+- cohort 只筛范围内 issuedAt，`issuedAt + 30 天 <= asOf` 才成熟；观察窗后资金不回写 cohort，分母按观察截止前 adjustment 链重放。
+- 账龄快照为 `min(range.to, asOf)`；条款使用截止前最后 adjustment 重放，结算为 payment 减 reversal，refund 不重新制造应收；异常不裁剪为零。
+- 所有查询必须同时限制 organizationId 与账单发生时 `invoice_metric_fact.campusId`；下钻响应只返回事实 ID、金额、发生时间、账龄桶和 `/finance/invoices/:invoiceId` 深链接，不返回联系人、备注或退款原因。
+- 全机构视图可返回未归属/缺失计数；受限校区视图将定量缺口置零，只返回 `scopeCoverageIncomplete` 布尔值。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 非财务角色读取 summary 或下钻 | `FORBIDDEN` |
+| 范围超过两年、日期逆序、游标 UUID/时间非法或 limit > 50 | `BAD_REQUEST` |
+| 资金早于 issuedAt、cohort 净分子小于 0 或大于分母 | 计 chronology/settlement anomaly，并排除正式比率 |
+| adjustment 链缺首版本、断裂、重复或末端版本不一致 | 计 adjustment-chain anomaly，不使用当前投影补造历史 |
+| 查询内部失败 | `INTERNAL_SERVER_ERROR`，不得暴露 SQL 或机构规模 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：跨日收款、冲正和批准退款分别落入自己的上海业务日桶；账龄在到期日当天仍为未到期。
+- Base：无课程的手工账单仍计入总额，课程归属使用 `notApplicable`；历史无法证明校区的账单在全机构视图计入覆盖缺口。
+- Bad：用学员当前校区、当前 invoice paidAmount 或退款后投影推断历史 cohort/账龄，或在受限校区响应返回机构级未归属金额。
+
+### 6. Tests Required
+
+- PostgreSQL 金值 fixture 覆盖跨日负桶、30 日成熟边界、窗口后资金、adjustment cutoff、五档账龄、部分/全额退款不重开应收。
+- 覆盖 owner/admin 全机构、campus_manager/finance 授权校区、consultant/teacher 拒绝，以及跨机构和越权下钻。
+- 每个公开结果必须经过 Zod schema parse；分页断言稳定 `(occurredAt,id)` 游标、最多 50 条和最小字段投影。
+- 运行 `pnpm test:integration`、`pnpm check-types`、`pnpm check`、`pnpm build` 与 `git diff --check`；生产数据量 explain 是开放 reader 前门禁。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const outstanding = invoice.amountInCents - invoice.paidAmountInCents;
+const campusId = student.campusId;
+```
+
+这会把当前投影和当前学员校区错误地回写到历史快照。
+
+#### Correct
+
+```ts
+const terms = replayInvoiceAdjustments(invoiceId, snapshotAt);
+const outstanding = terms.amountInCents - paymentsBeforeCutoff + reversalsBeforeCutoff;
+const campusId = invoiceMetricFact.campusId;
+```
+
+历史金额、校区和课程均从不可变事实及查询时点重放，异常通过数据质量字段暴露。
