@@ -10,7 +10,7 @@
 - API 输入：`BusinessMetricQueryInput`，只允许预设范围或上海自然日期 `{ preset: "custom", from, to }`。
 - 领域入口：`getBusinessMetricSales/Attendance/Consumption/Renewal(scope, input, now?)`。
 - DB 入口：`getBusinessMetric*Record({ organizationId/campusAccess/identity, from, to, asOf? })`。
-- oRPC：`training.analytics.sales | attendance | consumption | renewal`。
+- oRPC：`training.analytics.sales | attendance | consumption | renewal | drilldown`；下钻输入固定 `kind`、最大 50 条和 `(occurredAt,id)` 游标。
 
 ## 3. Contracts
 
@@ -19,6 +19,7 @@
 - 比率返回 `available(value/numerator/denominator)` 或 `notApplicable(reason)`；无分母、未成熟 cohort、样本不足和事实覆盖缺失不能伪装为 0%。
 - 销售使用结案时归属和校区；教学使用课次发生时校区和教师；消课按 `lesson.startsAt` 的上海业务日；续费机会观察窗为 30 个有效日，冻结期间暂停。
 - PostgreSQL `sql<Date>` 只是 TypeScript 提示，原生 `date_trunc ... at time zone` 在运行时可能返回字符串。API 边界必须使用 `new Date(value).toISOString()` 显式序列化，不能直接调用 `value.toISOString()`。
+- 下钻必须重新执行相同的 organization/campus/consultant/teacher 范围；顾问归属标签只返回“本人”，不能借校区基准暴露其他顾问姓名。
 
 ## 4. Validation & Error Matrix
 

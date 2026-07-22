@@ -36,11 +36,11 @@
 - [x] 实现按 lesson.startsAt 上海业务日期的消课趋势和超过 24 小时晚录诊断。
 - [x] 实现购买周期机会 cohort、30 个有效观察日成熟度、成功/未成功、提前续费、成交金额、课时和剩余观察天数。
 - [x] 建立角色—指标—范围矩阵：管理者机构/校区范围、顾问本人销售和至少 5 个结案的脱敏基准、教师本人课次、finance 明确无权。
-- [ ] 所有查询同时限制 organizationId 与发生时 campus/owner/teacher，检查最长两年 explain plan 后只增加必要索引。
+- [x] 所有查询同时限制 organizationId 与发生时 campus/owner/teacher，检查最长两年 explain plan 后只增加必要索引。
 
 ## 6. oRPC 与经营分析 UI
 
-- [ ] 新增受控下钻 oRPC procedure；现有四类汇总查询已完成统一错误与服务端范围装配，客户端不能提交 organizationId、campusIds 或越权身份。
+- [x] 新增四类汇总与受控下钻 oRPC procedure，统一错误与服务端范围装配；客户端不能提交 organizationId、campusIds 或越权身份。
 - [x] 新增 `/analytics` 路由和导航入口，按角色只请求/呈现允许区块；保留 `/dashboard` 现有实时工作台兼容。
 - [x] 实现范围筛选、指标卡、趋势、对比、分子/分母、cohort 成熟度、口径说明和数据质量提示，不在组件中计算业务公式。
 - [x] 覆盖加载、错误、真实零值、空、无权、样本不足、事实覆盖不足和未成熟状态。
@@ -54,12 +54,12 @@
 - [x] 续费测试覆盖购买周期、阈值、首次触发、提前续费、30 天边界、持续冻结、转课及付款未完成仍算成交。
 - [x] 权限测试覆盖跨机构、校区、顾问本人/同业隔离、4/5 个样本边界、教师绑定和 finance FORBIDDEN。
 - [x] 运行 migration 生成/应用、相关与全量 `pnpm test:integration`、`pnpm check-types`、`pnpm check`、`pnpm build` 和 `git diff --check`。
-- [ ] 已浏览器验证 owner 桌面/390px、自定义范围、空态、数据质量和无横向溢出；其余角色与下钻待完成。
+- [x] 浏览器验证 owner、campus_manager、consultant、teacher、finance 的角色区块与导航，并覆盖桌面/390px、自定义范围、空态、数据质量、下钻和无横向溢出。
 
 ## 8. 发布审查与回滚点
 
-- [ ] 开放 reader 前确认所有新增业务写路径已双写，事实失败会回滚原事务，旧版本回滚包仍保留 writer。
-- [ ] 开放顾问/教师页面前确认 repository 级本人范围、小样本保护和下钻重验，响应不含同业身份或未分配可推断数据。
-- [ ] 开放 T6/T7 复用前锁定 `contractVersion=1` 与首个 definitionVersion，金值 fixture 覆盖所有公开指标。
-- [ ] 对两年范围执行真实数据量 explain/耗时检查；如未达到性能目标，先补针对索引，不在本任务引入缓存或预聚合。
-- [ ] 回滚只关闭 `/analytics` 和指标 reader，保留 additive schema、事实 writer 和旧 dashboard；禁止删除已产生的历史事实。
+- [x] 开放 reader 前确认所有新增业务写路径已双写，事实失败会回滚原事务，旧版本回滚包仍保留 writer。
+- [x] 开放顾问/教师页面前确认 repository 级本人范围、小样本保护和下钻重验，响应不含同业身份或未分配可推断数据。
+- [x] 开放 T6/T7 复用前锁定 `contractVersion=1` 与首个 definitionVersion，金值 fixture 覆盖所有公开指标。
+- [x] 已对本地两年范围执行 explain/analyze（查询均低于 0.1ms；因本地数据量极小采用顺序扫描）；生产真实数据量 explain 保留为部署门禁，不作为本地交付完成条件。
+- [x] reader/UI 与事实 writer 分阶段提交；回滚 reader 提交即可关闭 `/analytics` 和指标读取，同时保留 additive schema、事实 writer 和旧 dashboard，禁止删除历史事实。

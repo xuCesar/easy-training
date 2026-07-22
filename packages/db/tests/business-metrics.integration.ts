@@ -6,6 +6,7 @@ import { inArray } from "drizzle-orm";
 import {
 	businessMetricAttendanceResultSchema,
 	businessMetricConsumptionResultSchema,
+	businessMetricDrilldownResultSchema,
 	businessMetricRenewalResultSchema,
 	businessMetricSalesResultSchema,
 } from "../../api/src/contracts/business-metrics";
@@ -13,6 +14,7 @@ import {
 import {
 	getBusinessMetricAttendance,
 	getBusinessMetricConsumption,
+	getBusinessMetricDrilldown,
 	getBusinessMetricRenewal,
 	getBusinessMetricSales,
 } from "../../api/src/repositories/business-metrics";
@@ -674,6 +676,111 @@ test("顾问基准 4/5 样本边界及机构和校区范围保持隔离", async 
 		assert.equal(five.data.campusBenchmarkConversionRate.denominator, 6);
 		assert.equal(otherCampus.data.closedCycleCount, 0);
 		assert.equal(otherOrganization.data.closedCycleCount, 0);
+	} finally {
+		await cleanupMetricFixture(ids);
+	}
+});
+
+test("经营指标下钻重新执行角色范围并使用稳定游标", async () => {
+	const ids = createMetricFixtureIds();
+	try {
+		const { organizationA, campusA } = await seedMetricFixture(ids);
+		const fixtureNow = new Date("2026-08-20T04:00:00.000Z");
+		const range = {
+			preset: "custom" as const,
+			from: "2026-07-01",
+			to: "2026-08-01",
+		};
+		const baseScope = {
+			organizationId: organizationA,
+			campusAccess: { kind: "selected" as const, campusIds: [campusA] },
+		};
+		const firstPage = businessMetricDrilldownResultSchema.parse(
+			await getBusinessMetricDrilldown(
+				{ ...baseScope, userId: ids.users.owner, role: "owner" },
+				{ range, kind: "salesCycles", limit: 1 },
+				fixtureNow,
+			),
+		);
+		assert.equal(firstPage.items.length, 1);
+		assert.ok(firstPage.nextCursor);
+		const secondPage = businessMetricDrilldownResultSchema.parse(
+			await getBusinessMetricDrilldown(
+				{ ...baseScope, userId: ids.users.owner, role: "owner" },
+				{
+					range,
+					kind: "salesCycles",
+					limit: 1,
+					cursor: firstPage.nextCursor,
+				},
+				fixtureNow,
+			),
+		);
+		assert.notEqual(secondPage.items[0]?.id, firstPage.items[0]?.id);
+
+		const consultant = businessMetricDrilldownResultSchema.parse(
+			await getBusinessMetricDrilldown(
+				{
+					...baseScope,
+					userId: ids.users.consultantA,
+					role: "consultant",
+				},
+				{ range, kind: "salesCycles", limit: 20 },
+				fixtureNow,
+			),
+		);
+		assert.equal(consultant.items.length, 5);
+		assert.ok(
+			consultant.items.every(
+				(item) =>
+					item.kind === "salesCycle" && item.attributionLabel === "本人",
+			),
+		);
+
+		const teacherDrilldown = businessMetricDrilldownResultSchema.parse(
+			await getBusinessMetricDrilldown(
+				{ ...baseScope, userId: ids.users.teacher, role: "teacher" },
+				{ range, kind: "attendanceLessons", limit: 20 },
+				fixtureNow,
+			),
+		);
+		assert.deepEqual(teacherDrilldown.items, [
+			{
+				kind: "attendanceLesson",
+				id: requiredAt(ids.lessons, 0),
+				occurredAt: "2026-06-30T16:30:00.000Z",
+				present: 1,
+				late: 1,
+				absent: 1,
+				leave: 1,
+			},
+		]);
+
+		const renewalDrilldown = businessMetricDrilldownResultSchema.parse(
+			await getBusinessMetricDrilldown(
+				{ ...baseScope, userId: ids.users.owner, role: "owner" },
+				{ range, kind: "renewalOpportunities", limit: 20 },
+				fixtureNow,
+			),
+		);
+		assert.deepEqual(
+			new Set(
+				renewalDrilldown.items.map((item) =>
+					item.kind === "renewalOpportunity" ? item.status : "wrong",
+				),
+			),
+			new Set(["succeeded", "unsucceeded", "immature"]),
+		);
+
+		await assert.rejects(
+			getBusinessMetricDrilldown(
+				{ ...baseScope, userId: ids.users.owner, role: "finance" },
+				{ range, kind: "renewalOpportunities", limit: 20 },
+				fixtureNow,
+			),
+			(error: unknown) =>
+				error instanceof Error && error.message.includes("续费经营指标"),
+		);
 	} finally {
 		await cleanupMetricFixture(ids);
 	}

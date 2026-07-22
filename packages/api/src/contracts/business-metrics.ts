@@ -26,6 +26,25 @@ export const businessMetricQueryInputSchema = z.object({
 	range: businessMetricRangeInputSchema.default({ preset: "month" }),
 });
 
+export const businessMetricDrilldownKindSchema = z.enum([
+	"salesCycles",
+	"attendanceLessons",
+	"consumptionLessons",
+	"renewalOpportunities",
+]);
+
+export const businessMetricDrilldownInputSchema =
+	businessMetricQueryInputSchema.extend({
+		kind: businessMetricDrilldownKindSchema,
+		limit: z.number().int().min(1).max(50).default(20),
+		cursor: z
+			.object({
+				occurredAt: z.iso.datetime({ offset: true }),
+				id: z.uuid(),
+			})
+			.optional(),
+	});
+
 export const businessMetricGranularitySchema = z.enum(["day", "week", "month"]);
 
 export const resolvedBusinessMetricRangeSchema = z.object({
@@ -143,11 +162,63 @@ export const businessMetricRenewalResultSchema =
 		data: businessMetricRenewalDataSchema,
 	});
 
+export const businessMetricDrilldownItemSchema = z.discriminatedUnion("kind", [
+	z.object({
+		kind: z.literal("salesCycle"),
+		id: z.uuid(),
+		occurredAt: z.iso.datetime({ offset: true }),
+		outcome: z.enum(["converted", "lost"]),
+		attributionLabel: z.string(),
+	}),
+	z.object({
+		kind: z.literal("attendanceLesson"),
+		id: z.uuid(),
+		occurredAt: z.iso.datetime({ offset: true }),
+		present: z.number().int().nonnegative(),
+		late: z.number().int().nonnegative(),
+		absent: z.number().int().nonnegative(),
+		leave: z.number().int().nonnegative(),
+	}),
+	z.object({
+		kind: z.literal("consumptionLesson"),
+		id: z.uuid(),
+		occurredAt: z.iso.datetime({ offset: true }),
+		consumedLessonCount: z.number().int().nonnegative(),
+		lateConsumptionCount: z.number().int().nonnegative(),
+	}),
+	z.object({
+		kind: z.literal("renewalOpportunity"),
+		id: z.uuid(),
+		occurredAt: z.iso.datetime({ offset: true }),
+		status: z.enum(["succeeded", "unsucceeded", "immature"]),
+		remainingObservationDays: z.number().int().nonnegative().nullable(),
+		renewalAmountInCents: z.number().int().nonnegative(),
+		renewalLessonCount: z.number().int().nonnegative(),
+	}),
+]);
+
+export const businessMetricDrilldownResultSchema =
+	businessMetricEnvelopeBaseSchema.extend({
+		items: z.array(businessMetricDrilldownItemSchema),
+		nextCursor: z
+			.object({
+				occurredAt: z.iso.datetime({ offset: true }),
+				id: z.uuid(),
+			})
+			.nullable(),
+	});
+
 export type BusinessMetricRangeInput = z.infer<
 	typeof businessMetricRangeInputSchema
 >;
 export type BusinessMetricQueryInput = z.infer<
 	typeof businessMetricQueryInputSchema
+>;
+export type BusinessMetricDrilldownKind = z.infer<
+	typeof businessMetricDrilldownKindSchema
+>;
+export type BusinessMetricDrilldownInput = z.infer<
+	typeof businessMetricDrilldownInputSchema
 >;
 export type BusinessMetricGranularity = z.infer<
 	typeof businessMetricGranularitySchema
@@ -170,4 +241,7 @@ export type BusinessMetricConsumptionResult = z.infer<
 >;
 export type BusinessMetricRenewalResult = z.infer<
 	typeof businessMetricRenewalResultSchema
+>;
+export type BusinessMetricDrilldownResult = z.infer<
+	typeof businessMetricDrilldownResultSchema
 >;

@@ -1,6 +1,9 @@
 import type {
 	BusinessMetricAttendanceResult,
 	BusinessMetricConsumptionResult,
+	BusinessMetricDrilldownInput,
+	BusinessMetricDrilldownKind,
+	BusinessMetricDrilldownResult,
 	BusinessMetricQueryInput,
 	BusinessMetricRatio,
 	BusinessMetricRenewalResult,
@@ -179,15 +182,18 @@ export function BusinessAnalytics() {
 						<SalesSection
 							result={sales.data}
 							consultant={organization.role === "consultant"}
+							input={input}
 						/>
 					) : null}
 					{attendance.data ? (
-						<AttendanceSection result={attendance.data} />
+						<AttendanceSection result={attendance.data} input={input} />
 					) : null}
 					{consumption.data ? (
-						<ConsumptionSection result={consumption.data} />
+						<ConsumptionSection result={consumption.data} input={input} />
 					) : null}
-					{renewal.data ? <RenewalSection result={renewal.data} /> : null}
+					{renewal.data ? (
+						<RenewalSection result={renewal.data} input={input} />
+					) : null}
 				</>
 			) : null}
 			{asOf ? (
@@ -203,9 +209,11 @@ export function BusinessAnalytics() {
 function SalesSection({
 	result,
 	consultant,
+	input,
 }: {
 	result: BusinessMetricSalesResult;
 	consultant: boolean;
+	input: BusinessMetricQueryInput;
 }) {
 	return (
 		<AnalyticsSection title="招生与转化" quality={qualityMessages(result)}>
@@ -246,14 +254,17 @@ function SalesSection({
 					)}
 				/>
 			</MetricGrid>
+			<MetricDrilldown kind="salesCycles" input={input} />
 		</AnalyticsSection>
 	);
 }
 
 function AttendanceSection({
 	result,
+	input,
 }: {
 	result: BusinessMetricAttendanceResult;
+	input: BusinessMetricQueryInput;
 }) {
 	return (
 		<AnalyticsSection title="到课与补课" quality={qualityMessages(result)}>
@@ -290,14 +301,17 @@ function AttendanceSection({
 					helper="需要重新安排课次"
 				/>
 			</MetricGrid>
+			<MetricDrilldown kind="attendanceLessons" input={input} />
 		</AnalyticsSection>
 	);
 }
 
 function ConsumptionSection({
 	result,
+	input,
 }: {
 	result: BusinessMetricConsumptionResult;
+	input: BusinessMetricQueryInput;
 }) {
 	const max = Math.max(1, ...result.data.trend.map((point) => point.value));
 	return (
@@ -332,11 +346,18 @@ function ConsumptionSection({
 					)}
 				</div>
 			</div>
+			<MetricDrilldown kind="consumptionLessons" input={input} />
 		</AnalyticsSection>
 	);
 }
 
-function RenewalSection({ result }: { result: BusinessMetricRenewalResult }) {
+function RenewalSection({
+	result,
+	input,
+}: {
+	result: BusinessMetricRenewalResult;
+	input: BusinessMetricQueryInput;
+}) {
 	return (
 		<AnalyticsSection title="续费机会" quality={qualityMessages(result)}>
 			<MetricGrid>
@@ -366,8 +387,149 @@ function RenewalSection({ result }: { result: BusinessMetricRenewalResult }) {
 					helper="不进入机会分母"
 				/>
 			</MetricGrid>
+			<MetricDrilldown kind="renewalOpportunities" input={input} />
 		</AnalyticsSection>
 	);
+}
+
+const drilldownLabels: Record<BusinessMetricDrilldownKind, string> = {
+	salesCycles: "查看结案周期",
+	attendanceLessons: "查看课次考勤",
+	consumptionLessons: "查看课消明细",
+	renewalOpportunities: "查看续费机会",
+};
+
+function MetricDrilldown({
+	kind,
+	input,
+}: {
+	kind: BusinessMetricDrilldownKind;
+	input: BusinessMetricQueryInput;
+}) {
+	const [open, setOpen] = useState(false);
+	const rangeKey = JSON.stringify(input.range);
+	const [cursorState, setCursorState] = useState<{
+		rangeKey: string;
+		cursor: NonNullable<BusinessMetricDrilldownInput["cursor"]>;
+	}>();
+	const cursor =
+		cursorState?.rangeKey === rangeKey ? cursorState.cursor : undefined;
+	const query = useQuery({
+		...orpc.training.analytics.drilldown.queryOptions({
+			input: { ...input, kind, limit: 20, cursor },
+		}),
+		enabled: open,
+	});
+	return (
+		<div className="mt-4 border-t pt-3">
+			<Button
+				type="button"
+				variant="outline"
+				onClick={() => setOpen((value) => !value)}
+			>
+				{open ? "收起明细" : drilldownLabels[kind]}
+			</Button>
+			{open ? (
+				<div className="mt-3" aria-live="polite">
+					{query.isPending ? <Skeleton className="h-24" /> : null}
+					{query.isError ? (
+						<p className="text-destructive text-sm">
+							明细加载失败：{query.error.message}
+						</p>
+					) : null}
+					{query.data ? (
+						<DrilldownItems
+							result={query.data}
+							hasPreviousPage={Boolean(cursor)}
+							onFirstPage={() => setCursorState(undefined)}
+							onNextPage={(nextCursor) =>
+								setCursorState({ rangeKey, cursor: nextCursor })
+							}
+						/>
+					) : null}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function DrilldownItems({
+	result,
+	hasPreviousPage,
+	onFirstPage,
+	onNextPage,
+}: {
+	result: BusinessMetricDrilldownResult;
+	hasPreviousPage: boolean;
+	onFirstPage: () => void;
+	onNextPage: (
+		cursor: NonNullable<BusinessMetricDrilldownInput["cursor"]>,
+	) => void;
+}) {
+	if (result.items.length === 0) {
+		return (
+			<div className="grid gap-3">
+				<p className="text-muted-foreground text-sm">当前范围暂无明细</p>
+				{hasPreviousPage ? (
+					<Button type="button" variant="outline" onClick={onFirstPage}>
+						返回首批
+					</Button>
+				) : null}
+			</div>
+		);
+	}
+	const nextCursor = result.nextCursor;
+	return (
+		<div className="grid gap-3">
+			<ul className="grid gap-2">
+				{result.items.map((item) => (
+					<li key={item.id} className="min-w-0 border p-3 text-sm">
+						<p className="text-muted-foreground text-xs">
+							{formatDateTime(item.occurredAt)}
+						</p>
+						<p className="mt-1 break-words">{formatDrilldownItem(item)}</p>
+					</li>
+				))}
+			</ul>
+			<div className="flex flex-wrap gap-2">
+				{hasPreviousPage ? (
+					<Button type="button" variant="outline" onClick={onFirstPage}>
+						返回首批
+					</Button>
+				) : null}
+				{nextCursor ? (
+					<Button
+						type="button"
+						variant="outline"
+						onClick={() => onNextPage(nextCursor)}
+					>
+						下一批
+					</Button>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+function formatDrilldownItem(
+	item: BusinessMetricDrilldownResult["items"][number],
+) {
+	if (item.kind === "salesCycle") {
+		return `${item.outcome === "converted" ? "成交" : "流失"} · 归属 ${item.attributionLabel}`;
+	}
+	if (item.kind === "attendanceLesson") {
+		return `到课 ${item.present} · 迟到 ${item.late} · 请假 ${item.leave} · 缺勤 ${item.absent}`;
+	}
+	if (item.kind === "consumptionLesson") {
+		return `消课 ${item.consumedLessonCount} · 晚录 ${item.lateConsumptionCount}`;
+	}
+	const status =
+		item.status === "succeeded"
+			? "续费成功"
+			: item.status === "unsucceeded"
+				? "观察期内未续费"
+				: `尚未成熟，剩余 ${item.remainingObservationDays ?? 0} 天`;
+	return `${status} · ${formatCentsToCurrency(item.renewalAmountInCents)} · ${item.renewalLessonCount} 课时`;
 }
 
 function AnalyticsSection({

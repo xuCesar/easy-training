@@ -1,6 +1,7 @@
 import {
 	getBusinessMetricAttendanceRecord,
 	getBusinessMetricConsumptionRecord,
+	getBusinessMetricDrilldownRecords,
 	getBusinessMetricRenewalRecord,
 	getBusinessMetricSalesRecord,
 } from "@easy-training/db/repositories/business-metrics";
@@ -14,6 +15,8 @@ import {
 	type BusinessMetricAttendanceResult,
 	type BusinessMetricConsumptionResult,
 	type BusinessMetricDataQuality,
+	type BusinessMetricDrilldownInput,
+	type BusinessMetricDrilldownResult,
 	type BusinessMetricQueryInput,
 	type BusinessMetricRatio,
 	type BusinessMetricRenewalResult,
@@ -224,6 +227,7 @@ export const businessMetricDefinitionRegistry = {
 	attendance: getBusinessMetricAttendance,
 	consumption: getBusinessMetricConsumption,
 	renewal: getBusinessMetricRenewal,
+	drilldown: getBusinessMetricDrilldown,
 } as const;
 
 function envelope(
@@ -393,4 +397,62 @@ export async function getBusinessMetricRenewal(
 			renewalLessonCount: record.renewalLessonCount,
 		},
 	};
+}
+
+export async function getBusinessMetricDrilldown(
+	scope: BusinessMetricScope,
+	input: BusinessMetricDrilldownInput,
+	now = new Date(),
+): Promise<BusinessMetricDrilldownResult> {
+	if (input.kind === "salesCycles") assertSalesAccess(scope.role);
+	if (
+		input.kind === "attendanceLessons" ||
+		input.kind === "consumptionLessons"
+	) {
+		assertTeachingAccess(scope.role);
+	}
+	if (input.kind === "renewalOpportunities") assertRenewalAccess(scope.role);
+	const { window, base } = envelope(scope, input, now);
+	try {
+		const result = await getBusinessMetricDrilldownRecords({
+			kind: input.kind,
+			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
+			consultantUserId: scope.role === "consultant" ? scope.userId : undefined,
+			teacherUserId: scope.role === "teacher" ? scope.userId : undefined,
+			includeAttributionNames:
+				scope.role === "owner" ||
+				scope.role === "admin" ||
+				scope.role === "campus_manager",
+			from: new Date(window.range.from),
+			to: new Date(window.range.to),
+			asOf: now,
+			limit: input.limit,
+			cursor: input.cursor
+				? {
+						occurredAt: new Date(input.cursor.occurredAt),
+						id: input.cursor.id,
+					}
+				: undefined,
+		});
+		return {
+			...base,
+			dataQuality: emptyDataQuality(),
+			items: result.items.map((item) => ({
+				...item,
+				occurredAt: new Date(item.occurredAt).toISOString(),
+			})),
+			nextCursor: result.nextCursor
+				? {
+						occurredAt: new Date(result.nextCursor.occurredAt).toISOString(),
+						id: result.nextCursor.id,
+					}
+				: null,
+		};
+	} catch (error) {
+		if (error instanceof ORPCError) throw error;
+		throw new ORPCError("INTERNAL_SERVER_ERROR", {
+			message: "暂时无法加载经营指标明细，请稍后重试。",
+		});
+	}
 }

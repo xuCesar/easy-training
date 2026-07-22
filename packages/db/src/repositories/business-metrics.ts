@@ -1,4 +1,5 @@
-import { and, asc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { db } from "../index";
 import {
@@ -349,6 +350,46 @@ function getFrozenDurationMs(input: {
 	return frozenMs;
 }
 
+function evaluateRenewalOpportunity(input: {
+	triggeredAt: Date;
+	convertedAt: Date | null;
+	asOf: Date;
+	events: Array<{ kind: string; effectiveAt: Date }>;
+}) {
+	const convertedAt =
+		input.convertedAt !== null && input.convertedAt <= input.asOf
+			? input.convertedAt
+			: null;
+	const evaluationAt = convertedAt ?? input.asOf;
+	const frozenMs = getFrozenDurationMs({
+		triggeredAt: input.triggeredAt,
+		evaluationAt,
+		events: input.events,
+	});
+	const effectiveMs = Math.max(
+		0,
+		evaluationAt.getTime() - input.triggeredAt.getTime() - frozenMs,
+	);
+	if (convertedAt && effectiveMs <= RENEWAL_WINDOW_MS) {
+		return {
+			status: "succeeded" as const,
+			remainingObservationDays: null,
+		};
+	}
+	if (effectiveMs >= RENEWAL_WINDOW_MS) {
+		return {
+			status: "unsucceeded" as const,
+			remainingObservationDays: null,
+		};
+	}
+	return {
+		status: "immature" as const,
+		remainingObservationDays: Math.ceil(
+			(RENEWAL_WINDOW_MS - effectiveMs) / (24 * 60 * 60 * 1000),
+		),
+	};
+}
+
 export async function getBusinessMetricRenewalRecord(input: {
 	organizationId: string;
 	campusAccess: CampusAccess;
@@ -429,33 +470,22 @@ export async function getBusinessMetricRenewalRecord(input: {
 	let renewalLessonCount = 0;
 	let minimumRemainingObservationDays: number | null = null;
 	for (const opportunity of opportunities) {
-		const convertedAt =
-			opportunity.conversionId !== null &&
-			opportunity.convertedAt !== null &&
-			opportunity.convertedAt <= input.asOf
-				? opportunity.convertedAt
-				: null;
-		const evaluationAt = convertedAt ?? input.asOf;
-		const frozenMs = getFrozenDurationMs({
+		const evaluation = evaluateRenewalOpportunity({
 			triggeredAt: opportunity.triggeredAt,
-			evaluationAt,
+			convertedAt:
+				opportunity.conversionId === null ? null : opportunity.convertedAt,
+			asOf: input.asOf,
 			events: eventsByEnrollment.get(opportunity.enrollmentId) ?? [],
 		});
-		const effectiveMs = Math.max(
-			0,
-			evaluationAt.getTime() - opportunity.triggeredAt.getTime() - frozenMs,
-		);
-		if (convertedAt && effectiveMs <= RENEWAL_WINDOW_MS) {
+		if (evaluation.status === "succeeded") {
 			succeeded += 1;
 			renewalAmountInCents += opportunity.renewalAmountInCents ?? 0;
 			renewalLessonCount += opportunity.renewalLessons ?? 0;
 			continue;
 		}
-		if (effectiveMs < RENEWAL_WINDOW_MS) {
+		if (evaluation.status === "immature") {
 			immature += 1;
-			const remainingDays = Math.ceil(
-				(RENEWAL_WINDOW_MS - effectiveMs) / (24 * 60 * 60 * 1000),
-			);
+			const remainingDays = evaluation.remainingObservationDays;
 			minimumRemainingObservationDays =
 				minimumRemainingObservationDays === null
 					? remainingDays
@@ -528,5 +558,311 @@ export async function getBusinessMetricRenewalRecord(input: {
 		renewalAmountInCents,
 		renewalLessonCount,
 		missingPurchaseCycleCount: coverage?.count ?? 0,
+	};
+}
+
+export type BusinessMetricDrilldownRecord =
+	| {
+			kind: "salesCycle";
+			id: string;
+			occurredAt: Date;
+			outcome: "converted" | "lost";
+			attributionLabel: string;
+	  }
+	| {
+			kind: "attendanceLesson";
+			id: string;
+			occurredAt: Date;
+			present: number;
+			late: number;
+			absent: number;
+			leave: number;
+	  }
+	| {
+			kind: "consumptionLesson";
+			id: string;
+			occurredAt: Date;
+			consumedLessonCount: number;
+			lateConsumptionCount: number;
+	  }
+	| {
+			kind: "renewalOpportunity";
+			id: string;
+			occurredAt: Date;
+			status: "succeeded" | "unsucceeded" | "immature";
+			remainingObservationDays: number | null;
+			renewalAmountInCents: number;
+			renewalLessonCount: number;
+	  };
+
+type BusinessMetricDrilldownInput = {
+	kind:
+		| "salesCycles"
+		| "attendanceLessons"
+		| "consumptionLessons"
+		| "renewalOpportunities";
+	organizationId: string;
+	campusAccess: CampusAccess;
+	consultantUserId?: string;
+	teacherUserId?: string;
+	includeAttributionNames: boolean;
+	from: Date;
+	to: Date;
+	asOf: Date;
+	limit: number;
+	cursor?: { occurredAt: Date; id: string };
+};
+
+function drilldownCursorFilter(
+	occurredAt: AnyPgColumn,
+	id: AnyPgColumn,
+	cursor: BusinessMetricDrilldownInput["cursor"],
+) {
+	return cursor
+		? sql`(${occurredAt}, ${id}) < (${cursor.occurredAt}, ${cursor.id})`
+		: sql`true`;
+}
+
+function drilldownCampusFilter(access: CampusAccess, campusId: AnyPgColumn) {
+	if (access.kind === "none") return sql`false`;
+	if (access.kind === "selected") return inArray(campusId, access.campusIds);
+	return sql`true`;
+}
+
+export async function getBusinessMetricDrilldownRecords(
+	input: BusinessMetricDrilldownInput,
+): Promise<{
+	items: BusinessMetricDrilldownRecord[];
+	nextCursor: { occurredAt: Date; id: string } | null;
+}> {
+	const pageSize = input.limit + 1;
+	let items: BusinessMetricDrilldownRecord[];
+
+	if (input.kind === "salesCycles") {
+		const rows = await db
+			.select({
+				id: leadMilestoneEvent.id,
+				occurredAt: leadMilestoneEvent.occurredAt,
+				outcome: leadMilestoneEvent.kind,
+				attributionName: leadMilestoneEvent.attributionNameSnapshot,
+			})
+			.from(leadMilestoneEvent)
+			.where(
+				and(
+					eq(leadMilestoneEvent.organizationId, input.organizationId),
+					gte(leadMilestoneEvent.occurredAt, input.from),
+					lt(leadMilestoneEvent.occurredAt, input.to),
+					inArray(leadMilestoneEvent.kind, ["converted", "lost"]),
+					drilldownCampusFilter(
+						input.campusAccess,
+						leadMilestoneEvent.campusId,
+					),
+					input.consultantUserId
+						? eq(leadMilestoneEvent.attributionUserId, input.consultantUserId)
+						: sql`true`,
+					drilldownCursorFilter(
+						leadMilestoneEvent.occurredAt,
+						leadMilestoneEvent.id,
+						input.cursor,
+					),
+				),
+			)
+			.orderBy(desc(leadMilestoneEvent.occurredAt), desc(leadMilestoneEvent.id))
+			.limit(pageSize);
+		items = rows.map((row) => ({
+			kind: "salesCycle",
+			id: row.id,
+			occurredAt: row.occurredAt,
+			outcome: row.outcome === "converted" ? "converted" : "lost",
+			attributionLabel: input.includeAttributionNames
+				? (row.attributionName ?? "未分配")
+				: "本人",
+		}));
+	} else if (input.kind === "attendanceLessons") {
+		const rows = await db
+			.select({
+				id: lesson.id,
+				occurredAt: lesson.startsAt,
+				present: sql<number>`count(*) filter (where ${attendance.status} = 'present')::int`,
+				late: sql<number>`count(*) filter (where ${attendance.status} = 'late')::int`,
+				absent: sql<number>`count(*) filter (where ${attendance.status} = 'absent')::int`,
+				leave: sql<number>`count(*) filter (where ${attendance.status} = 'leave')::int`,
+			})
+			.from(attendance)
+			.innerJoin(lesson, eq(lesson.id, attendance.lessonId))
+			.innerJoin(teacher, eq(teacher.id, lesson.teacherId))
+			.where(
+				and(
+					eq(lesson.organizationId, input.organizationId),
+					eq(teacher.organizationId, input.organizationId),
+					eq(lesson.status, "completed"),
+					gte(lesson.startsAt, input.from),
+					lt(lesson.startsAt, input.to),
+					drilldownCampusFilter(input.campusAccess, lesson.campusId),
+					input.teacherUserId
+						? eq(teacher.userId, input.teacherUserId)
+						: sql`true`,
+					drilldownCursorFilter(lesson.startsAt, lesson.id, input.cursor),
+					sql`not exists (
+						select 1 from makeup_lesson drill_makeup
+						join enrollment drill_enrollment
+							on drill_enrollment.id = drill_makeup.source_enrollment_id
+							and drill_enrollment.organization_id = ${input.organizationId}
+						where drill_makeup.organization_id = ${input.organizationId}
+							and drill_makeup.target_lesson_id = ${lesson.id}
+							and drill_enrollment.student_id = ${attendance.studentId}
+					)`,
+				),
+			)
+			.groupBy(lesson.id, lesson.startsAt)
+			.orderBy(desc(lesson.startsAt), desc(lesson.id))
+			.limit(pageSize);
+		items = rows.map((row) => ({
+			kind: "attendanceLesson",
+			...row,
+		}));
+	} else if (input.kind === "consumptionLessons") {
+		const rows = await db
+			.select({
+				id: lesson.id,
+				occurredAt: lesson.startsAt,
+				consumedLessonCount: sql<number>`count(*)::int`,
+				lateConsumptionCount: sql<number>`count(*) filter (where ${lessonConsumption.consumedAt} > ${lesson.endsAt} + interval '24 hours')::int`,
+			})
+			.from(lessonConsumption)
+			.innerJoin(lesson, eq(lesson.id, lessonConsumption.lessonId))
+			.innerJoin(teacher, eq(teacher.id, lesson.teacherId))
+			.where(
+				and(
+					eq(lessonConsumption.organizationId, input.organizationId),
+					eq(lesson.organizationId, input.organizationId),
+					eq(teacher.organizationId, input.organizationId),
+					eq(lesson.status, "completed"),
+					gte(lesson.startsAt, input.from),
+					lt(lesson.startsAt, input.to),
+					drilldownCampusFilter(input.campusAccess, lesson.campusId),
+					input.teacherUserId
+						? eq(teacher.userId, input.teacherUserId)
+						: sql`true`,
+					drilldownCursorFilter(lesson.startsAt, lesson.id, input.cursor),
+				),
+			)
+			.groupBy(lesson.id, lesson.startsAt)
+			.orderBy(desc(lesson.startsAt), desc(lesson.id))
+			.limit(pageSize);
+		items = rows.map((row) => ({
+			kind: "consumptionLesson",
+			...row,
+		}));
+	} else {
+		const rows = await db
+			.select({
+				id: renewalOpportunity.id,
+				enrollmentId: renewalOpportunity.enrollmentId,
+				occurredAt: renewalOpportunity.triggeredAt,
+				conversionId: renewalOpportunityConversion.id,
+				convertedAt: renewalOpportunityConversion.convertedAt,
+				renewalAmountInCents: enrollmentRenewal.amountInCents,
+				renewalLessonCount: enrollmentRenewal.addedLessons,
+			})
+			.from(renewalOpportunity)
+			.leftJoin(
+				renewalOpportunityConversion,
+				and(
+					eq(renewalOpportunityConversion.opportunityId, renewalOpportunity.id),
+					eq(renewalOpportunityConversion.organizationId, input.organizationId),
+				),
+			)
+			.leftJoin(
+				enrollmentRenewal,
+				and(
+					eq(enrollmentRenewal.id, renewalOpportunityConversion.renewalId),
+					eq(enrollmentRenewal.organizationId, input.organizationId),
+				),
+			)
+			.where(
+				and(
+					eq(renewalOpportunity.organizationId, input.organizationId),
+					gte(renewalOpportunity.triggeredAt, input.from),
+					lt(renewalOpportunity.triggeredAt, input.to),
+					drilldownCampusFilter(
+						input.campusAccess,
+						renewalOpportunity.campusId,
+					),
+					drilldownCursorFilter(
+						renewalOpportunity.triggeredAt,
+						renewalOpportunity.id,
+						input.cursor,
+					),
+				),
+			)
+			.orderBy(
+				desc(renewalOpportunity.triggeredAt),
+				desc(renewalOpportunity.id),
+			)
+			.limit(pageSize);
+		const enrollmentIds = [...new Set(rows.map((row) => row.enrollmentId))];
+		const lifecycleEvents =
+			enrollmentIds.length === 0
+				? []
+				: await db
+						.select({
+							enrollmentId: enrollmentLifecycleEvent.enrollmentId,
+							kind: enrollmentLifecycleEvent.kind,
+							effectiveAt: enrollmentLifecycleEvent.effectiveAt,
+						})
+						.from(enrollmentLifecycleEvent)
+						.where(
+							and(
+								eq(
+									enrollmentLifecycleEvent.organizationId,
+									input.organizationId,
+								),
+								inArray(enrollmentLifecycleEvent.enrollmentId, enrollmentIds),
+								inArray(enrollmentLifecycleEvent.kind, ["frozen", "resumed"]),
+							),
+						)
+						.orderBy(
+							asc(enrollmentLifecycleEvent.effectiveAt),
+							asc(enrollmentLifecycleEvent.id),
+						);
+		const eventsByEnrollment = new Map<string, typeof lifecycleEvents>();
+		for (const event of lifecycleEvents) {
+			const current = eventsByEnrollment.get(event.enrollmentId) ?? [];
+			current.push(event);
+			eventsByEnrollment.set(event.enrollmentId, current);
+		}
+		items = rows.map((row) => {
+			const evaluation = evaluateRenewalOpportunity({
+				triggeredAt: row.occurredAt,
+				convertedAt: row.conversionId === null ? null : row.convertedAt,
+				asOf: input.asOf,
+				events: eventsByEnrollment.get(row.enrollmentId) ?? [],
+			});
+			return {
+				kind: "renewalOpportunity" as const,
+				id: row.id,
+				occurredAt: row.occurredAt,
+				status: evaluation.status,
+				remainingObservationDays: evaluation.remainingObservationDays,
+				renewalAmountInCents:
+					evaluation.status === "succeeded"
+						? (row.renewalAmountInCents ?? 0)
+						: 0,
+				renewalLessonCount:
+					evaluation.status === "succeeded" ? (row.renewalLessonCount ?? 0) : 0,
+			};
+		});
+	}
+
+	const hasNextPage = items.length > input.limit;
+	const pageItems = hasNextPage ? items.slice(0, input.limit) : items;
+	const lastItem = pageItems.at(-1);
+	return {
+		items: pageItems,
+		nextCursor:
+			hasNextPage && lastItem
+				? { occurredAt: lastItem.occurredAt, id: lastItem.id }
+				: null,
 	};
 }
