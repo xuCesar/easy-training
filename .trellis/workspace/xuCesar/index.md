@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
+- **Total Sessions**: 25
 - **Last Active**: 2026-07-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~866 | Active |
+| `journal-1.md` | ~900 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-07-22 | 完成 P2 学员批量操作 | `7144adf` | `develop` |
 | 24 | 2026-07-22 | 完成 P2 全局搜索与跨模块跳转 | `f3b6728` | `develop` |
 | 23 | 2026-07-22 | 完成 P2 运营任务与提醒 | `cce8127`, `12dfaad` | `develop` |
 | 22 | 2026-07-22 | 同步 P1 能力文档与路线图状态 | `38bf185` | `develop` |

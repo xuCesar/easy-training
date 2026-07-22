@@ -864,3 +864,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: 完成 P2 学员批量操作
+
+**Date**: 2026-07-22
+**Task**: 完成 P2 学员批量操作
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+交付学员负责人和版本、创建型 CSV 导入与受限导出、负责人/标签原子批量、明确报名的班级原子批量；完成权限、幂等、审计、容量和移动端验证，关闭 GitHub #33-#36 并更新路线图 #6。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7144adf` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
