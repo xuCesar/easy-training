@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const BUSINESS_METRIC_CONTRACT_VERSION = "1" as const;
 export const BUSINESS_METRIC_DEFINITION_VERSION = "2026-07-01" as const;
+export const FINANCIAL_METRIC_DEFINITION_VERSION = "2026-07-23" as const;
 export const BUSINESS_METRIC_TIMEZONE = "Asia/Shanghai" as const;
 
 export const businessMetricRangePresetSchema = z.enum([
@@ -162,6 +163,66 @@ export const businessMetricRenewalResultSchema =
 		data: businessMetricRenewalDataSchema,
 	});
 
+export const financialMetricDataQualitySchema = z.object({
+	missingAttributionCount: z.number().int().nonnegative(),
+	missingNameSnapshotCount: z.number().int().nonnegative(),
+	missingFinancialFactCount: z.number().int().nonnegative(),
+	adjustmentChainAnomalyCount: z.number().int().nonnegative(),
+	chronologyAnomalyCount: z.number().int().nonnegative(),
+	settlementAnomalyCount: z.number().int().nonnegative(),
+	scopeCoverageIncomplete: z.boolean(),
+});
+
+export const financialMetricTrendPointSchema = z.object({
+	bucketStart: z.iso.datetime({ offset: true }),
+	paymentsInCents: z.number().int().nonnegative(),
+	reversalsInCents: z.number().int().nonnegative(),
+	refundsInCents: z.number().int().nonnegative(),
+	netReceiptsInCents: z.number().int(),
+});
+
+export const financialMetricAgingBucketSchema = z.object({
+	kind: z.enum([
+		"notDue",
+		"overdue1To30",
+		"overdue31To60",
+		"overdue61To90",
+		"overdueOver90",
+	]),
+	amountInCents: z.number().int().nonnegative(),
+	invoiceCount: z.number().int().nonnegative(),
+});
+
+export const businessMetricFinancialDataSchema = z.object({
+	netReceiptsInCents: z.number().int(),
+	paymentsInCents: z.number().int().nonnegative(),
+	reversalsInCents: z.number().int().nonnegative(),
+	refundsInCents: z.number().int().nonnegative(),
+	comparisonNetReceiptsInCents: z.number().int(),
+	trend: z.array(financialMetricTrendPointSchema),
+	cohortCollectionRate: businessMetricRatioSchema,
+	comparisonCohortCollectionRate: businessMetricRatioSchema,
+	matureCohortInvoiceCount: z.number().int().nonnegative(),
+	immatureCohortInvoiceCount: z.number().int().nonnegative(),
+	zeroAmountCohortInvoiceCount: z.number().int().nonnegative(),
+	minimumRemainingObservationDays: z.number().int().nonnegative().nullable(),
+	agingSnapshotAt: z.iso.datetime({ offset: true }),
+	agingBuckets: z.array(financialMetricAgingBucketSchema),
+	agingTotalInCents: z.number().int().nonnegative(),
+});
+
+export const businessMetricFinancialResultSchema = z.object({
+	contractVersion: z.literal(BUSINESS_METRIC_CONTRACT_VERSION),
+	definitionVersion: z.literal(FINANCIAL_METRIC_DEFINITION_VERSION),
+	timezone: z.literal(BUSINESS_METRIC_TIMEZONE),
+	asOf: z.iso.datetime({ offset: true }),
+	range: resolvedBusinessMetricRangeSchema,
+	comparisonRange: resolvedBusinessMetricRangeSchema,
+	granularity: businessMetricGranularitySchema,
+	dataQuality: financialMetricDataQualitySchema,
+	data: businessMetricFinancialDataSchema,
+});
+
 export const businessMetricDrilldownItemSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("salesCycle"),
@@ -230,6 +291,9 @@ export type BusinessMetricRatio = z.infer<typeof businessMetricRatioSchema>;
 export type BusinessMetricDataQuality = z.infer<
 	typeof businessMetricDataQualitySchema
 >;
+export type FinancialMetricDataQuality = z.infer<
+	typeof financialMetricDataQualitySchema
+>;
 export type BusinessMetricSalesResult = z.infer<
 	typeof businessMetricSalesResultSchema
 >;
@@ -241,6 +305,9 @@ export type BusinessMetricConsumptionResult = z.infer<
 >;
 export type BusinessMetricRenewalResult = z.infer<
 	typeof businessMetricRenewalResultSchema
+>;
+export type BusinessMetricFinancialResult = z.infer<
+	typeof businessMetricFinancialResultSchema
 >;
 export type BusinessMetricDrilldownResult = z.infer<
 	typeof businessMetricDrilldownResultSchema
