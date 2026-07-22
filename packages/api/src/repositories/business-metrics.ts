@@ -355,31 +355,45 @@ export async function getBusinessMetricFinancialDrilldown(
 ): Promise<BusinessMetricFinancialDrilldownResult> {
 	assertFinancialAccess(scope.role);
 	const { window, base } = envelope(scope, input, now);
-	const result = await withFinancialQueryErrors(() =>
-		getFinancialReceiptEventPage({
-			scope: {
-				organizationId: scope.organizationId,
-				campusAccess: scope.campusAccess,
-			},
-			from: new Date(window.range.from),
-			to: new Date(window.range.to),
-			limit: input.limit,
-			cursor: input.cursor
-				? {
-						occurredAt: new Date(input.cursor.occurredAt),
-						id: input.cursor.id,
-					}
-				: undefined,
-		}),
+	const [result, quality] = await withFinancialQueryErrors(() =>
+		Promise.all([
+			getFinancialReceiptEventPage({
+				scope: {
+					organizationId: scope.organizationId,
+					campusAccess: scope.campusAccess,
+				},
+				from: new Date(window.range.from),
+				to: new Date(window.range.to),
+				limit: input.limit,
+				cursor: input.cursor
+					? {
+							occurredAt: new Date(input.cursor.occurredAt),
+							id: input.cursor.id,
+						}
+					: undefined,
+			}),
+			getFinancialMetricQuality({
+				scope: {
+					organizationId: scope.organizationId,
+					campusAccess: scope.campusAccess,
+				},
+				from: new Date(window.range.from),
+				to: new Date(window.range.to),
+			}),
+		]),
 	);
-	const missingAttributionCount = 0;
+	const isOrganizationWide = scope.campusAccess.kind === "all";
 	return {
 		...base,
 		definitionVersion: FINANCIAL_METRIC_DEFINITION_VERSION,
 		dataQuality: {
-			missingAttributionCount,
+			missingAttributionCount: isOrganizationWide
+				? quality.missingAttributionCount
+				: 0,
 			scopeCoverageIncomplete:
-				scope.campusAccess.kind !== "all" && missingAttributionCount > 0,
+				!isOrganizationWide &&
+				(quality.missingAttributionCount > 0 ||
+					quality.missingFinancialFactCount > 0),
 		},
 		items: result.events.map((event) => ({
 			kind: "financialEvent" as const,
@@ -411,28 +425,44 @@ export async function getBusinessMetricFinancialAgingDrilldown(
 	const snapshotAt = new Date(
 		Math.min(new Date(window.range.to).getTime(), now.getTime()),
 	);
-	const result = await withFinancialQueryErrors(() =>
-		getFinancialAgingInvoicePage({
-			scope: {
-				organizationId: scope.organizationId,
-				campusAccess: scope.campusAccess,
-			},
-			snapshotAt,
-			limit: input.limit,
-			cursor: input.cursor
-				? {
-						occurredAt: new Date(input.cursor.occurredAt),
-						id: input.cursor.id,
-					}
-				: undefined,
-		}),
+	const [result, quality] = await withFinancialQueryErrors(() =>
+		Promise.all([
+			getFinancialAgingInvoicePage({
+				scope: {
+					organizationId: scope.organizationId,
+					campusAccess: scope.campusAccess,
+				},
+				snapshotAt,
+				limit: input.limit,
+				cursor: input.cursor
+					? {
+							occurredAt: new Date(input.cursor.occurredAt),
+							id: input.cursor.id,
+						}
+					: undefined,
+			}),
+			getFinancialMetricQuality({
+				scope: {
+					organizationId: scope.organizationId,
+					campusAccess: scope.campusAccess,
+				},
+				from: new Date(window.range.from),
+				to: new Date(window.range.to),
+			}),
+		]),
 	);
+	const isOrganizationWide = scope.campusAccess.kind === "all";
 	return {
 		...base,
 		definitionVersion: FINANCIAL_METRIC_DEFINITION_VERSION,
 		dataQuality: {
-			missingAttributionCount: 0,
-			scopeCoverageIncomplete: false,
+			missingAttributionCount: isOrganizationWide
+				? quality.missingAttributionCount
+				: 0,
+			scopeCoverageIncomplete:
+				!isOrganizationWide &&
+				(quality.missingAttributionCount > 0 ||
+					quality.missingFinancialFactCount > 0),
 		},
 		items: result.items.map((item) => ({
 			kind: "financialAgingInvoice" as const,
