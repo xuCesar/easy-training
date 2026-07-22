@@ -3,7 +3,7 @@
   "name": "p2-operation-tasks",
   "title": "P2 运营任务与提醒",
   "description": "完成运营任务创建、分配、完成、改期、取消、审计与站内提醒闭环。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",
