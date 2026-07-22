@@ -223,6 +223,28 @@ export const businessMetricFinancialResultSchema = z.object({
 	data: businessMetricFinancialDataSchema,
 });
 
+export const businessMetricFinancialReceiptResultSchema = z.object({
+	contractVersion: z.literal(BUSINESS_METRIC_CONTRACT_VERSION),
+	definitionVersion: z.literal(FINANCIAL_METRIC_DEFINITION_VERSION),
+	timezone: z.literal(BUSINESS_METRIC_TIMEZONE),
+	asOf: z.iso.datetime({ offset: true }),
+	range: resolvedBusinessMetricRangeSchema,
+	comparisonRange: resolvedBusinessMetricRangeSchema,
+	granularity: businessMetricGranularitySchema,
+	dataQuality: z.object({
+		missingAttributionCount: z.number().int().nonnegative(),
+		scopeCoverageIncomplete: z.boolean(),
+	}),
+	data: z.object({
+		paymentsInCents: z.number().int().nonnegative(),
+		reversalsInCents: z.number().int().nonnegative(),
+		refundsInCents: z.number().int().nonnegative(),
+		netReceiptsInCents: z.number().int(),
+		comparisonNetReceiptsInCents: z.number().int(),
+		trend: z.array(financialMetricTrendPointSchema),
+	}),
+});
+
 export const businessMetricDrilldownItemSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("salesCycle"),
@@ -308,6 +330,9 @@ export type BusinessMetricRenewalResult = z.infer<
 >;
 export type BusinessMetricFinancialResult = z.infer<
 	typeof businessMetricFinancialResultSchema
+>;
+export type BusinessMetricFinancialReceiptResult = z.infer<
+	typeof businessMetricFinancialReceiptResultSchema
 >;
 export type BusinessMetricDrilldownResult = z.infer<
 	typeof businessMetricDrilldownResultSchema

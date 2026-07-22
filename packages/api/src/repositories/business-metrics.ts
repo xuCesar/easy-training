@@ -5,6 +5,7 @@ import {
 	getBusinessMetricRenewalRecord,
 	getBusinessMetricSalesRecord,
 } from "@easy-training/db/repositories/business-metrics";
+import { getFinancialReceiptRecord } from "@easy-training/db/repositories/financial-metrics";
 import { ORPCError } from "@orpc/server";
 
 import type { OrganizationRole } from "../authorization/training";
@@ -17,10 +18,12 @@ import {
 	type BusinessMetricDataQuality,
 	type BusinessMetricDrilldownInput,
 	type BusinessMetricDrilldownResult,
+	type BusinessMetricFinancialReceiptResult,
 	type BusinessMetricQueryInput,
 	type BusinessMetricRatio,
 	type BusinessMetricRenewalResult,
 	type BusinessMetricSalesResult,
+	FINANCIAL_METRIC_DEFINITION_VERSION,
 } from "../contracts/business-metrics";
 import {
 	BusinessMetricRangeError,
@@ -122,6 +125,63 @@ function assertRenewalAccess(role: OrganizationRole): void {
 			message: "当前角色无权读取续费经营指标。",
 		});
 	}
+}
+
+export async function getBusinessMetricFinancialReceipts(
+	scope: BusinessMetricScope,
+	input: BusinessMetricQueryInput,
+	now = new Date(),
+): Promise<BusinessMetricFinancialReceiptResult> {
+	if (
+		scope.role !== "owner" &&
+		scope.role !== "admin" &&
+		scope.role !== "campus_manager" &&
+		scope.role !== "finance"
+	) {
+		throw new ORPCError("FORBIDDEN", {
+			message: "当前角色无权读取财务经营指标。",
+		});
+	}
+	const { window, base } = envelope(scope, input, now);
+	const recordInput = {
+		scope: {
+			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
+		},
+		granularity: window.granularity,
+	};
+	const [record, comparison] = await Promise.all([
+		getFinancialReceiptRecord({
+			...recordInput,
+			from: new Date(window.range.from),
+			to: new Date(window.range.to),
+		}),
+		getFinancialReceiptRecord({
+			...recordInput,
+			from: new Date(window.comparisonRange.from),
+			to: new Date(window.comparisonRange.to),
+		}),
+	]);
+	return {
+		...base,
+		definitionVersion: FINANCIAL_METRIC_DEFINITION_VERSION,
+		dataQuality: {
+			missingAttributionCount: record.missingAttributionCount,
+			scopeCoverageIncomplete:
+				scope.campusAccess.kind !== "all" && record.missingAttributionCount > 0,
+		},
+		data: {
+			paymentsInCents: record.paymentsInCents,
+			reversalsInCents: record.reversalsInCents,
+			refundsInCents: record.refundsInCents,
+			netReceiptsInCents: record.netReceiptsInCents,
+			comparisonNetReceiptsInCents: comparison.netReceiptsInCents,
+			trend: record.trend.map((point) => ({
+				...point,
+				bucketStart: new Date(point.bucketStart).toISOString(),
+			})),
+		},
+	};
 }
 
 export async function getBusinessMetricSales(
