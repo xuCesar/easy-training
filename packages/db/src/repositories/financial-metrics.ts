@@ -32,6 +32,102 @@ export type FinancialReceiptRecord = {
 	trend: FinancialReceiptTrendPoint[];
 	missingAttributionCount: number;
 };
+export type FinancialReceiptEvent = {
+	id: string;
+	kind: "payment" | "reversal" | "refund";
+	amountInCents: number;
+	occurredAt: Date;
+};
+
+export async function getFinancialReceiptEvents(input: {
+	scope: FinancialMetricScope;
+	from: Date;
+	to: Date;
+	limit: number;
+}): Promise<FinancialReceiptEvent[]> {
+	const filter = (column: typeof payment.receivedAt) => [
+		gte(column, input.from),
+		lt(column, input.to),
+	];
+	const [payments, reversals, refunds] = await Promise.all([
+		db
+			.select({
+				id: payment.id,
+				occurredAt: payment.receivedAt,
+				amountInCents: payment.amountInCents,
+			})
+			.from(payment)
+			.innerJoin(
+				invoiceMetricFact,
+				and(
+					eq(invoiceMetricFact.invoiceId, payment.invoiceId),
+					eq(invoiceMetricFact.organizationId, payment.organizationId),
+				),
+			)
+			.where(
+				and(
+					eq(payment.organizationId, input.scope.organizationId),
+					campusCondition(input.scope.campusAccess),
+					...filter(payment.receivedAt),
+				),
+			),
+		db
+			.select({
+				id: paymentReversal.id,
+				occurredAt: paymentReversal.reversedAt,
+				amountInCents: paymentReversal.amountInCents,
+			})
+			.from(paymentReversal)
+			.innerJoin(
+				invoiceMetricFact,
+				and(
+					eq(invoiceMetricFact.invoiceId, paymentReversal.invoiceId),
+					eq(invoiceMetricFact.organizationId, paymentReversal.organizationId),
+				),
+			)
+			.where(
+				and(
+					eq(paymentReversal.organizationId, input.scope.organizationId),
+					campusCondition(input.scope.campusAccess),
+					gte(paymentReversal.reversedAt, input.from),
+					lt(paymentReversal.reversedAt, input.to),
+				),
+			),
+		db
+			.select({
+				id: refund.id,
+				occurredAt: refund.refundedAt,
+				amountInCents: refund.amountInCents,
+			})
+			.from(refund)
+			.innerJoin(
+				invoiceMetricFact,
+				and(
+					eq(invoiceMetricFact.invoiceId, refund.invoiceId),
+					eq(invoiceMetricFact.organizationId, refund.organizationId),
+				),
+			)
+			.where(
+				and(
+					eq(refund.organizationId, input.scope.organizationId),
+					campusCondition(input.scope.campusAccess),
+					gte(refund.refundedAt, input.from),
+					lt(refund.refundedAt, input.to),
+				),
+			),
+	]);
+	return [
+		...payments.map((row) => ({ ...row, kind: "payment" as const })),
+		...reversals.map((row) => ({ ...row, kind: "reversal" as const })),
+		...refunds.map((row) => ({ ...row, kind: "refund" as const })),
+	]
+		.sort(
+			(a, b) =>
+				a.occurredAt.getTime() - b.occurredAt.getTime() ||
+				a.id.localeCompare(b.id),
+		)
+		.slice(0, input.limit);
+}
 
 export type FinancialCohortInvoice = {
 	issuedAt: Date;
