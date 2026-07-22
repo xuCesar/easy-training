@@ -508,6 +508,12 @@ const auditActionSchema = z.enum([
 	"receipt_generated",
 	"receipt_voided",
 	"receipt_reissued",
+	"operation_task_created",
+	"operation_task_updated",
+	"operation_task_claimed",
+	"operation_task_completed",
+	"operation_task_reopened",
+	"operation_task_cancelled",
 ]);
 
 export const auditEventListInputSchema = z.object({
@@ -538,6 +544,9 @@ const notificationSchema = z.object({
 		"lead_import_completed",
 		"lead_import_failed",
 		"invoice_follow_up",
+		"operation_task_assigned",
+		"operation_task_completed",
+		"operation_task_reminder",
 	]),
 	title: z.string(),
 	body: z.string(),
@@ -2394,6 +2403,65 @@ export type PreviewBulkLessonUpdateInput = z.infer<
 >;
 export type BulkUpdateLessonsInput = z.infer<
 	typeof bulkUpdateLessonsInputSchema
+>;
+
+const operationTaskModuleSchema = z.enum([
+	"enrollment",
+	"academic",
+	"finance",
+	"student_service",
+]);
+const operationTaskPrioritySchema = z.enum(["high", "medium", "low"]);
+const operationTaskStatusSchema = z.enum(["pending", "completed", "cancelled"]);
+const operationTaskSchema = z.object({
+	id: z.uuid(),
+	organizationId: z.uuid(),
+	campusId: z.uuid().nullable(),
+	createdByUserId: z.string().nullable(),
+	ownerUserId: z.string().nullable(),
+	title: z.string(),
+	description: z.string().nullable(),
+	module: operationTaskModuleSchema,
+	priority: operationTaskPrioritySchema,
+	dueAt: z.iso.datetime({ offset: true }),
+	remindBeforeMinutes: z.number().int().nullable(),
+	status: operationTaskStatusSchema,
+	version: z.number().int().positive(),
+	completedAt: z.iso.datetime({ offset: true }).nullable(),
+	completedByUserId: z.string().nullable(),
+	cancelledAt: z.iso.datetime({ offset: true }).nullable(),
+	cancelledByUserId: z.string().nullable(),
+	createdAt: z.iso.datetime({ offset: true }),
+	updatedAt: z.iso.datetime({ offset: true }),
+});
+
+export const createOperationTaskInputSchema = z.object({
+	campusId: z.uuid().nullable().default(null),
+	ownerUserId: z.string().min(1).max(255).nullable().optional(),
+	title: z.string().trim().min(1).max(200),
+	description: z.string().trim().max(4_000).nullable().default(null),
+	module: operationTaskModuleSchema,
+	priority: operationTaskPrioritySchema.default("medium"),
+	dueAt: z.iso.datetime({ offset: true }),
+	remindBeforeMinutes: z
+		.number()
+		.int()
+		.min(5)
+		.max(10_080)
+		.nullable()
+		.default(null),
+});
+export const operationTaskActionInputSchema = z.object({
+	id: z.uuid(),
+	expectedVersion: z.number().int().positive(),
+});
+export const operationTaskMutationResultSchema = operationTaskSchema;
+export type OperationTask = z.infer<typeof operationTaskSchema>;
+export type CreateOperationTaskInput = z.infer<
+	typeof createOperationTaskInputSchema
+>;
+export type OperationTaskActionInput = z.infer<
+	typeof operationTaskActionInputSchema
 >;
 
 const dashboardFollowUpSchema = z.object({

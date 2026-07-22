@@ -52,6 +52,7 @@ import {
 	createMakeupLessonInputSchema,
 	createManualInvoiceInputSchema,
 	createManualInvoiceResultSchema,
+	createOperationTaskInputSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
 	createPaymentReversalInputSchema,
@@ -113,6 +114,8 @@ import {
 	mergeStudentsResultSchema,
 	notificationListInputSchema,
 	notificationListResultSchema,
+	operationTaskActionInputSchema,
+	operationTaskMutationResultSchema,
 	pauseClassGroupInputSchema,
 	pauseClassGroupResultSchema,
 	previewBulkLessonUpdateInputSchema,
@@ -231,6 +234,13 @@ import {
 	listLeads,
 	updateLead,
 } from "../repositories/leads";
+import {
+	cancelOperationTaskForOrganization,
+	claimOperationTaskForOrganization,
+	completeOperationTaskForOrganization,
+	createOperationTaskForOrganization,
+	reopenOperationTaskForOrganization,
+} from "../repositories/operation-tasks";
 import {
 	confirmLeadImport,
 	getNotifications,
@@ -1804,6 +1814,70 @@ export const appRouter = {
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
 								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+			},
+		},
+		operations: {
+			tasks: {
+				create: organizationProcedure
+					.input(createOperationTaskInputSchema)
+					.output(operationTaskMutationResultSchema)
+					.handler(({ context, input }) =>
+						createOperationTaskForOrganization(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+							},
+							input,
+						),
+					),
+				claim: organizationProcedure
+					.input(operationTaskActionInputSchema)
+					.output(operationTaskMutationResultSchema)
+					.handler(({ context, input }) =>
+						claimOperationTaskForOrganization(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+							},
+							input,
+						),
+					),
+				complete: organizationProcedure
+					.input(operationTaskActionInputSchema)
+					.output(operationTaskMutationResultSchema)
+					.handler(({ context, input }) =>
+						completeOperationTaskForOrganization(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+							},
+							input,
+						),
+					),
+				reopen: organizationProcedure
+					.input(operationTaskActionInputSchema)
+					.output(operationTaskMutationResultSchema)
+					.handler(({ context, input }) =>
+						reopenOperationTaskForOrganization(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+							},
+							input,
+						),
+					),
+				cancel: organizationProcedure
+					.input(operationTaskActionInputSchema)
+					.output(operationTaskMutationResultSchema)
+					.handler(({ context, input }) =>
+						cancelOperationTaskForOrganization(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
 							},
 							input,
 						),

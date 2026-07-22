@@ -18,6 +18,8 @@ export * from "./repositories/enrollment-registration";
 export * from "./repositories/finance";
 export * from "./repositories/global-search";
 export * from "./repositories/leads";
+export * from "./repositories/operation-task-access";
+export * from "./repositories/operation-tasks";
 export * from "./repositories/operations";
 export * from "./repositories/organization";
 export * from "./repositories/organization-management";

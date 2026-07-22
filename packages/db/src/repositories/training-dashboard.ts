@@ -222,6 +222,7 @@ export async function getDashboardTaskSummary(
 	`;
 	const filters = [
 		eq(operationTask.organizationId, input.organizationId),
+		eq(operationTask.status, "pending"),
 		isNull(operationTask.completedAt),
 		lt(operationTask.dueAt, input.nextDayStart),
 	];
