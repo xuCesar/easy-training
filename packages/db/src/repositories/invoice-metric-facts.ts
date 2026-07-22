@@ -21,11 +21,7 @@ export async function createNativeInvoiceMetricFact(
 		campusId: string;
 		campusNameSnapshot: string;
 		course: NativeCourseAttribution;
-		source:
-			| "lead_conversion"
-			| "independent_enrollment"
-			| "renewal"
-			| "manual";
+		source: "lead_conversion" | "independent_enrollment" | "renewal" | "manual";
 		occurredAt: Date;
 	},
 ): Promise<void> {
@@ -38,9 +34,7 @@ export async function createNativeInvoiceMetricFact(
 		courseId: input.course.kind === "linked" ? input.course.courseId : null,
 		courseAttributionKind: input.course.kind,
 		courseNameSnapshot:
-			input.course.kind === "linked"
-				? input.course.courseNameSnapshot
-				: null,
+			input.course.kind === "linked" ? input.course.courseNameSnapshot : null,
 		source: input.source,
 		provenance: "native",
 		occurredAt: input.occurredAt,

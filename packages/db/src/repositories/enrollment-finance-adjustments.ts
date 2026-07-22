@@ -19,8 +19,8 @@ import {
 } from "../schema";
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
-import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import { getCurrentFinanceWriteCampusAccess } from "./finance-access";
+import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import type { CampusAccess } from "./organization";
 
 export type EnrollmentFinanceAdjustmentErrorCode =

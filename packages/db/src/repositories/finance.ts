@@ -32,12 +32,12 @@ import {
 	startArrearsCycleIfNeeded,
 } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
-import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import { updateEnrollmentPaidAmount } from "./enrollment-finance-adjustments";
 import {
 	type FinanceTransaction,
 	getCurrentFinanceWriteCampusAccess,
 } from "./finance-access";
+import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import type { CampusAccess } from "./organization";
 import {
 	listPaymentReversalRecords,
