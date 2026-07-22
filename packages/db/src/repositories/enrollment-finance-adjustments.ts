@@ -19,6 +19,7 @@ import {
 } from "../schema";
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
+import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import { getCurrentFinanceWriteCampusAccess } from "./finance-access";
 import type { CampusAccess } from "./organization";
 
@@ -308,11 +309,28 @@ export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 					id: enrollment.id,
 					studentId: enrollment.studentId,
 					campusId: student.campusId,
+					campusName: campus.name,
+					courseId: enrollment.courseId,
+					courseName: course.name,
 					remainingLessons: enrollment.remainingLessons,
 					status: enrollment.status,
 				})
 				.from(enrollment)
 				.innerJoin(student, eq(student.id, enrollment.studentId))
+				.innerJoin(
+					campus,
+					and(
+						eq(campus.id, student.campusId),
+						eq(campus.organizationId, input.organizationId),
+					),
+				)
+				.innerJoin(
+					course,
+					and(
+						eq(course.id, enrollment.courseId),
+						eq(course.organizationId, input.organizationId),
+					),
+				)
 				.where(
 					and(
 						eq(enrollment.id, input.enrollmentId),
@@ -355,6 +373,19 @@ export async function renewEnrollmentRecord(input: RenewalInput): Promise<{
 				.returning({ id: invoice.id });
 			if (!createdInvoice)
 				throw new EnrollmentFinanceAdjustmentError("RESOURCE_UNAVAILABLE");
+			await createNativeInvoiceMetricFact(tx, {
+				organizationId: input.organizationId,
+				invoiceId: createdInvoice.id,
+				campusId: source.campusId,
+				campusNameSnapshot: source.campusName,
+				course: {
+					kind: "linked",
+					courseId: source.courseId,
+					courseNameSnapshot: source.courseName,
+				},
+				source: "renewal",
+				occurredAt: renewedAt,
+			});
 			const [createdRenewal] = await tx
 				.insert(enrollmentRenewal)
 				.values({

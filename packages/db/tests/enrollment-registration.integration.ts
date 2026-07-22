@@ -16,6 +16,7 @@ import {
 	enrollmentPurchaseCycle,
 	enrollmentRegistration,
 	invoice,
+	invoiceMetricFact,
 	invoiceArrearsCycle,
 	invoiceArrearsEvent,
 	organization,
@@ -265,6 +266,23 @@ test("独立报名原子创建、重放、续费拦截与并发名额保护", as
 		assert.equal(createdEnrollment?.conversionOwnerUserId, ids.userId);
 		assert.equal(createdEnrollment?.conversionOwnerNameSnapshot, "报名操作人");
 		assert.equal(createdEnrollment?.conversionCampusId, ids.campusId);
+		const [registrationMetricFact] = await db
+			.select({
+				campusId: invoiceMetricFact.campusId,
+				campusNameSnapshot: invoiceMetricFact.campusNameSnapshot,
+				courseId: invoiceMetricFact.courseId,
+				courseNameSnapshot: invoiceMetricFact.courseNameSnapshot,
+				source: invoiceMetricFact.source,
+			})
+			.from(invoiceMetricFact)
+			.where(eq(invoiceMetricFact.invoiceId, result.invoiceId));
+		assert.deepEqual(registrationMetricFact, {
+			campusId: ids.campusId,
+			campusNameSnapshot: "报名校区",
+			courseId: ids.courseId,
+			courseNameSnapshot: "报名课程",
+			source: "independent_enrollment",
+		});
 		const [createdRegistration] = await db
 			.select({
 				source: enrollmentRegistration.source,

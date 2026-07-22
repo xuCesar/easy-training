@@ -18,7 +18,11 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-23-p2-resource-utilization",
+    "07-23-p2-management-comparison-ui",
+    "07-23-p2-financial-analytics"
+  ],
   "parent": "07-22-p2-operations-analytics",
   "relatedFiles": [],
   "notes": "",

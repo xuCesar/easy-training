@@ -49,6 +49,7 @@ import {
 	enrollmentRenewal,
 	enrollmentTransfer,
 	invoice,
+	invoiceMetricFact,
 	invoiceAdjustment,
 	invoiceArrearsCycle,
 	invoiceArrearsEvent,
@@ -919,6 +920,21 @@ test("手工开单与账单调整保持幂等、版本和报名金额隔离", as
 		);
 		assert.equal(replay.invoiceId, created.invoiceId);
 		assert.equal(replay.replayed, true);
+		const [manualMetricFact] = await db
+			.select({
+				campusId: invoiceMetricFact.campusId,
+				courseId: invoiceMetricFact.courseId,
+				courseAttributionKind: invoiceMetricFact.courseAttributionKind,
+				source: invoiceMetricFact.source,
+			})
+			.from(invoiceMetricFact)
+			.where(eq(invoiceMetricFact.invoiceId, created.invoiceId));
+		assert.deepEqual(manualMetricFact, {
+			campusId: ids.campusA,
+			courseId: ids.courseA,
+			courseAttributionKind: "linked",
+			source: "manual",
+		});
 		await expectOrpcError(
 			createManualInvoice(financeScope, {
 				...createInput,
@@ -1201,6 +1217,19 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 			.from(invoice)
 			.where(eq(invoice.id, renewal.invoiceId));
 		assert.equal(renewalInvoices.length, 1);
+		const [renewalMetricFact] = await db
+			.select({
+				campusId: invoiceMetricFact.campusId,
+				courseId: invoiceMetricFact.courseId,
+				source: invoiceMetricFact.source,
+			})
+			.from(invoiceMetricFact)
+			.where(eq(invoiceMetricFact.invoiceId, renewal.invoiceId));
+		assert.deepEqual(renewalMetricFact, {
+			campusId: ids.campusA,
+			courseId: ids.courseA,
+			source: "renewal",
+		});
 		const [renewalRecord] = await db
 			.select({ id: enrollmentRenewal.id })
 			.from(enrollmentRenewal)

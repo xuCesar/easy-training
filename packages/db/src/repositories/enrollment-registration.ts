@@ -21,6 +21,7 @@ import {
 } from "../schema";
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
+import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import type { CampusAccess } from "./organization";
 import {
 	assertEligibleStudentOwner,
@@ -574,6 +575,7 @@ export async function createIndependentEnrollmentRecord(
 			const [courseRecord] = await tx
 				.select({
 					id: course.id,
+					name: course.name,
 					isActive: course.isActive,
 					listPriceInCents: course.listPriceInCents,
 					lessonsPerPackage: course.lessonsPerPackage,
@@ -846,6 +848,32 @@ export async function createIndependentEnrollmentRecord(
 				.returning({ id: invoice.id });
 			if (!createdInvoice)
 				throw new EnrollmentRegistrationError("RESOURCE_UNAVAILABLE");
+			const [metricCampus] = await tx
+				.select({ name: campus.name })
+				.from(campus)
+				.where(
+					and(
+						eq(campus.id, studentCampusId),
+						eq(campus.organizationId, input.organizationId),
+					),
+				)
+				.limit(1)
+				.for("key share");
+			if (!metricCampus)
+				throw new EnrollmentRegistrationError("CAMPUS_NOT_FOUND");
+			await createNativeInvoiceMetricFact(tx, {
+				organizationId: input.organizationId,
+				invoiceId: createdInvoice.id,
+				campusId: studentCampusId,
+				campusNameSnapshot: metricCampus.name,
+				course: {
+					kind: "linked",
+					courseId: courseRecord.id,
+					courseNameSnapshot: courseRecord.name,
+				},
+				source: "independent_enrollment",
+				occurredAt: registrationOccurredAt,
+			});
 
 			const [registration] = await tx
 				.insert(enrollmentRegistration)

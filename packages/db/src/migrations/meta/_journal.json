@@ -239,6 +239,13 @@
       "when": 1784730925568,
       "tag": "0033_big_baron_strucker",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1784739616038,
+      "tag": "0034_special_harry_osborn",
+      "breakpoints": true
     }
   ]
 }

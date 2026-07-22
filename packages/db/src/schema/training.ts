@@ -4,6 +4,7 @@ import {
 	boolean,
 	check,
 	date,
+	foreignKey,
 	index,
 	integer,
 	jsonb,
@@ -137,6 +138,24 @@ export const leadMilestoneKind = pgEnum("lead_milestone_kind", [
 export const metricFactProvenance = pgEnum("metric_fact_provenance", [
 	"native",
 	"migrated",
+]);
+export const invoiceMetricCampusAttributionKind = pgEnum(
+	"invoice_metric_campus_attribution_kind",
+	["linked", "unknown"],
+);
+export const invoiceMetricCourseAttributionKind = pgEnum(
+	"invoice_metric_course_attribution_kind",
+	["linked", "not_applicable", "unknown"],
+);
+export const invoiceMetricProvenance = pgEnum("invoice_metric_provenance", [
+	"native",
+	"derived",
+]);
+export const invoiceMetricSource = pgEnum("invoice_metric_source", [
+	"lead_conversion",
+	"independent_enrollment",
+	"renewal",
+	"manual",
 ]);
 export const studentStatus = pgEnum("student_status", [
 	"active",
@@ -380,6 +399,7 @@ export const campus = pgTable(
 	},
 	(table) => [
 		uniqueIndex("campus_org_code_uidx").on(table.organizationId, table.code),
+		uniqueIndex("campus_org_id_uidx").on(table.organizationId, table.id),
 		index("campus_org_idx").on(table.organizationId),
 	],
 );
@@ -619,6 +639,7 @@ export const course = pgTable(
 	},
 	(table) => [
 		uniqueIndex("course_org_code_uidx").on(table.organizationId, table.code),
+		uniqueIndex("course_org_id_uidx").on(table.organizationId, table.id),
 		index("course_org_idx").on(table.organizationId),
 		index("course_org_active_name_idx").on(
 			table.organizationId,
@@ -1999,12 +2020,100 @@ export const invoice = pgTable(
 	},
 	(table) => [
 		check("invoice_version_positive_check", sql`${table.version} > 0`),
+		uniqueIndex("invoice_org_id_uidx").on(table.organizationId, table.id),
 		index("invoice_org_status_due_idx").on(
 			table.organizationId,
 			table.status,
 			table.dueDate,
 		),
 		index("invoice_student_idx").on(table.studentId),
+	],
+);
+
+/**
+ * 财务分析读取的账单发生时归属事实。该事实只在开单事务中创建，后续
+ * 学员转校、课程更名或账单投影更新均不得改写它。
+ */
+export const invoiceMetricFact = pgTable(
+	"invoice_metric_fact",
+	{
+		invoiceId: uuid("invoice_id").primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id"),
+		campusAttributionKind: invoiceMetricCampusAttributionKind(
+			"campus_attribution_kind",
+		).notNull(),
+		campusNameSnapshot: text("campus_name_snapshot"),
+		courseId: uuid("course_id"),
+		courseAttributionKind: invoiceMetricCourseAttributionKind(
+			"course_attribution_kind",
+		).notNull(),
+		courseNameSnapshot: text("course_name_snapshot"),
+		source: invoiceMetricSource("source").notNull(),
+		provenance: invoiceMetricProvenance("provenance").notNull(),
+		occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		foreignKey({
+			columns: [table.organizationId, table.invoiceId],
+			foreignColumns: [invoice.organizationId, invoice.id],
+			name: "invoice_metric_fact_org_invoice_fk",
+		}).onDelete("cascade"),
+		foreignKey({
+			columns: [table.organizationId, table.campusId],
+			foreignColumns: [campus.organizationId, campus.id],
+			name: "invoice_metric_fact_org_campus_fk",
+		}),
+		foreignKey({
+			columns: [table.organizationId, table.courseId],
+			foreignColumns: [course.organizationId, course.id],
+			name: "invoice_metric_fact_org_course_fk",
+		}),
+		check(
+			"invoice_metric_fact_campus_attribution_check",
+			sql`
+				(${table.campusAttributionKind} = 'linked'
+					and ${table.campusId} is not null
+					and ${table.campusNameSnapshot} is not null)
+				or (${table.campusAttributionKind} = 'unknown'
+					and ${table.campusId} is null
+					and ${table.campusNameSnapshot} is null)
+			`,
+		),
+		check(
+			"invoice_metric_fact_course_attribution_check",
+			sql`
+				(${table.courseAttributionKind} = 'linked'
+					and ${table.courseId} is not null
+					and ${table.courseNameSnapshot} is not null)
+				or (${table.courseAttributionKind} in ('not_applicable', 'unknown')
+					and ${table.courseId} is null
+					and ${table.courseNameSnapshot} is null)
+			`,
+		),
+		check(
+			"invoice_metric_fact_native_attribution_check",
+			sql`
+				${table.provenance} <> 'native'
+				or (${table.campusAttributionKind} = 'linked'
+					and ${table.courseAttributionKind} in ('linked', 'not_applicable'))
+			`,
+		),
+		uniqueIndex("invoice_metric_fact_org_invoice_uidx").on(
+			table.organizationId,
+			table.invoiceId,
+		),
+		index("invoice_metric_fact_org_campus_occurred_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.occurredAt,
+			table.invoiceId,
+		),
 	],
 );
 

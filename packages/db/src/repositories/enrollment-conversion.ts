@@ -18,6 +18,7 @@ import {
 	user,
 } from "../schema";
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
+import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import type { CampusAccess } from "./organization";
 import {
 	assertEligibleStudentOwner,
@@ -468,6 +469,7 @@ export async function convertLeadRecord(
 			const [courseRecord] = await tx
 				.select({
 					id: course.id,
+					name: course.name,
 					listPriceInCents: course.listPriceInCents,
 					lessonsPerPackage: course.lessonsPerPackage,
 				})
@@ -801,6 +803,33 @@ export async function convertLeadRecord(
 			if (!createdInvoice) {
 				throw new Error("Invoice creation did not return a record.");
 			}
+			const [metricCampus] = await tx
+				.select({ name: campus.name })
+				.from(campus)
+				.where(
+					and(
+						eq(campus.id, studentCampusId),
+						eq(campus.organizationId, input.organizationId),
+					),
+				)
+				.limit(1)
+				.for("key share");
+			if (!metricCampus) {
+				throw new EnrollmentConversionError("CAMPUS_NOT_FOUND");
+			}
+			await createNativeInvoiceMetricFact(tx, {
+				organizationId: input.organizationId,
+				invoiceId: createdInvoice.id,
+				campusId: studentCampusId,
+				campusNameSnapshot: metricCampus.name,
+				course: {
+					kind: "linked",
+					courseId: courseRecord.id,
+					courseNameSnapshot: courseRecord.name,
+				},
+				source: "lead_conversion",
+				occurredAt: conversionOccurredAt,
+			});
 			await startArrearsCycleIfNeeded(tx, {
 				organizationId: input.organizationId,
 				invoiceId: createdInvoice.id,

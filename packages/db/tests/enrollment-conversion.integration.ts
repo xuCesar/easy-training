@@ -18,6 +18,7 @@ import {
 	course,
 	enrollment,
 	invoice,
+	invoiceMetricFact,
 	invoiceArrearsCycle,
 	invoiceArrearsEvent,
 	lead,
@@ -638,6 +639,25 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 			.select()
 			.from(invoice)
 			.where(eq(invoice.id, existingResult.invoiceId));
+		const [conversionMetricFact] = await db
+			.select({
+				campusId: invoiceMetricFact.campusId,
+				campusAttributionKind: invoiceMetricFact.campusAttributionKind,
+				courseId: invoiceMetricFact.courseId,
+				courseAttributionKind: invoiceMetricFact.courseAttributionKind,
+				source: invoiceMetricFact.source,
+				provenance: invoiceMetricFact.provenance,
+			})
+			.from(invoiceMetricFact)
+			.where(eq(invoiceMetricFact.invoiceId, existingResult.invoiceId));
+		assert.deepEqual(conversionMetricFact, {
+			campusId: ids.campusA1,
+			campusAttributionKind: "linked",
+			courseId: ids.courseA,
+			courseAttributionKind: "linked",
+			source: "lead_conversion",
+			provenance: "native",
+		});
 		assert.deepEqual(
 			existingInvoice && {
 				organizationId: existingInvoice.organizationId,

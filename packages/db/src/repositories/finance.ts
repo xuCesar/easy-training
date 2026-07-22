@@ -32,6 +32,7 @@ import {
 	startArrearsCycleIfNeeded,
 } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
+import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import { updateEnrollmentPaidAmount } from "./enrollment-finance-adjustments";
 import {
 	type FinanceTransaction,
@@ -965,8 +966,19 @@ export async function createManualInvoiceRecord(
 				() => new FinanceError("MEMBER_FORBIDDEN"),
 			);
 			const [studentRecord] = await tx
-				.select({ id: student.id, campusId: student.campusId })
+				.select({
+					id: student.id,
+					campusId: student.campusId,
+					campusName: campus.name,
+				})
 				.from(student)
+				.innerJoin(
+					campus,
+					and(
+						eq(campus.id, student.campusId),
+						eq(campus.organizationId, input.organizationId),
+					),
+				)
 				.where(
 					and(
 						eq(student.id, input.studentId),
@@ -1002,13 +1014,23 @@ export async function createManualInvoiceRecord(
 				return { invoiceId: existing.invoiceId, replayed: true };
 			}
 
+			let linkedCourse: { id: string; name: string } | null = null;
 			if (input.enrollmentId) {
 				const [enrollmentRecord] = await tx
 					.select({
 						studentId: enrollment.studentId,
 						status: enrollment.status,
+						courseId: enrollment.courseId,
+						courseName: course.name,
 					})
 					.from(enrollment)
+					.innerJoin(
+						course,
+						and(
+							eq(course.id, enrollment.courseId),
+							eq(course.organizationId, input.organizationId),
+						),
+					)
 					.where(
 						and(
 							eq(enrollment.id, input.enrollmentId),
@@ -1029,6 +1051,10 @@ export async function createManualInvoiceRecord(
 				) {
 					throw new FinanceError("ENROLLMENT_NOT_LINKABLE");
 				}
+				linkedCourse = {
+					id: enrollmentRecord.courseId,
+					name: enrollmentRecord.courseName,
+				};
 			}
 
 			const operatorName = await getOperatorName(tx, input.operatorUserId);
@@ -1049,6 +1075,21 @@ export async function createManualInvoiceRecord(
 				})
 				.returning({ id: invoice.id });
 			if (!createdInvoice) throw new FinanceError("RESOURCE_UNAVAILABLE");
+			await createNativeInvoiceMetricFact(tx, {
+				organizationId: input.organizationId,
+				invoiceId: createdInvoice.id,
+				campusId: studentRecord.campusId,
+				campusNameSnapshot: studentRecord.campusName,
+				course: linkedCourse
+					? {
+							kind: "linked",
+							courseId: linkedCourse.id,
+							courseNameSnapshot: linkedCourse.name,
+						}
+					: { kind: "not_applicable" },
+				source: "manual",
+				occurredAt: new Date(),
+			});
 			const [creation] = await tx
 				.insert(manualInvoiceCreation)
 				.values({
