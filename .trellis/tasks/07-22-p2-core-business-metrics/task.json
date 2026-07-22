@@ -3,7 +3,7 @@
   "name": "p2-core-business-metrics",
   "title": "P2 核心经营指标",
   "description": "交付招生漏斗、顾问转化、到课、补课、消课与续费指标及稳定事实。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",
@@ -21,6 +21,9 @@
   "children": [],
   "parent": "07-22-p2-operations-analytics",
   "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "notes": "规划已完成，等待 Phase 1.4 激活复核；GitHub: #38，关联路线图 #6。",
+  "meta": {
+    "githubIssue": 38,
+    "resumePhase": "1.4"
+  }
 }
