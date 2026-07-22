@@ -115,6 +115,10 @@ import {
 	notificationListInputSchema,
 	notificationListResultSchema,
 	operationTaskActionInputSchema,
+	operationTaskAssigneeListInputSchema,
+	operationTaskAssigneeListResultSchema,
+	operationTaskListInputSchema,
+	operationTaskListResultSchema,
 	operationTaskMutationResultSchema,
 	pauseClassGroupInputSchema,
 	pauseClassGroupResultSchema,
@@ -172,6 +176,7 @@ import {
 	updateEnrollmentLifecycleResultSchema,
 	updateLeadInputSchema,
 	updateMemberInputSchema,
+	updateOperationTaskInputSchema,
 	updateScheduleRuleInputSchema,
 	updateScheduleRuleResultSchema,
 	updateStudentInputSchema,
@@ -239,7 +244,10 @@ import {
 	claimOperationTaskForOrganization,
 	completeOperationTaskForOrganization,
 	createOperationTaskForOrganization,
+	listOperationTaskAssigneesForOrganization,
+	listOperationTasksForOrganization,
 	reopenOperationTaskForOrganization,
+	updateOperationTaskForOrganization,
 } from "../repositories/operation-tasks";
 import {
 	confirmLeadImport,
@@ -1822,6 +1830,34 @@ export const appRouter = {
 		},
 		operations: {
 			tasks: {
+				list: organizationProcedure
+					.input(operationTaskListInputSchema)
+					.output(operationTaskListResultSchema)
+					.handler(({ context, input }) =>
+						listOperationTasksForOrganization(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				assignees: organizationProcedure
+					.input(operationTaskAssigneeListInputSchema)
+					.output(operationTaskAssigneeListResultSchema)
+					.handler(({ context, input }) =>
+						listOperationTaskAssigneesForOrganization(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
 				create: organizationProcedure
 					.input(createOperationTaskInputSchema)
 					.output(operationTaskMutationResultSchema)
@@ -1830,6 +1866,22 @@ export const appRouter = {
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				update: organizationProcedure
+					.input(updateOperationTaskInputSchema)
+					.output(operationTaskMutationResultSchema)
+					.handler(({ context, input }) =>
+						updateOperationTaskForOrganization(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
 							},
 							input,
 						),
@@ -1842,6 +1894,8 @@ export const appRouter = {
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
 							},
 							input,
 						),
@@ -1854,6 +1908,8 @@ export const appRouter = {
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
 							},
 							input,
 						),
@@ -1866,6 +1922,8 @@ export const appRouter = {
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
 							},
 							input,
 						),
@@ -1878,6 +1936,8 @@ export const appRouter = {
 							{
 								organizationId: context.organization.id,
 								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
 							},
 							input,
 						),

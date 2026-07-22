@@ -41,6 +41,7 @@ import {
 	ChevronsUpDownIcon,
 	ClipboardListIcon,
 	LayoutDashboardIcon,
+	ListTodoIcon,
 	LoaderCircleIcon,
 	MenuIcon,
 	ReceiptTextIcon,
@@ -79,6 +80,7 @@ const navigation = [
 		icon: LayoutDashboardIcon,
 		available: true,
 	},
+	{ to: "/tasks", label: "任务与提醒", icon: ListTodoIcon, available: true },
 	{ to: "/leads", label: "招生线索", icon: UsersRoundIcon, available: true },
 	{
 		to: "/finance",

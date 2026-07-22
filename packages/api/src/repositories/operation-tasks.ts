@@ -3,8 +3,11 @@ import {
 	claimOperationTask,
 	completeOperationTask,
 	createOperationTask,
+	listOperationTaskAssignees,
+	listOperationTasks,
 	OperationTaskError,
 	reopenOperationTask,
+	updateOperationTask,
 } from "@easy-training/db";
 import { ORPCError } from "@orpc/server";
 
@@ -12,11 +15,17 @@ import type {
 	CreateOperationTaskInput,
 	OperationTask,
 	OperationTaskActionInput,
+	OperationTaskAssigneeListInput,
+	OperationTaskListInput,
+	OperationTaskListItem,
+	UpdateOperationTaskInput,
 } from "../contracts/training";
 
 type OperationTaskScope = {
 	organizationId: string;
 	userId: string;
+	role: string;
+	campusAccess: Parameters<typeof listOperationTasks>[0]["campusAccess"];
 };
 
 function toOperationTask(
@@ -39,6 +48,8 @@ function throwOperationTaskError(error: unknown): never {
 		});
 	}
 	switch (error.code) {
+		case "INVALID_CURSOR":
+			throw new ORPCError("BAD_REQUEST", { message: "任务分页参数无效。" });
 		case "MEMBER_FORBIDDEN":
 		case "CAMPUS_OUT_OF_SCOPE":
 			throw new ORPCError("FORBIDDEN", { message: "当前账号无权操作该任务。" });
@@ -70,6 +81,73 @@ export async function createOperationTaskForOrganization(
 				actorUserId: scope.userId,
 				...input,
 				dueAt: new Date(input.dueAt),
+			}),
+		);
+	} catch (error) {
+		return throwOperationTaskError(error);
+	}
+}
+
+export async function listOperationTasksForOrganization(
+	scope: OperationTaskScope,
+	input: OperationTaskListInput,
+): Promise<{ items: OperationTaskListItem[]; nextCursor: string | null }> {
+	try {
+		const result = await listOperationTasks({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			role: scope.role,
+			campusAccess: scope.campusAccess,
+			...input,
+			dueAtFrom: input.dueAtFrom ? new Date(input.dueAtFrom) : undefined,
+			dueAtTo: input.dueAtTo ? new Date(input.dueAtTo) : undefined,
+		});
+		return {
+			items: result.items.map((record) => ({
+				...toOperationTask(record),
+				ownerName: record.ownerName,
+			})),
+			nextCursor: result.nextCursor,
+		};
+	} catch (error) {
+		return throwOperationTaskError(error);
+	}
+}
+
+export async function listOperationTaskAssigneesForOrganization(
+	scope: OperationTaskScope,
+	input: OperationTaskAssigneeListInput,
+) {
+	try {
+		return {
+			items: await listOperationTaskAssignees({
+				organizationId: scope.organizationId,
+				userId: scope.userId,
+				role: scope.role,
+				campusAccess: scope.campusAccess,
+				...input,
+			}),
+		};
+	} catch (error) {
+		return throwOperationTaskError(error);
+	}
+}
+
+export async function updateOperationTaskForOrganization(
+	scope: OperationTaskScope,
+	input: UpdateOperationTaskInput,
+): Promise<OperationTask> {
+	try {
+		return toOperationTask(
+			await updateOperationTask({
+				organizationId: scope.organizationId,
+				actorUserId: scope.userId,
+				id: input.id,
+				expectedVersion: input.expectedVersion,
+				data: {
+					...input.data,
+					dueAt: input.data.dueAt ? new Date(input.data.dueAt) : undefined,
+				},
 			}),
 		);
 	} catch (error) {

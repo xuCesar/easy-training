@@ -103,6 +103,15 @@ export function TrainingDashboard({ snapshot }: TrainingDashboardProps) {
 					<SectionHeader
 						title="今日待办"
 						description="按优先级处理，避免遗漏关键动作"
+						action={
+							<Link
+								to="/tasks"
+								className={buttonVariants({ variant: "ghost", size: "sm" })}
+							>
+								管理任务
+								<ArrowRightIcon data-icon="inline-end" />
+							</Link>
+						}
 					/>
 					{snapshot.tasks.length > 0 ? (
 						<div className="divide-y">

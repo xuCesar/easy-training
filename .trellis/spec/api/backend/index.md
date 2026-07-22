@@ -8,3 +8,4 @@
 - 参数错误、未认证、无权限、资源不存在、业务冲突和系统错误保持不同语义，不向客户端泄露内部错误。
 - 涉及 oRPC body limit、上传或大文本输入时，加载 [RPC 请求大小契约](request-size-contracts.md)，按实际 transport envelope 的 UTF-8 字节而不是文件大小或字符数校验。
 - 跨领域、按权限裁剪的只读查询加载 [全局搜索只读契约](global-search-contracts.md)，保证授权边界和隐私投影在服务端完成。
+- 运营任务 API、游标列表、负责人候选或状态动作加载 [运营任务与提醒契约](../../db/backend/operation-tasks.md)。
