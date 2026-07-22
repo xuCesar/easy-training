@@ -32,6 +32,7 @@ import type {
 	LeadRecord,
 	UpdateLeadInput,
 } from "../contracts/training";
+import { quoteCsv } from "./csv";
 
 type LeadScope = {
 	organizationId: string;
@@ -293,13 +294,6 @@ export async function getLeadHistory(
 	} catch (error) {
 		return throwDatabaseError(error);
 	}
-}
-
-function quoteCsv(value: string | number | null): string {
-	const raw = value == null ? "" : String(value);
-	// Avoid spreadsheet formula execution when users open a CSV export.
-	const text = /^[=+\-@]/u.test(raw) ? `'${raw}` : raw;
-	return `"${text.replaceAll('"', '""')}"`;
 }
 
 export async function exportLeads(

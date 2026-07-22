@@ -3,7 +3,7 @@
   "name": "p2-student-bulk-operations",
   "title": "P2 学员批量操作",
   "description": "交付学员创建型导入导出、负责人和标签批量调整，以及报名维度班级批量调整。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",
@@ -21,6 +21,13 @@
   "children": [],
   "parent": "07-22-p2-operations-analytics",
   "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "notes": "GitHub: #33, #35, #34, #36；关联路线图 #6。",
+  "meta": {
+    "githubIssues": [
+      33,
+      35,
+      34,
+      36
+    ]
+  }
 }

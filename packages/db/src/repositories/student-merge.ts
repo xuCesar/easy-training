@@ -15,8 +15,14 @@ import {
 	studentContact,
 	studentMerge,
 	studentTagAssignment,
+	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import {
+	assertEligibleStudentOwner,
+	recordStudentOwnerAssignment,
+	StudentOwnershipError,
+} from "./student-ownership";
 import {
 	assertWritableCampus,
 	getCurrentWriteCampusAccess,
@@ -39,6 +45,7 @@ export type StudentMergeErrorCode =
 	| "STUDENT_MERGE_ATTENDANCE_CONFLICT"
 	| "STUDENT_MERGE_CAMPUS_ENROLLMENT_CONFLICT"
 	| "STUDENT_MERGE_CONTACT_INVALID"
+	| "STUDENT_OWNER_NOT_ELIGIBLE"
 	| "IDEMPOTENCY_CONFLICT";
 
 export class StudentMergeRepositoryError extends Error {
@@ -53,6 +60,7 @@ export type StudentMergeFieldSources = {
 	campusId: "source" | "target";
 	birthDate: "source" | "target";
 	status: "source" | "target";
+	ownerUserId: "source" | "target";
 	primaryContactId: string;
 };
 
@@ -61,7 +69,12 @@ export type StudentMergePreview = {
 	target: StudentMergeProfile;
 	contacts: StudentMergeContact[];
 	conflicts: Array<
-		"name" | "campusId" | "birthDate" | "status" | "primaryContactId"
+		| "name"
+		| "campusId"
+		| "birthDate"
+		| "status"
+		| "ownerUserId"
+		| "primaryContactId"
 	>;
 	blockingReasons: Array<"ACTIVE_COURSE_ENROLLMENT" | "ATTENDANCE_CONFLICT">;
 };
@@ -73,6 +86,9 @@ export type StudentMergeProfile = {
 	campusName: string;
 	birthDate: string | null;
 	status: StudentStatus;
+	ownerUserId: string | null;
+	ownerName: string | null;
+	version: number;
 	updatedAt: Date;
 };
 
@@ -98,8 +114,8 @@ export type MergeStudentsRecordInput = {
 	userId: string;
 	sourceStudentId: string;
 	targetStudentId: string;
-	expectedSourceUpdatedAt: Date;
-	expectedTargetUpdatedAt: Date;
+	expectedSourceVersion: number;
+	expectedTargetVersion: number;
 	requestId: string;
 	fieldSources: StudentMergeFieldSources;
 };
@@ -116,8 +132,8 @@ function inputHash(input: MergeStudentsRecordInput): string {
 			JSON.stringify({
 				sourceStudentId: input.sourceStudentId,
 				targetStudentId: input.targetStudentId,
-				expectedSourceUpdatedAt: input.expectedSourceUpdatedAt.toISOString(),
-				expectedTargetUpdatedAt: input.expectedTargetUpdatedAt.toISOString(),
+				expectedSourceVersion: input.expectedSourceVersion,
+				expectedTargetVersion: input.expectedTargetVersion,
 				fieldSources: input.fieldSources,
 			}),
 		)
@@ -154,6 +170,8 @@ async function lockStudents(
 			campusName: campus.name,
 			birthDate: student.birthDate,
 			status: student.status,
+			ownerUserId: student.ownerUserId,
+			version: student.version,
 			updatedAt: student.updatedAt,
 			guardianName: student.guardianName,
 			guardianPhone: student.guardianPhone,
@@ -186,7 +204,31 @@ async function lockStudents(
 	if (source.mergedIntoStudentId || target.mergedIntoStudentId) {
 		throw new StudentMergeRepositoryError("STUDENT_ALREADY_MERGED");
 	}
-	return { source, target };
+	const ownerUserIds = [source.ownerUserId, target.ownerUserId].filter(
+		(ownerUserId): ownerUserId is string => ownerUserId !== null,
+	);
+	const owners =
+		ownerUserIds.length > 0
+			? await tx
+					.select({ id: user.id, name: user.name })
+					.from(user)
+					.where(inArray(user.id, ownerUserIds))
+			: [];
+	const ownerNameById = new Map(owners.map((owner) => [owner.id, owner.name]));
+	return {
+		source: {
+			...source,
+			ownerName: source.ownerUserId
+				? (ownerNameById.get(source.ownerUserId) ?? null)
+				: null,
+		},
+		target: {
+			...target,
+			ownerName: target.ownerUserId
+				? (ownerNameById.get(target.ownerUserId) ?? null)
+				: null,
+		},
+	};
 }
 
 async function loadMergeContacts(
@@ -284,6 +326,9 @@ function profileOf(record: LockedStudent): StudentMergeProfile {
 		campusName: record.campusName,
 		birthDate: record.birthDate,
 		status: record.status,
+		ownerUserId: record.ownerUserId,
+		ownerName: record.ownerName,
+		version: record.version,
 		updatedAt: record.updatedAt,
 	};
 }
@@ -298,6 +343,7 @@ function mergeConflicts(
 	if (source.campusId !== target.campusId) conflicts.push("campusId");
 	if (source.birthDate !== target.birthDate) conflicts.push("birthDate");
 	if (source.status !== target.status) conflicts.push("status");
+	if (source.ownerUserId !== target.ownerUserId) conflicts.push("ownerUserId");
 	const primaryIds = contacts
 		.filter((contact) => contact.isPrimary && !contact.duplicateOfContactId)
 		.map((contact) => contact.id);
@@ -388,10 +434,8 @@ export async function mergeStudentRecords(
 			campusAccess,
 		});
 		if (
-			preview.source.updatedAt.getTime() !==
-				input.expectedSourceUpdatedAt.getTime() ||
-			preview.target.updatedAt.getTime() !==
-				input.expectedTargetUpdatedAt.getTime()
+			preview.source.version !== input.expectedSourceVersion ||
+			preview.target.version !== input.expectedTargetVersion
 		) {
 			throw new StudentMergeRepositoryError("STUDENT_VERSION_CONFLICT");
 		}
@@ -409,6 +453,24 @@ export async function mergeStudentRecords(
 			input.fieldSources.campusId === "source"
 				? preview.source.campusId
 				: preview.target.campusId;
+		const selectedOwnerUserId =
+			input.fieldSources.ownerUserId === "source"
+				? preview.source.ownerUserId
+				: preview.target.ownerUserId;
+		if (selectedOwnerUserId) {
+			try {
+				await assertEligibleStudentOwner(tx, {
+					organizationId: input.organizationId,
+					ownerUserId: selectedOwnerUserId,
+					campusId: selectedCampusId,
+				});
+			} catch (error) {
+				if (error instanceof StudentOwnershipError) {
+					throw new StudentMergeRepositoryError("STUDENT_OWNER_NOT_ELIGIBLE");
+				}
+				throw error;
+			}
+		}
 		const activeEnrollmentCampuses = await tx
 			.select({ campusId: classGroup.campusId })
 			.from(enrollment)
@@ -566,17 +628,29 @@ export async function mergeStudentRecords(
 					input.fieldSources.status === "source"
 						? source.status
 						: target.status,
+				ownerUserId: selectedOwnerUserId,
 				guardianName: primaryRecord.name,
 				guardianPhone: primaryRecord.phone,
 				guardianPhoneNormalized: primaryRecord.phoneNormalized,
+				version: sql`${student.version} + 1`,
 				updatedAt: sql`greatest(clock_timestamp(), ${student.updatedAt} + interval '1 millisecond')`,
 			})
 			.where(eq(student.id, target.id));
+		await recordStudentOwnerAssignment(tx, {
+			organizationId: input.organizationId,
+			studentId: target.id,
+			campusId: selectedCampusId,
+			beforeOwnerUserId: target.ownerUserId,
+			afterOwnerUserId: selectedOwnerUserId,
+			operatorUserId: input.userId,
+			source: "merge",
+		});
 		await tx
 			.update(student)
 			.set({
 				mergedIntoStudentId: target.id,
 				mergedAt: now,
+				version: sql`${student.version} + 1`,
 				updatedAt: sql`greatest(clock_timestamp(), ${student.updatedAt} + interval '1 millisecond')`,
 			})
 			.where(eq(student.id, source.id));

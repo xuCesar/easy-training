@@ -39,6 +39,11 @@ function throwConversionError(error: unknown): never {
 	}
 
 	switch (error.code) {
+		case "MEMBER_FORBIDDEN":
+		case "STUDENT_OWNER_ADJUST_FORBIDDEN":
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前账号不能调整已有学员负责人。",
+			});
 		case "LEAD_NOT_FOUND":
 			throw new ORPCError("NOT_FOUND", { message: "线索不存在。" });
 		case "LEAD_ALREADY_CONVERTED":
@@ -52,6 +57,15 @@ function throwConversionError(error: unknown): never {
 		case "STUDENT_PHONE_MISMATCH":
 			throw new ORPCError("BAD_REQUEST", {
 				message: "学员监护人手机号与线索电话不匹配。",
+			});
+		case "STUDENT_VERSION_CONFLICT":
+			throw new ORPCError("CONFLICT", {
+				message: "学员资料已更新，请刷新报名信息后重试。",
+				data: { reason: "STUDENT_VERSION_CONFLICT" },
+			});
+		case "STUDENT_OWNER_NOT_ELIGIBLE":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "所选成交归属人不具备该学员校区的负责人资格。",
 			});
 		case "CAMPUS_NOT_FOUND":
 			throw new ORPCError("NOT_FOUND", { message: "校区不存在。" });
@@ -113,6 +127,7 @@ export async function getLeadConversionOptions(
 			...result,
 			permissions: {
 				canOverridePackageTerms: canOverridePackageTerms(scope.role),
+				canAdjustStudentOwner: canOverridePackageTerms(scope.role),
 			},
 			lead: {
 				...result.lead,

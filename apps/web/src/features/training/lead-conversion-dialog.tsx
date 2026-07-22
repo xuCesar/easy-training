@@ -5,6 +5,7 @@ import {
 	type LeadRecord,
 } from "@easy-training/api/contracts/training";
 import { Button } from "@easy-training/ui/components/button";
+import { Checkbox } from "@easy-training/ui/components/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -37,7 +38,7 @@ import {
 import { Skeleton } from "@easy-training/ui/components/skeleton";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { LoaderCircleIcon, UsersRoundIcon } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { orpc, queryClient } from "@/utils/orpc";
@@ -160,6 +161,10 @@ function LeadConversionForm({
 		defaultCourse ? formatCentsAsYuan(defaultCourse.listPriceInCents) : "",
 	);
 	const [invoiceDueDate, setInvoiceDueDate] = useState(getShanghaiToday);
+	const [conversionOwnerUserId, setConversionOwnerUserId] = useState<
+		string | null
+	>(options.lead.ownerUserId);
+	const [adjustStudentOwner, setAdjustStudentOwner] = useState(false);
 	const [errors, setErrors] = useState<ConversionErrors>({});
 	const selectedStudent =
 		studentSelection?.mode === "existing"
@@ -171,6 +176,25 @@ function LeadConversionForm({
 		studentSelection?.mode === "existing"
 			? selectedStudent?.campusId
 			: campusId;
+	const ownerCandidatesQuery = useQuery({
+		...orpc.training.students.ownerCandidates.queryOptions({
+			input: {
+				campusId: selectedCampusId ?? "00000000-0000-0000-0000-000000000000",
+			},
+		}),
+		enabled: Boolean(selectedCampusId),
+	});
+	useEffect(() => {
+		if (
+			conversionOwnerUserId &&
+			ownerCandidatesQuery.data &&
+			!ownerCandidatesQuery.data.items.some(
+				(candidate) => candidate.userId === conversionOwnerUserId,
+			)
+		) {
+			setConversionOwnerUserId(null);
+		}
+	}, [conversionOwnerUserId, ownerCandidatesQuery.data]);
 	const availableClasses = options.classes.filter(
 		(classGroup) =>
 			classGroup.courseId === courseId &&
@@ -230,6 +254,10 @@ function LeadConversionForm({
 					? {
 							mode: "existing" as const,
 							studentId: studentSelection.studentId,
+							expectedVersion:
+								options.matchingStudents.find(
+									(student) => student.id === studentSelection.studentId,
+								)?.version ?? 0,
 						}
 					: {
 							mode: "new" as const,
@@ -237,6 +265,9 @@ function LeadConversionForm({
 							guardianName,
 							campusId,
 						},
+			conversionOwnerUserId,
+			adjustStudentOwner:
+				studentSelection.mode === "existing" && adjustStudentOwner,
 			courseId,
 			classGroupId,
 			purchasedLessons: parsedLessons,
@@ -339,6 +370,72 @@ function LeadConversionForm({
 					}}
 				/>
 			) : null}
+
+			<Field>
+				<FieldLabel htmlFor="conversion-owner">成交归属人</FieldLabel>
+				<Select
+					value={conversionOwnerUserId ?? "unassigned"}
+					onValueChange={(value) =>
+						setConversionOwnerUserId(
+							value === "unassigned" ? null : (value ?? null),
+						)
+					}
+					disabled={!selectedCampusId || ownerCandidatesQuery.isPending}
+				>
+					<SelectTrigger id="conversion-owner" className="w-full">
+						<SelectValue>
+							{() =>
+								conversionOwnerUserId
+									? (ownerCandidatesQuery.data?.items.find(
+											(candidate) => candidate.userId === conversionOwnerUserId,
+										)?.name ??
+										options.lead.ownerName ??
+										"请选择")
+									: "未分配"
+							}
+						</SelectValue>
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="unassigned">未分配</SelectItem>
+						{(ownerCandidatesQuery.data?.items ?? []).map((candidate) => (
+							<SelectItem key={candidate.userId} value={candidate.userId}>
+								{candidate.name} · {candidate.email}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+				<p className="text-muted-foreground text-xs">
+					该归属会冻结在本次报名中，后续学员负责人变化不会改写成交归属。
+				</p>
+				{studentSelection?.mode === "existing" ? (
+					options.permissions.canAdjustStudentOwner ? (
+						<label
+							className="flex items-start gap-2 text-sm"
+							htmlFor="lead-conversion-adjust-student-owner"
+						>
+							<Checkbox
+								id="lead-conversion-adjust-student-owner"
+								checked={adjustStudentOwner}
+								onCheckedChange={(checked) =>
+									setAdjustStudentOwner(checked === true)
+								}
+							/>
+							<span>
+								同时调整学员负责人（当前：
+								{selectedStudent?.ownerName ?? "未分配"}）
+							</span>
+						</label>
+					) : (
+						<p className="text-muted-foreground text-xs">
+							已有学员负责人保持不变。
+						</p>
+					)
+				) : (
+					<p className="text-muted-foreground text-xs">
+						新学员将使用相同人员作为运营负责人。
+					</p>
+				)}
+			</Field>
 
 			<div className="grid min-w-0 gap-4 sm:grid-cols-2">
 				<CourseField

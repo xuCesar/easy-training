@@ -23,6 +23,7 @@ import {
 	lead,
 	organization,
 	organizationAuditEvent,
+	organizationMember,
 	student,
 	teacher,
 	user,
@@ -125,6 +126,11 @@ async function seedFixture(ids: FixtureIds) {
 		id: ids.operatorUserId,
 		name: "报名操作人",
 		email: `${ids.operatorUserId}@example.invalid`,
+	});
+	await db.insert(organizationMember).values({
+		organizationId: ids.organizationA,
+		userId: ids.operatorUserId,
+		role: "owner",
 	});
 	await db.insert(campus).values([
 		{
@@ -473,7 +479,13 @@ function baseConversionInput(
 ): ConvertLeadInput {
 	return {
 		leadId,
-		student: { mode: "existing", studentId: ids.studentMatchingA1 },
+		student: {
+			mode: "existing",
+			studentId: ids.studentMatchingA1,
+			expectedVersion: 1,
+		},
+		conversionOwnerUserId: null,
+		adjustStudentOwner: false,
 		courseId: ids.courseA,
 		classGroupId: null,
 		purchasedLessons: 24,
@@ -589,6 +601,8 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 
 		const existingResult = await convertLead(scopeA, {
 			...baseConversionInput(ids, ids.leadExisting),
+			conversionOwnerUserId: ids.operatorUserId,
+			adjustStudentOwner: true,
 			classGroupId: ids.classAvailable,
 			purchasedLessons: 30,
 			amountInCents: 18_600,
@@ -607,6 +621,7 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 				purchasedLessons: existingEnrollment.purchasedLessons,
 				remainingLessons: existingEnrollment.remainingLessons,
 				amountInCents: existingEnrollment.amountInCents,
+				conversionOwnerUserId: existingEnrollment.conversionOwnerUserId,
 			},
 			{
 				leadId: ids.leadExisting,
@@ -616,6 +631,7 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 				purchasedLessons: 30,
 				remainingLessons: 30,
 				amountInCents: 18_600,
+				conversionOwnerUserId: ids.operatorUserId,
 			},
 		);
 		const [existingInvoice] = await db
@@ -646,7 +662,11 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 			scopeA,
 			convertLeadInputSchema.parse({
 				...baseConversionInput(ids, ids.leadComplimentary),
-				student: { mode: "existing", studentId: ids.studentMatchingA2 },
+				student: {
+					mode: "existing",
+					studentId: ids.studentMatchingA2,
+					expectedVersion: 1,
+				},
 				amountInCents: 0,
 			}),
 		);
@@ -661,6 +681,7 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 
 		const newResult = await convertLead(scopeA, {
 			...baseConversionInput(ids, ids.leadNew),
+			conversionOwnerUserId: ids.operatorUserId,
 			student: {
 				mode: "new",
 				name: "新学员",
@@ -678,12 +699,14 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 				campusId: createdStudent.campusId,
 				guardianPhone: createdStudent.guardianPhone,
 				status: createdStudent.status,
+				ownerUserId: createdStudent.ownerUserId,
 			},
 			{
 				organizationId: ids.organizationA,
 				campusId: ids.campusA1,
 				guardianPhone: "139-0000-0000",
 				status: "active",
+				ownerUserId: ids.operatorUserId,
 			},
 		);
 		await expectOrpcError(
@@ -704,14 +727,22 @@ test("线索转化保持机构隔离、事务原子性并防止并发超额", as
 		await expectOrpcError(
 			convertLead(scopeA, {
 				...baseConversionInput(ids, ids.leadCrossTenant),
-				student: { mode: "existing", studentId: ids.studentB },
+				student: {
+					mode: "existing",
+					studentId: ids.studentB,
+					expectedVersion: 1,
+				},
 			}),
 			"NOT_FOUND",
 		);
 		await expectOrpcError(
 			convertLead(scopeA, {
 				...baseConversionInput(ids, ids.leadCrossTenant),
-				student: { mode: "existing", studentId: ids.studentOtherA },
+				student: {
+					mode: "existing",
+					studentId: ids.studentOtherA,
+					expectedVersion: 1,
+				},
 			}),
 			"BAD_REQUEST",
 		);

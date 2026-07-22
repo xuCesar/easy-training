@@ -757,16 +757,30 @@ function ScopeEditor({
 		},
 		onError: showMutationError,
 	});
-	if (!member) return null;
 	const globalRole = role === "owner" || role === "admin";
-	const memberId = member.id;
+	const memberId = member?.id ?? "00000000-0000-0000-0000-000000000000";
+	const normalizedCampusAccessMode = globalRole ? "all" : mode;
+	const normalizedCampusIds = globalRole || mode === "all" ? [] : campusIds;
+	const impactQuery = useQuery({
+		...orpc.training.members.ownerImpact.queryOptions({
+			input: {
+				kind: "update",
+				memberId,
+				role,
+				campusAccessMode: normalizedCampusAccessMode,
+				campusIds: normalizedCampusIds,
+			},
+		}),
+		enabled: open && member !== null,
+	});
+	if (!member) return null;
 	function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		const parsed = updateMemberInputSchema.safeParse({
 			memberId,
 			role,
-			campusAccessMode: globalRole ? "all" : mode,
-			campusIds: globalRole || mode === "all" ? [] : campusIds,
+			campusAccessMode: normalizedCampusAccessMode,
+			campusIds: normalizedCampusIds,
 		});
 		if (!parsed.success) {
 			toast.error(parsed.error.issues[0]?.message ?? "成员设置无效");
@@ -797,6 +811,23 @@ function ScopeEditor({
 						onModeChange={setMode}
 						onCampusIdsChange={setCampusIds}
 					/>
+					{impactQuery.isPending ? (
+						<Skeleton className="h-12 w-full" />
+					) : impactQuery.isError ? (
+						<p className="border border-destructive/50 p-3 text-destructive text-sm">
+							负责人影响范围加载失败，请重试后再保存。
+						</p>
+					) : (impactQuery.data?.affectedStudentCount ?? 0) > 0 ? (
+						<p className="border border-amber-500/50 bg-amber-500/5 p-3 text-sm">
+							保存后将自动清空该成员负责的{" "}
+							{impactQuery.data?.affectedStudentCount}{" "}
+							位学员，并保留权限撤销历史。
+						</p>
+					) : (
+						<p className="text-muted-foreground text-xs">
+							本次变更不会清空学员负责人。
+						</p>
+					)}
 					<DialogFooter className="flex-col-reverse sm:flex-row">
 						<Button
 							type="button"
@@ -806,7 +837,14 @@ function ScopeEditor({
 						>
 							取消
 						</Button>
-						<Button type="submit" disabled={mutation.isPending}>
+						<Button
+							type="submit"
+							disabled={
+								mutation.isPending ||
+								impactQuery.isPending ||
+								impactQuery.isError
+							}
+						>
 							{mutation.isPending ? (
 								<LoaderCircleIcon
 									className="animate-spin"
@@ -975,11 +1013,24 @@ function ConfirmationDialog({
 		},
 		onError: showMutationError,
 	});
+	const removeImpactQuery = useQuery({
+		...orpc.training.members.ownerImpact.queryOptions({
+			input: {
+				kind: "remove",
+				memberId:
+					confirmation?.kind === "member"
+						? confirmation.member.id
+						: "00000000-0000-0000-0000-000000000000",
+			},
+		}),
+		enabled: confirmation?.kind === "member",
+	});
 	const pending =
 		setActive.isPending ||
 		remove.isPending ||
 		revoke.isPending ||
-		resend.isPending;
+		resend.isPending ||
+		(confirmation?.kind === "member" && removeImpactQuery.isPending);
 	if (!confirmation) return null;
 	const details = confirmationDetails(confirmation);
 	function confirm(value: Confirmation) {
@@ -1010,6 +1061,19 @@ function ConfirmationDialog({
 					<DialogTitle>{details.title}</DialogTitle>
 					<DialogDescription>{details.description}</DialogDescription>
 				</DialogHeader>
+				{confirmation.kind === "member" ? (
+					removeImpactQuery.isError ? (
+						<p className="border border-destructive/50 p-3 text-destructive text-sm">
+							负责人影响范围加载失败，请重试后再移除。
+						</p>
+					) : (removeImpactQuery.data?.affectedStudentCount ?? 0) > 0 ? (
+						<p className="border border-amber-500/50 bg-amber-500/5 p-3 text-sm">
+							移除后将自动清空该成员负责的{" "}
+							{removeImpactQuery.data?.affectedStudentCount}{" "}
+							位学员，并保留权限撤销历史。
+						</p>
+					) : null
+				) : null}
 				<DialogFooter className="flex-col-reverse sm:flex-row">
 					<Button
 						type="button"
@@ -1022,7 +1086,10 @@ function ConfirmationDialog({
 					<Button
 						type="button"
 						variant={details.destructive ? "destructive" : "default"}
-						disabled={pending}
+						disabled={
+							pending ||
+							(confirmation.kind === "member" && removeImpactQuery.isError)
+						}
 						onClick={() => confirm(confirmation)}
 					>
 						{pending ? (

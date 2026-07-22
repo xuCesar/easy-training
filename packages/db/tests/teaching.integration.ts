@@ -27,6 +27,12 @@ import {
 	updateScheduleRuleRecord,
 } from "../src/repositories/scheduling";
 import {
+	commitEnrollmentBulkOperationRecord,
+	EnrollmentBulkOperationError,
+	listStudentActiveEnrollmentOptionsRecord,
+	previewEnrollmentBulkOperationRecord,
+} from "../src/repositories/student-enrollment-bulk";
+import {
 	assignEnrollmentClassRecord,
 	cancelLessonRecord,
 	cancelMakeupLessonRecord,
@@ -66,6 +72,7 @@ import {
 	organizationMember,
 	organizationMemberCampus,
 	student,
+	studentBulkOperationBatch,
 	teacher,
 	teacherCampus,
 	user,
@@ -969,6 +976,177 @@ test("报名冻结、复课和转班只按生效时点影响未来课次名单",
 				return true;
 			},
 		);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("报名班级批量调整明确选择 active 报名并原子写入生命周期事实", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course: trainingCourse, group } = await createClassFixture(ids, {
+			capacity: 2,
+		});
+		assert.ok(trainingCourse);
+		const first = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: null,
+			studentName: "批量报名甲",
+		});
+		const second = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: null,
+			studentName: "批量报名乙",
+		});
+		const options = await listStudentActiveEnrollmentOptionsRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			studentIds: [first.studentId, second.studentId],
+		});
+		assert.deepEqual(
+			new Set(options.map((item) => item.enrollmentId)),
+			new Set([first.enrollmentId, second.enrollmentId]),
+		);
+
+		const operation = {
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			kind: "assignEnrollmentClass" as const,
+			classGroupId: group.id,
+			targets: [
+				{ enrollmentId: first.enrollmentId, expectedVersion: 1 },
+				{ enrollmentId: second.enrollmentId, expectedVersion: 1 },
+			],
+		};
+		const preview = await previewEnrollmentBulkOperationRecord(operation);
+		assert.deepEqual(
+			{
+				changeCount: preview.changeCount,
+				noChangeCount: preview.noChangeCount,
+				blockedCount: preview.blockedCount,
+			},
+			{ changeCount: 2, noChangeCount: 0, blockedCount: 0 },
+		);
+		const requestId = randomUUID();
+		const result = await commitEnrollmentBulkOperationRecord({
+			...operation,
+			requestId,
+		});
+		assert.deepEqual(
+			await commitEnrollmentBulkOperationRecord({ ...operation, requestId }),
+			{ ...result, replayed: true },
+		);
+		await assert.rejects(
+			commitEnrollmentBulkOperationRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				kind: "withdrawEnrollmentClass",
+				targets: operation.targets,
+				requestId,
+			}),
+			(error: unknown) => {
+				assert.ok(error instanceof EnrollmentBulkOperationError);
+				assert.equal(error.code, "IDEMPOTENCY_CONFLICT");
+				return true;
+			},
+		);
+
+		const [updated, events, batches, audits] = await Promise.all([
+			db
+				.select({
+					id: enrollment.id,
+					classGroupId: enrollment.classGroupId,
+					version: enrollment.version,
+				})
+				.from(enrollment)
+				.where(
+					inArray(enrollment.id, [first.enrollmentId, second.enrollmentId]),
+				),
+			db
+				.select({ batchId: enrollmentLifecycleEvent.bulkOperationBatchId })
+				.from(enrollmentLifecycleEvent)
+				.where(
+					eq(enrollmentLifecycleEvent.bulkOperationBatchId, result.batchId),
+				),
+			db
+				.select({ kind: studentBulkOperationBatch.kind })
+				.from(studentBulkOperationBatch)
+				.where(eq(studentBulkOperationBatch.id, result.batchId)),
+			db
+				.select({ id: organizationAuditEvent.id })
+				.from(organizationAuditEvent)
+				.where(
+					and(
+						eq(organizationAuditEvent.organizationId, ids.organizationId),
+						eq(organizationAuditEvent.entityId, result.batchId),
+					),
+				),
+		]);
+		assert.equal(updated.length, 2);
+		assert.ok(
+			updated.every(
+				(item) => item.classGroupId === group.id && item.version === 2,
+			),
+		);
+		assert.equal(events.length, 2);
+		assert.ok(events.every((event) => event.batchId === result.batchId));
+		assert.deepEqual(batches, [{ kind: "assign_class" }]);
+		assert.equal(audits.length, 1);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("报名班级批量调整遇到容量或版本冲突时整批不写入", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course: trainingCourse, group } = await createClassFixture(ids, {
+			capacity: 1,
+		});
+		assert.ok(trainingCourse);
+		const first = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: null,
+		});
+		const second = await createEnrollmentFixture({
+			ids,
+			courseId: trainingCourse.id,
+			classGroupId: null,
+		});
+		const operation = {
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			kind: "assignEnrollmentClass" as const,
+			classGroupId: group.id,
+			targets: [
+				{ enrollmentId: first.enrollmentId, expectedVersion: 1 },
+				{ enrollmentId: second.enrollmentId, expectedVersion: 1 },
+			],
+		};
+		const preview = await previewEnrollmentBulkOperationRecord(operation);
+		assert.equal(preview.blockedCount, 2);
+		assert.ok(preview.items.every((item) => item.blockerCode === "CLASS_FULL"));
+		await assert.rejects(
+			commitEnrollmentBulkOperationRecord({
+				...operation,
+				requestId: randomUUID(),
+			}),
+			(error: unknown) => {
+				assert.ok(error instanceof EnrollmentBulkOperationError);
+				assert.equal(error.code, "BULK_BLOCKED");
+				return true;
+			},
+		);
+		const rows = await db
+			.select({ classGroupId: enrollment.classGroupId })
+			.from(enrollment)
+			.where(inArray(enrollment.id, [first.enrollmentId, second.enrollmentId]));
+		assert.ok(rows.every((row) => row.classGroupId === null));
 	} finally {
 		await cleanup(ids);
 	}

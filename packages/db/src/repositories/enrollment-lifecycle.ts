@@ -14,6 +14,7 @@ import {
 	student,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import { planEnrollmentBulkOperation } from "./student-enrollment-bulk";
 import {
 	assertWritableCampus,
 	getCurrentWriteCampusAccess,
@@ -396,25 +397,32 @@ export async function updateEnrollmentLifecycleRecord(
 				}
 				toClassGroupId = null;
 				break;
-			case "assignClass":
+			case "assignClass": {
 				if (record.status !== "active") {
 					throw new EnrollmentLifecycleError("ENROLLMENT_NOT_ACTIVE");
 				}
 				if (record.classGroupId === input.action.classGroupId) {
 					throw new EnrollmentLifecycleError("INVALID_INPUT");
 				}
-				await assertTargetClass(tx, {
+				const classPlan = await planEnrollmentBulkOperation(tx, {
 					organizationId: input.organizationId,
 					campusAccess: access,
-					studentCampusId: record.studentCampusId,
-					courseId: record.courseId,
-					studentId: record.studentId,
-					sourceEnrollmentId: record.id,
+					kind: "assignEnrollmentClass",
 					classGroupId: input.action.classGroupId,
-					now,
+					targets: [
+						{
+							enrollmentId: record.id,
+							expectedVersion: record.version,
+						},
+					],
 				});
+				const blockerCode = classPlan.items[0]?.blockerCode;
+				if (blockerCode) {
+					throw new EnrollmentLifecycleError(blockerCode);
+				}
 				toClassGroupId = input.action.classGroupId;
 				break;
+			}
 		}
 
 		const kind: LifecycleKind =

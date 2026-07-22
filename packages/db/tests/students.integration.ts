@@ -17,6 +17,7 @@ import {
 	createStudentTagRecord,
 	findDuplicateStudentCandidates,
 	getStudentRecord,
+	listStudentOwnerCandidateRecords,
 	listStudentRecords,
 	renameStudentTagRecord,
 	StudentRepositoryError,
@@ -41,6 +42,7 @@ import {
 	session,
 	student,
 	studentContact,
+	studentOwnerAssignmentEvent,
 	studentStatusEvent,
 	teacher,
 	user,
@@ -279,6 +281,163 @@ async function seedFixture(ids: FixtureIds) {
 	});
 }
 
+test("学员负责人候选按角色与校区裁剪，并支持未分配筛选", async () => {
+	const ids = createFixtureIds();
+	const allAccess = { kind: "all" as const };
+	const extraUsers = [
+		{
+			id: `${ids.prefix}-admin`,
+			name: "全机构管理员",
+			role: "admin" as const,
+			campusAccessMode: "all" as const,
+		},
+		{
+			id: `${ids.prefix}-campus-manager`,
+			name: "A 校区负责人",
+			role: "campus_manager" as const,
+			campusAccessMode: "selected" as const,
+		},
+		{
+			id: `${ids.prefix}-teacher`,
+			name: "任课教师",
+			role: "teacher" as const,
+			campusAccessMode: "all" as const,
+		},
+		{
+			id: `${ids.prefix}-finance`,
+			name: "财务人员",
+			role: "finance" as const,
+			campusAccessMode: "all" as const,
+		},
+	];
+
+	try {
+		await seedFixture(ids);
+		await db.insert(user).values(
+			extraUsers.map((item) => ({
+				id: item.id,
+				name: item.name,
+				email: `${item.id}@example.invalid`,
+			})),
+		);
+		const members = await db
+			.insert(organizationMember)
+			.values(
+				extraUsers.map((item) => ({
+					organizationId: ids.organizationA,
+					userId: item.id,
+					role: item.role,
+					campusAccessMode: item.campusAccessMode,
+				})),
+			)
+			.returning({
+				id: organizationMember.id,
+				userId: organizationMember.userId,
+			});
+		const campusManagerMember = members.find(
+			(item) => item.userId === `${ids.prefix}-campus-manager`,
+		);
+		assert.ok(campusManagerMember);
+		await db.insert(organizationMemberCampus).values({
+			organizationMemberId: campusManagerMember.id,
+			campusId: ids.campusA,
+		});
+
+		const campusACandidates = await listStudentOwnerCandidateRecords({
+			organizationId: ids.organizationA,
+			campusAccess: allAccess,
+			campusId: ids.campusA,
+		});
+		assert.deepEqual(
+			new Set(campusACandidates.map((item) => item.userId)),
+			new Set([
+				ids.managerUserId,
+				ids.operatorUserId,
+				`${ids.prefix}-admin`,
+				`${ids.prefix}-campus-manager`,
+			]),
+		);
+		const otherCampusCandidates = await listStudentOwnerCandidateRecords({
+			organizationId: ids.organizationA,
+			campusAccess: allAccess,
+			campusId: ids.campusAOther,
+		});
+		assert.deepEqual(
+			new Set(otherCampusCandidates.map((item) => item.userId)),
+			new Set([ids.managerUserId, `${ids.prefix}-admin`]),
+		);
+
+		const assigned = await createStudentRecord({
+			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
+			campusAccess: allAccess,
+			name: "已有负责人学员",
+			campusId: ids.campusA,
+			ownerUserId: ids.operatorUserId,
+			birthDate: null,
+			status: "trial",
+			contacts: [
+				{
+					name: "已有负责人联系人",
+					phone: "13600136001",
+					relationship: null,
+					isPrimary: true,
+				},
+			],
+			tagIds: [],
+		});
+		const unassigned = await createStudentRecord({
+			organizationId: ids.organizationA,
+			userId: ids.managerUserId,
+			campusAccess: allAccess,
+			name: "未分配负责人学员",
+			campusId: ids.campusA,
+			ownerUserId: null,
+			birthDate: null,
+			status: "trial",
+			contacts: [
+				{
+					name: "未分配负责人联系人",
+					phone: "13600136002",
+					relationship: null,
+					isPrimary: true,
+				},
+			],
+			tagIds: [],
+		});
+		const [assignedList, unassignedList] = await Promise.all([
+			listStudentRecords({
+				organizationId: ids.organizationA,
+				campusAccess: allAccess,
+				ownerUserId: ids.operatorUserId,
+				pageSize: 20,
+			}),
+			listStudentRecords({
+				organizationId: ids.organizationA,
+				campusAccess: allAccess,
+				ownerUserId: null,
+				pageSize: 20,
+			}),
+		]);
+		assert.deepEqual(
+			assignedList.items.map((item) => item.id),
+			[assigned.id],
+		);
+		assert.deepEqual(
+			unassignedList.items.map((item) => item.id),
+			[unassigned.id],
+		);
+	} finally {
+		await cleanupFixture(ids);
+		await db.delete(user).where(
+			inArray(
+				user.id,
+				extraUsers.map((item) => item.id),
+			),
+		);
+	}
+});
+
 test("学员档案限制机构与校区范围，维护联系人、标签和 guardian 兼容字段", async () => {
 	const ids = createFixtureIds();
 	const allAccess = { kind: "all" as const };
@@ -315,6 +474,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 			campusAccess: selectedA,
 			name: "校区 A 学员",
 			campusId: ids.campusA,
+			ownerUserId: null,
 			birthDate: "2018-01-02",
 			status: "trial",
 			contacts: [
@@ -347,6 +507,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 			campusAccess: allAccess,
 			name: "校区 A2 学员",
 			campusId: ids.campusAOther,
+			ownerUserId: null,
 			birthDate: null,
 			status: "active",
 			contacts: [
@@ -383,11 +544,12 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 			userId: ids.operatorUserId,
 			campusAccess: selectedA,
 			id: created.id,
-			expectedUpdatedAt: created.updatedAt,
+			expectedVersion: created.version,
 			data: {
 				name: "校区 A 学员（更新）",
 				birthDate: "2018-01-02",
 				status: "active",
+				ownerUserId: created.ownerUserId,
 				contacts: [
 					{
 						id: primaryContact.id,
@@ -427,11 +589,12 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 				userId: ids.operatorUserId,
 				campusAccess: selectedA,
 				id: created.id,
-				expectedUpdatedAt: updated.updatedAt,
+				expectedVersion: updated.version,
 				data: {
 					name: updated.name,
 					birthDate: updated.birthDate,
 					status: updated.status,
+					ownerUserId: updated.ownerUserId,
 					contacts: updated.contacts.map((contact) => ({
 						...contact,
 						isPrimary: false,
@@ -464,6 +627,7 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 				campusAccess: selectedA,
 				name: "不能分配停用标签",
 				campusId: ids.campusA,
+				ownerUserId: null,
 				birthDate: null,
 				status: "trial",
 				contacts: [
@@ -499,11 +663,12 @@ test("学员档案限制机构与校区范围，维护联系人、标签和 guar
 				userId: ids.operatorUserId,
 				campusAccess: selectedA,
 				id: created.id,
-				expectedUpdatedAt: afterTagDisabled.updatedAt,
+				expectedVersion: afterTagDisabled.version,
 				data: {
 					name: afterTagDisabled.name,
 					birthDate: afterTagDisabled.birthDate,
 					status: afterTagDisabled.status,
+					ownerUserId: afterTagDisabled.ownerUserId,
 					contacts: afterTagDisabled.contacts,
 					tagIds: [tag.id],
 				},
@@ -530,6 +695,7 @@ test("学员写入在事务内重新校验成员当前校区范围", async () =>
 			campusAccess: staleCampusAccess,
 			name: "撤销前学员",
 			campusId: ids.campusA,
+			ownerUserId: null,
 			birthDate: null,
 			status: "trial",
 			contacts: [
@@ -566,6 +732,7 @@ test("学员写入在事务内重新校验成员当前校区范围", async () =>
 				campusAccess: staleCampusAccess,
 				name: "撤销后新增",
 				campusId: ids.campusA,
+				ownerUserId: null,
 				birthDate: null,
 				status: "trial",
 				contacts: [
@@ -586,11 +753,12 @@ test("学员写入在事务内重新校验成员当前校区范围", async () =>
 				userId: ids.operatorUserId,
 				campusAccess: staleCampusAccess,
 				id: created.id,
-				expectedUpdatedAt: created.updatedAt,
+				expectedVersion: created.version,
 				data: {
 					name: "不应保存的更新",
 					birthDate: created.birthDate,
 					status: created.status,
+					ownerUserId: created.ownerUserId,
 					contacts: created.contacts,
 					tagIds: [],
 				},
@@ -621,6 +789,7 @@ test("学员档案以版本令牌原子保护联系人、主要联系人和标�
 			...scope,
 			name,
 			campusId: ids.campusA,
+			ownerUserId: null,
 			birthDate: null,
 			status: "trial",
 			contacts: [
@@ -690,11 +859,12 @@ test("学员档案以版本令牌原子保护联系人、主要联系人和标�
 			updateStudentRecord({
 				...scope,
 				id: contactStudent.id,
-				expectedUpdatedAt: contactStudent.updatedAt,
+				expectedVersion: contactStudent.version,
 				data: {
 					name: contactStudent.name,
 					birthDate: contactStudent.birthDate,
 					status: contactStudent.status,
+					ownerUserId: contactStudent.ownerUserId,
 					contacts: [
 						...contactStudent.contacts,
 						{
@@ -710,11 +880,12 @@ test("学员档案以版本令牌原子保护联系人、主要联系人和标�
 			updateStudentRecord({
 				...scope,
 				id: contactStudent.id,
-				expectedUpdatedAt: contactStudent.updatedAt,
+				expectedVersion: contactStudent.version,
 				data: {
 					name: contactStudent.name,
 					birthDate: contactStudent.birthDate,
 					status: contactStudent.status,
+					ownerUserId: contactStudent.ownerUserId,
 					contacts: [
 						...contactStudent.contacts,
 						{
@@ -760,11 +931,12 @@ test("学员档案以版本令牌原子保护联系人、主要联系人和标�
 		const primaryWinner = await updateStudentRecord({
 			...scope,
 			id: primaryStudent.id,
-			expectedUpdatedAt: primaryStudent.updatedAt,
+			expectedVersion: primaryStudent.version,
 			data: {
 				name: primaryStudent.name,
 				birthDate: primaryStudent.birthDate,
 				status: primaryStudent.status,
+				ownerUserId: primaryStudent.ownerUserId,
 				contacts: [
 					{ ...originalPrimary, isPrimary: false },
 					{
@@ -781,11 +953,12 @@ test("学员档案以版本令牌原子保护联系人、主要联系人和标�
 			updateStudentRecord({
 				...scope,
 				id: primaryStudent.id,
-				expectedUpdatedAt: primaryStudent.updatedAt,
+				expectedVersion: primaryStudent.version,
 				data: {
 					name: primaryStudent.name,
 					birthDate: primaryStudent.birthDate,
 					status: primaryStudent.status,
+					ownerUserId: primaryStudent.ownerUserId,
 					contacts: primaryStudent.contacts,
 					tagIds: [tagInitial.id],
 				},
@@ -801,11 +974,12 @@ test("学员档案以版本令牌原子保护联系人、主要联系人和标�
 		const tagWinnerResult = await updateStudentRecord({
 			...scope,
 			id: tagStudent.id,
-			expectedUpdatedAt: tagStudent.updatedAt,
+			expectedVersion: tagStudent.version,
 			data: {
 				name: tagStudent.name,
 				birthDate: tagStudent.birthDate,
 				status: tagStudent.status,
+				ownerUserId: tagStudent.ownerUserId,
 				contacts: tagStudent.contacts,
 				tagIds: [tagWinner.id],
 			},
@@ -814,11 +988,12 @@ test("学员档案以版本令牌原子保护联系人、主要联系人和标�
 			updateStudentRecord({
 				...scope,
 				id: tagStudent.id,
-				expectedUpdatedAt: tagStudent.updatedAt,
+				expectedVersion: tagStudent.version,
 				data: {
 					name: tagStudent.name,
 					birthDate: tagStudent.birthDate,
 					status: tagStudent.status,
+					ownerUserId: tagStudent.ownerUserId,
 					contacts: tagStudent.contacts,
 					tagIds: [tagLoser.id],
 				},
@@ -835,11 +1010,12 @@ test("学员档案以版本令牌原子保护联系人、主要联系人和标�
 		await expectOrpcError(
 			client.training.students.update({
 				id: tagStudent.id,
-				expectedUpdatedAt: tagStudent.updatedAt.toISOString(),
+				expectedVersion: tagStudent.version,
 				data: {
 					name: tagStudent.name,
 					birthDate: tagStudent.birthDate,
 					status: "trial",
+					ownerUserId: tagStudent.ownerUserId,
 					contacts: tagStudent.contacts,
 					tagIds: [tagLoser.id],
 				},
@@ -859,8 +1035,8 @@ test("线索转报名的新学员在同一事务创建主要联系人并保留 g
 		await seedFixture(ids);
 		const result = await convertLeadRecord({
 			organizationId: ids.organizationA,
-			operatorUserId: ids.operatorUserId,
-			campusAccess: { kind: "selected", campusIds: [ids.campusAOther] },
+			operatorUserId: ids.managerUserId,
+			campusAccess: { kind: "all" },
 			leadId: ids.leadConversion,
 			student: {
 				mode: "new",
@@ -868,6 +1044,8 @@ test("线索转报名的新学员在同一事务创建主要联系人并保留 g
 				guardianName: "转报名家长",
 				campusId: ids.campusAOther,
 			},
+			conversionOwnerUserId: null,
+			adjustStudentOwner: false,
 			courseId: ids.courseA,
 			classGroupId: null,
 			purchasedLessons: 10,
@@ -914,6 +1092,7 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 			campusAccess: access,
 			name: "待合并来源",
 			campusId: ids.campusA,
+			ownerUserId: ids.operatorUserId,
 			birthDate: "2017-01-02",
 			status: "active",
 			contacts: [
@@ -932,6 +1111,7 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 			campusAccess: access,
 			name: "主档案",
 			campusId: ids.campusA,
+			ownerUserId: null,
 			birthDate: null,
 			status: "trial",
 			contacts: [
@@ -971,6 +1151,7 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 		});
 		assert.deepEqual(preview.blockingReasons, []);
 		assert.ok(preview.conflicts.includes("name"));
+		assert.ok(preview.conflicts.includes("ownerUserId"));
 		const targetPrimary = preview.contacts.find(
 			(contact) => contact.studentId === target.id && contact.isPrimary,
 		);
@@ -981,14 +1162,15 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 			userId: ids.managerUserId,
 			sourceStudentId: source.id,
 			targetStudentId: target.id,
-			expectedSourceUpdatedAt: preview.source.updatedAt,
-			expectedTargetUpdatedAt: preview.target.updatedAt,
+			expectedSourceVersion: preview.source.version,
+			expectedTargetVersion: preview.target.version,
 			requestId,
 			fieldSources: {
 				name: "target",
 				campusId: "target",
 				birthDate: "source",
 				status: "source",
+				ownerUserId: "source",
 				primaryContactId: targetPrimary.id,
 			},
 		});
@@ -999,21 +1181,22 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 				userId: ids.managerUserId,
 				sourceStudentId: source.id,
 				targetStudentId: target.id,
-				expectedSourceUpdatedAt: preview.source.updatedAt,
-				expectedTargetUpdatedAt: preview.target.updatedAt,
+				expectedSourceVersion: preview.source.version,
+				expectedTargetVersion: preview.target.version,
 				requestId,
 				fieldSources: {
 					name: "target",
 					campusId: "target",
 					birthDate: "source",
 					status: "source",
+					ownerUserId: "source",
 					primaryContactId: targetPrimary.id,
 				},
 			}),
 			{ ...result, replayed: true },
 		);
 
-		const [sourceMapping, movedEnrollment, mergedTarget, audits] =
+		const [sourceMapping, movedEnrollment, mergedTarget, ownerEvents, audits] =
 			await Promise.all([
 				db
 					.select({ mergedIntoStudentId: student.mergedIntoStudentId })
@@ -1029,6 +1212,14 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 					id: target.id,
 				}),
 				db
+					.select({
+						beforeOwnerUserId: studentOwnerAssignmentEvent.beforeOwnerUserId,
+						afterOwnerUserId: studentOwnerAssignmentEvent.afterOwnerUserId,
+						source: studentOwnerAssignmentEvent.source,
+					})
+					.from(studentOwnerAssignmentEvent)
+					.where(eq(studentOwnerAssignmentEvent.studentId, target.id)),
+				db
 					.select({ action: organizationAuditEvent.action })
 					.from(organizationAuditEvent)
 					.where(eq(organizationAuditEvent.organizationId, ids.organizationA)),
@@ -1037,7 +1228,16 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 		assert.equal(movedEnrollment.length, 1);
 		assert.equal(mergedTarget.birthDate, "2017-01-02");
 		assert.equal(mergedTarget.status, "active");
+		assert.equal(mergedTarget.ownerUserId, ids.operatorUserId);
 		assert.equal(mergedTarget.contacts.length, 2);
+		assert.ok(
+			ownerEvents.some(
+				(event) =>
+					event.source === "merge" &&
+					event.beforeOwnerUserId === null &&
+					event.afterOwnerUserId === ids.operatorUserId,
+			),
+		);
 		assert.ok(audits.some((audit) => audit.action === "student_merged"));
 		await assert.rejects(
 			updateStudentRecord({
@@ -1045,11 +1245,12 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 				userId: ids.managerUserId,
 				campusAccess: access,
 				id: source.id,
-				expectedUpdatedAt: source.updatedAt,
+				expectedVersion: source.version,
 				data: {
 					name: source.name,
 					birthDate: source.birthDate,
 					status: source.status,
+					ownerUserId: source.ownerUserId,
 					contacts: source.contacts,
 					tagIds: [],
 				},
@@ -1083,6 +1284,7 @@ test("学员业务时间线稳定聚合事实，并按角色、机构和校区�
 			campusAccess: selectedA,
 			name: "时间线学员",
 			campusId: ids.campusA,
+			ownerUserId: null,
 			birthDate: null,
 			status: "trial",
 			contacts: [
@@ -1202,11 +1404,12 @@ test("学员业务时间线稳定聚合事实，并按角色、机构和校区�
 			userId: ids.operatorUserId,
 			campusAccess: selectedA,
 			id: created.id,
-			expectedUpdatedAt: created.updatedAt,
+			expectedVersion: created.version,
 			data: {
 				name: created.name,
 				birthDate: created.birthDate,
 				status: "active",
+				ownerUserId: created.ownerUserId,
 				contacts: created.contacts,
 				tagIds: [],
 			},
@@ -1216,11 +1419,12 @@ test("学员业务时间线稳定聚合事实，并按角色、机构和校区�
 			userId: ids.operatorUserId,
 			campusAccess: selectedA,
 			id: created.id,
-			expectedUpdatedAt: updated.updatedAt,
+			expectedVersion: updated.version,
 			data: {
 				name: `${updated.name}（资料更新）`,
 				birthDate: updated.birthDate,
 				status: "active",
+				ownerUserId: updated.ownerUserId,
 				contacts: updated.contacts,
 				tagIds: [],
 			},

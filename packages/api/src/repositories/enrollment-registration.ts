@@ -59,6 +59,19 @@ function throwRegistrationError(error: unknown): never {
 			throw new ORPCError("CONFLICT", {
 				message: "暂停或已结业学员不能直接报名，请先处理学员状态。",
 			});
+		case "STUDENT_VERSION_CONFLICT":
+			throw new ORPCError("CONFLICT", {
+				message: "学员资料已更新，请刷新报名信息后重试。",
+				data: { reason: "STUDENT_VERSION_CONFLICT" },
+			});
+		case "STUDENT_OWNER_NOT_ELIGIBLE":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "所选成交归属人不具备该学员校区的负责人资格。",
+			});
+		case "STUDENT_OWNER_ADJUST_FORBIDDEN":
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前账号不能调整已有学员负责人。",
+			});
 		case "CAMPUS_INACTIVE":
 			throw new ORPCError("CONFLICT", {
 				message: "校区已停用，不能继续报名。",
@@ -122,6 +135,7 @@ export async function getIndependentEnrollmentOptions(
 			...result,
 			permissions: {
 				canOverridePackageTerms: canOverridePackageTerms(scope.role),
+				canAdjustStudentOwner: canOverridePackageTerms(scope.role),
 			},
 		};
 	} catch (error) {

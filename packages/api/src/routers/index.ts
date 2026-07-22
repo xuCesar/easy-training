@@ -31,9 +31,15 @@ import {
 	classGroupListResultSchema,
 	classroomListInputSchema,
 	classroomListResultSchema,
+	commitEnrollmentBulkOperationInputSchema,
+	commitEnrollmentBulkOperationResultSchema,
+	commitStudentBulkOperationInputSchema,
+	commitStudentBulkOperationResultSchema,
 	completeLessonInputSchema,
 	confirmLeadImportInputSchema,
 	confirmLeadImportResultSchema,
+	confirmStudentImportInputSchema,
+	confirmStudentImportResultSchema,
 	convertLeadInputSchema,
 	convertLeadResultSchema,
 	courseListInputSchema,
@@ -76,6 +82,8 @@ import {
 	enrollmentAdjustmentListResultSchema,
 	exportLeadsInputSchema,
 	exportLeadsResultSchema,
+	exportStudentsInputSchema,
+	exportStudentsResultSchema,
 	generateReceiptDocumentInputSchema,
 	generateScheduleLessonsInputSchema,
 	generateScheduleLessonsResultSchema,
@@ -112,6 +120,8 @@ import {
 	markNotificationReadInputSchema,
 	markNotificationsReadResultSchema,
 	memberListResultSchema,
+	memberOwnerImpactInputSchema,
+	memberOwnerImpactResultSchema,
 	mergeStudentsInputSchema,
 	mergeStudentsResultSchema,
 	notificationListInputSchema,
@@ -126,6 +136,8 @@ import {
 	pauseClassGroupResultSchema,
 	previewBulkLessonUpdateInputSchema,
 	previewBulkLessonUpdateResultSchema,
+	previewEnrollmentBulkOperationInputSchema,
+	previewEnrollmentBulkOperationResultSchema,
 	previewLeadImportInputSchema,
 	previewLeadImportResultSchema,
 	previewScheduleGenerationInputSchema,
@@ -134,6 +146,10 @@ import {
 	previewScheduleRuleDeactivationResultSchema,
 	previewScheduleRuleUpdateInputSchema,
 	previewScheduleRuleUpdateResultSchema,
+	previewStudentBulkOperationInputSchema,
+	previewStudentBulkOperationResultSchema,
+	previewStudentImportInputSchema,
+	previewStudentImportResultSchema,
 	receiptDocumentMutationResultSchema,
 	receiptDocumentViewSchema,
 	refundRequestListInputSchema,
@@ -154,12 +170,17 @@ import {
 	setClassroomActiveInputSchema,
 	setCourseActiveInputSchema,
 	setStudentTagActiveInputSchema,
+	studentActiveEnrollmentOptionsInputSchema,
+	studentActiveEnrollmentOptionsResultSchema,
 	studentDetailInputSchema,
 	studentDetailSchema,
+	studentImportTemplateResultSchema,
 	studentListInputSchema,
 	studentListResultSchema,
 	studentMergePreviewInputSchema,
 	studentMergePreviewResultSchema,
+	studentOwnerCandidateListInputSchema,
+	studentOwnerCandidateListResultSchema,
 	studentTagListInputSchema,
 	studentTagListResultSchema,
 	studentTimelineInputSchema,
@@ -196,6 +217,8 @@ import {
 	organizationProcedure,
 	protectedProcedure,
 	publicProcedure,
+	studentBulkProcedure,
+	studentExportProcedure,
 	studentProcedure,
 	teacherWorkspaceProcedure,
 } from "../index";
@@ -271,6 +294,7 @@ import {
 	listCampuses,
 	listInvitations,
 	listMembers,
+	previewMemberOwnerImpact,
 	removeMember,
 	resendInvitation,
 	revokeInvitation,
@@ -297,13 +321,23 @@ import {
 	mergeStudents,
 } from "../repositories/student-merge";
 import {
+	commitEnrollmentBulkOperation,
+	commitStudentBulkOperation,
+	confirmStudentImport,
 	createStudent,
 	createStudentTag,
+	exportStudents,
 	getDuplicateStudentCandidates,
 	getStudent,
+	getStudentActiveEnrollmentOptions,
+	getStudentImportTemplate,
 	getStudentTimeline,
+	listStudentOwnerCandidates,
 	listStudents,
 	listStudentTags,
+	previewEnrollmentBulkOperation,
+	previewStudentBulkOperation,
+	previewStudentImport,
 	setStudentTagActive,
 	updateStudent,
 	updateStudentTag,
@@ -483,6 +517,19 @@ export const appRouter = {
 						input,
 					),
 				),
+			ownerImpact: organizationManagementProcedure
+				.input(memberOwnerImpactInputSchema)
+				.output(memberOwnerImpactResultSchema)
+				.handler(({ context, input }) =>
+					previewMemberOwnerImpact(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
 			remove: organizationManagementProcedure
 				.input(removeMemberInputSchema)
 				.handler(({ context, input }) =>
@@ -610,6 +657,126 @@ export const appRouter = {
 				),
 		},
 		students: {
+			importTemplate: studentProcedure
+				.output(studentImportTemplateResultSchema)
+				.handler(() => getStudentImportTemplate()),
+			previewImport: studentProcedure
+				.input(previewStudentImportInputSchema)
+				.output(previewStudentImportResultSchema)
+				.handler(({ context, input }) =>
+					previewStudentImport(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			confirmImport: studentProcedure
+				.input(confirmStudentImportInputSchema)
+				.output(confirmStudentImportResultSchema)
+				.handler(({ context, input }) =>
+					confirmStudentImport(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			export: studentExportProcedure
+				.input(exportStudentsInputSchema)
+				.output(exportStudentsResultSchema)
+				.handler(({ context, input }) =>
+					exportStudents(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			previewBulk: studentBulkProcedure
+				.input(previewStudentBulkOperationInputSchema)
+				.output(previewStudentBulkOperationResultSchema)
+				.handler(({ context, input }) =>
+					previewStudentBulkOperation(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			commitBulk: studentBulkProcedure
+				.input(commitStudentBulkOperationInputSchema)
+				.output(commitStudentBulkOperationResultSchema)
+				.handler(({ context, input }) =>
+					commitStudentBulkOperation(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			activeEnrollmentOptions: studentBulkProcedure
+				.input(studentActiveEnrollmentOptionsInputSchema)
+				.output(studentActiveEnrollmentOptionsResultSchema)
+				.handler(({ context, input }) =>
+					getStudentActiveEnrollmentOptions(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			previewEnrollmentBulk: studentBulkProcedure
+				.input(previewEnrollmentBulkOperationInputSchema)
+				.output(previewEnrollmentBulkOperationResultSchema)
+				.handler(({ context, input }) =>
+					previewEnrollmentBulkOperation(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			commitEnrollmentBulk: studentBulkProcedure
+				.input(commitEnrollmentBulkOperationInputSchema)
+				.output(commitEnrollmentBulkOperationResultSchema)
+				.handler(({ context, input }) =>
+					commitEnrollmentBulkOperation(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			ownerCandidates: studentProcedure
+				.input(studentOwnerCandidateListInputSchema)
+				.output(studentOwnerCandidateListResultSchema)
+				.handler(({ context, input }) =>
+					listStudentOwnerCandidates(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
 			timeline: studentProcedure
 				.input(studentTimelineInputSchema)
 				.output(studentTimelineResultSchema)

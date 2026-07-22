@@ -57,6 +57,10 @@ function throwMergeError(error: unknown): never {
 			throw new ORPCError("BAD_REQUEST", {
 				message: "请选择合并后的主要联系人。",
 			});
+		case "STUDENT_OWNER_NOT_ELIGIBLE":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "合并后负责人不具备所选校区的负责人资格。",
+			});
 		case "STUDENT_MERGE_SAME_RECORD":
 		case "STUDENT_ALREADY_MERGED":
 		case "IDEMPOTENCY_CONFLICT":
@@ -98,8 +102,6 @@ export async function mergeStudents(
 		return await mergeStudentRecords({
 			...scope,
 			...input,
-			expectedSourceUpdatedAt: new Date(input.expectedSourceUpdatedAt),
-			expectedTargetUpdatedAt: new Date(input.expectedTargetUpdatedAt),
 		});
 	} catch (error) {
 		return throwMergeError(error);

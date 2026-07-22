@@ -1,12 +1,25 @@
 import {
+	commitEnrollmentBulkOperationRecord,
+	commitStudentBulkOperationRecord,
+	confirmStudentImportRecord,
 	createStudentRecord,
 	createStudentTagRecord,
+	EnrollmentBulkOperationError,
+	exportStudentRecords,
 	findDuplicateStudentCandidates,
 	getStudentRecord,
+	listStudentActiveEnrollmentOptionsRecord,
+	listStudentOwnerCandidateRecords,
 	listStudentRecords,
 	listStudentTagRecords,
 	listStudentTimelineRecords,
+	previewEnrollmentBulkOperationRecord,
+	previewStudentBulkOperationRecord,
+	previewStudentImportRecord,
 	renameStudentTagRecord,
+	STUDENT_IMPORT_TEMPLATE,
+	StudentBulkOperationError,
+	StudentImportExportError,
 	StudentRepositoryError,
 	setStudentTagActiveRecord,
 	updateStudentRecord,
@@ -14,14 +27,32 @@ import {
 import { ORPCError } from "@orpc/server";
 
 import type {
+	CommitEnrollmentBulkOperationInput,
+	CommitEnrollmentBulkOperationResult,
+	CommitStudentBulkOperationInput,
+	CommitStudentBulkOperationResult,
+	ConfirmStudentImportInput,
+	ConfirmStudentImportResult,
 	CreateStudentInput,
 	CreateStudentTagInput,
 	DuplicateStudentCandidatesInput,
 	DuplicateStudentCandidatesResult,
+	ExportStudentsInput,
+	ExportStudentsResult,
+	PreviewEnrollmentBulkOperationInput,
+	PreviewEnrollmentBulkOperationResult,
+	PreviewStudentBulkOperationInput,
+	PreviewStudentBulkOperationResult,
+	PreviewStudentImportInput,
+	PreviewStudentImportResult,
 	SetStudentTagActiveInput,
+	StudentActiveEnrollmentOptionsInput,
+	StudentActiveEnrollmentOptionsResult,
 	StudentDetail,
 	StudentListInput,
 	StudentListResult,
+	StudentOwnerCandidateListInput,
+	StudentOwnerCandidateListResult,
 	StudentStatus,
 	StudentTag,
 	StudentTagListInput,
@@ -31,6 +62,7 @@ import type {
 	UpdateStudentInput,
 	UpdateStudentTagInput,
 } from "../contracts/training";
+import { quoteCsv } from "./csv";
 
 type StudentScope = {
 	organizationId: string;
@@ -114,6 +146,10 @@ function throwStudentError(error: unknown): never {
 				message: "该学员档案已被其他人更新，请刷新最新资料后重试。",
 				data: { reason: "STUDENT_VERSION_CONFLICT" },
 			});
+		case "STUDENT_OWNER_NOT_ELIGIBLE":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "所选负责人已不属于该学员校区或角色不可用。",
+			});
 		case "STUDENT_MERGED":
 			throw new ORPCError("CONFLICT", {
 				message: "该学员已合并到主档案，不能再编辑。",
@@ -135,6 +171,77 @@ function throwStudentError(error: unknown): never {
 	}
 }
 
+function throwStudentImportExportError(error: unknown): never {
+	if (!(error instanceof StudentImportExportError)) {
+		throw new ORPCError("INTERNAL_SERVER_ERROR", {
+			message: "暂时无法处理学员导入或导出，请稍后重试。",
+		});
+	}
+	switch (error.code) {
+		case "IMPORT_INVALID_CSV":
+			throw new ORPCError("BAD_REQUEST", { message: "CSV 模板或内容无效。" });
+		case "IMPORT_LIMIT_EXCEEDED":
+			throw new ORPCError("BAD_REQUEST", {
+				message: "CSV 文件或行数超过导入限制。",
+			});
+		case "IMPORT_IDEMPOTENCY_CONFLICT":
+			throw new ORPCError("CONFLICT", {
+				message: "同一导入请求不能用于不同内容。",
+			});
+		case "MEMBER_FORBIDDEN":
+		case "CAMPUS_OUT_OF_SCOPE":
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前账号无权导入、导出或访问目标校区。",
+			});
+	}
+}
+
+function throwStudentBulkOperationError(error: unknown): never {
+	if (!(error instanceof StudentBulkOperationError)) {
+		throw new ORPCError("INTERNAL_SERVER_ERROR", {
+			message: "暂时无法处理学员批量操作，请稍后重试。",
+		});
+	}
+	switch (error.code) {
+		case "MEMBER_FORBIDDEN":
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前账号无权执行学员批量调整。",
+			});
+		case "IDEMPOTENCY_CONFLICT":
+			throw new ORPCError("CONFLICT", {
+				message: "同一批量请求不能用于不同操作。",
+			});
+		case "BULK_BLOCKED":
+			throw new ORPCError("CONFLICT", {
+				message: "部分学员状态、权限或版本已变化，本批操作未执行。",
+				data: { reason: "STUDENT_BULK_BLOCKED", items: error.items },
+			});
+	}
+}
+
+function throwEnrollmentBulkOperationError(error: unknown): never {
+	if (!(error instanceof EnrollmentBulkOperationError)) {
+		throw new ORPCError("INTERNAL_SERVER_ERROR", {
+			message: "暂时无法处理报名班级批量操作，请稍后重试。",
+		});
+	}
+	switch (error.code) {
+		case "MEMBER_FORBIDDEN":
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前账号无权执行报名班级批量调整。",
+			});
+		case "IDEMPOTENCY_CONFLICT":
+			throw new ORPCError("CONFLICT", {
+				message: "同一批量请求不能用于不同操作。",
+			});
+		case "BULK_BLOCKED":
+			throw new ORPCError("CONFLICT", {
+				message: "部分报名状态、权限或容量已变化，本批操作未执行。",
+				data: { reason: "ENROLLMENT_BULK_BLOCKED", items: error.items },
+			});
+	}
+}
+
 export async function listStudents(
 	scope: StudentScope,
 	input: StudentListInput,
@@ -143,6 +250,8 @@ export async function listStudents(
 		const result = await listStudentRecords({
 			...scope,
 			...input,
+			ownerUserId:
+				input.ownerUserId === "unassigned" ? null : input.ownerUserId,
 			status:
 				input.status === "all" ? undefined : toDatabaseStatus(input.status),
 		});
@@ -180,6 +289,19 @@ export async function getStudent(
 ): Promise<StudentDetail> {
 	try {
 		return toDetail(await getStudentRecord({ ...scope, id }));
+	} catch (error) {
+		return throwStudentError(error);
+	}
+}
+
+export async function listStudentOwnerCandidates(
+	scope: StudentScope,
+	input: StudentOwnerCandidateListInput,
+): Promise<StudentOwnerCandidateListResult> {
+	try {
+		return {
+			items: await listStudentOwnerCandidateRecords({ ...scope, ...input }),
+		};
 	} catch (error) {
 		return throwStudentError(error);
 	}
@@ -258,7 +380,7 @@ export async function updateStudent(
 			await updateStudentRecord({
 				...scope,
 				id: input.id,
-				expectedUpdatedAt: new Date(input.expectedUpdatedAt),
+				expectedVersion: input.expectedVersion,
 				data: { ...input.data, status: toDatabaseStatus(input.data.status) },
 			}),
 		);
@@ -309,5 +431,181 @@ export async function setStudentTagActive(
 		return toTag(await setStudentTagActiveRecord({ ...scope, ...input }));
 	} catch (error) {
 		return throwStudentError(error);
+	}
+}
+
+export function getStudentImportTemplate() {
+	return {
+		fileName: "学员导入模板.csv",
+		csv: `\uFEFF${STUDENT_IMPORT_TEMPLATE}`,
+	};
+}
+
+export async function previewStudentImport(
+	scope: StudentScope,
+	input: PreviewStudentImportInput,
+): Promise<PreviewStudentImportResult> {
+	try {
+		return await previewStudentImportRecord({
+			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
+			content: input.content,
+		});
+	} catch (error) {
+		return throwStudentImportExportError(error);
+	}
+}
+
+export async function confirmStudentImport(
+	scope: StudentScope,
+	input: ConfirmStudentImportInput,
+): Promise<ConfirmStudentImportResult> {
+	try {
+		return await confirmStudentImportRecord({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			requestId: input.requestId,
+			content: input.content,
+		});
+	} catch (error) {
+		return throwStudentImportExportError(error);
+	}
+}
+
+export async function exportStudents(
+	scope: StudentScope,
+	input: ExportStudentsInput,
+): Promise<ExportStudentsResult> {
+	try {
+		const rows = await exportStudentRecords({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			query: input.query,
+			campusId: input.campusId,
+			status:
+				input.status === "all" ? undefined : toDatabaseStatus(input.status),
+			tagId: input.tagId,
+			ownerUserId:
+				input.ownerUserId === "unassigned"
+					? null
+					: input.ownerUserId || undefined,
+			limit: input.limit,
+		});
+		const lines = [
+			[
+				"学员ID",
+				"姓名",
+				"校区编码",
+				"校区名称",
+				"出生日期",
+				"状态",
+				"负责人姓名",
+				"负责人邮箱",
+				"主要联系人姓名",
+				"主要联系人手机号",
+				"标签",
+				"创建时间",
+				"更新时间",
+			].join(","),
+			...rows.map((row) =>
+				[
+					quoteCsv(row.id),
+					quoteCsv(row.name),
+					quoteCsv(row.campusCode),
+					quoteCsv(row.campusName),
+					quoteCsv(row.birthDate),
+					quoteCsv(toStudentStatus(row.status)),
+					quoteCsv(row.ownerName),
+					quoteCsv(row.ownerEmail),
+					quoteCsv(row.primaryContactName),
+					quoteCsv(row.primaryContactPhone),
+					quoteCsv(row.tagNames.join("|")),
+					quoteCsv(row.createdAt.toISOString()),
+					quoteCsv(row.updatedAt.toISOString()),
+				].join(","),
+			),
+		];
+		return {
+			fileName: `学员档案-${new Date().toISOString().slice(0, 10)}.csv`,
+			csv: `\uFEFF${lines.join("\n")}`,
+		};
+	} catch (error) {
+		return throwStudentImportExportError(error);
+	}
+}
+
+export async function previewStudentBulkOperation(
+	scope: StudentScope,
+	input: PreviewStudentBulkOperationInput,
+): Promise<PreviewStudentBulkOperationResult> {
+	try {
+		return await previewStudentBulkOperationRecord({
+			...input,
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+		});
+	} catch (error) {
+		return throwStudentBulkOperationError(error);
+	}
+}
+
+export async function commitStudentBulkOperation(
+	scope: StudentScope,
+	input: CommitStudentBulkOperationInput,
+): Promise<CommitStudentBulkOperationResult> {
+	try {
+		return await commitStudentBulkOperationRecord({
+			...input,
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+		});
+	} catch (error) {
+		return throwStudentBulkOperationError(error);
+	}
+}
+
+export async function getStudentActiveEnrollmentOptions(
+	scope: StudentScope,
+	input: StudentActiveEnrollmentOptionsInput,
+): Promise<StudentActiveEnrollmentOptionsResult> {
+	try {
+		const items = await listStudentActiveEnrollmentOptionsRecord({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			studentIds: input.studentIds,
+		});
+		return { items };
+	} catch (error) {
+		return throwEnrollmentBulkOperationError(error);
+	}
+}
+
+export async function previewEnrollmentBulkOperation(
+	scope: StudentScope,
+	input: PreviewEnrollmentBulkOperationInput,
+): Promise<PreviewEnrollmentBulkOperationResult> {
+	try {
+		return await previewEnrollmentBulkOperationRecord({
+			...input,
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+		});
+	} catch (error) {
+		return throwEnrollmentBulkOperationError(error);
+	}
+}
+
+export async function commitEnrollmentBulkOperation(
+	scope: StudentScope,
+	input: CommitEnrollmentBulkOperationInput,
+): Promise<CommitEnrollmentBulkOperationResult> {
+	try {
+		return await commitEnrollmentBulkOperationRecord({
+			...input,
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+		});
+	} catch (error) {
+		return throwEnrollmentBulkOperationError(error);
 	}
 }

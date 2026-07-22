@@ -1,6 +1,15 @@
 import {
 	type Campus,
 	createStudentInputSchema,
+	getLeadImportRpcBodyBytes,
+	LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE,
+	LEAD_IMPORT_RPC_BODY_LIMIT_BYTES,
+	type MergeStudentsInput,
+	type PreviewEnrollmentBulkOperationInput,
+	type PreviewEnrollmentBulkOperationResult,
+	type PreviewStudentBulkOperationInput,
+	type PreviewStudentBulkOperationResult,
+	type PreviewStudentImportResult,
 	type StudentDetail,
 	type StudentListResult,
 	type StudentStatus,
@@ -55,8 +64,9 @@ import {
 	useQueries,
 	useQuery,
 } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
+	DownloadIcon,
 	HistoryIcon,
 	LoaderCircleIcon,
 	PencilIcon,
@@ -64,6 +74,7 @@ import {
 	PowerIcon,
 	SearchIcon,
 	TagsIcon,
+	UploadIcon,
 	UserPlusIcon,
 	UsersRoundIcon,
 } from "lucide-react";
@@ -101,6 +112,7 @@ type StudentSummary = StudentListResult["items"][number];
 type StudentFormValues = {
 	name: string;
 	campusId: string;
+	ownerUserId: string | null;
 	birthDate: string;
 	status: StudentStatus;
 	contacts: Array<{
@@ -131,10 +143,18 @@ function StudentsRoute() {
 	const [campusId, setCampusId] = useState<string | null>(null);
 	const [status, setStatus] = useState<"all" | StudentStatus>("all");
 	const [tagId, setTagId] = useState<string | null>(null);
+	const [ownerUserId, setOwnerUserId] = useState<string | null>(null);
 	const [editor, setEditor] = useState<EditorTarget>(null);
 	const [independentEnrollmentOpen, setIndependentEnrollmentOpen] =
 		useState(false);
 	const [tagsOpen, setTagsOpen] = useState(false);
+	const [importOpen, setImportOpen] = useState(false);
+	const [selectedStudents, setSelectedStudents] = useState<StudentSummary[]>(
+		[],
+	);
+	const [bulkAction, setBulkAction] = useState<
+		"owner" | "addTag" | "removeTag" | "assignClass" | "withdrawClass" | null
+	>(null);
 	const [mergeTarget, setMergeTarget] = useState<StudentSummary | null>(null);
 	const [timelineTarget, setTimelineTarget] = useState<StudentSummary | null>(
 		null,
@@ -155,6 +175,34 @@ function StudentsRoute() {
 		...tagsOptions,
 		queryKey: [...tagsOptions.queryKey, queryContext],
 	});
+	const ownerCandidateQueries = useQueries({
+		queries: (campusesQuery.data?.items ?? [])
+			.filter((campus) => !campusId || campus.id === campusId)
+			.map((campus) => ({
+				...orpc.training.students.ownerCandidates.queryOptions({
+					input: { campusId: campus.id },
+				}),
+				queryKey: [
+					"student-owner-filter-candidates",
+					organization.id,
+					sessionUserId,
+					campus.id,
+				],
+			})),
+	});
+	const ownerFilterItems = useMemo(() => {
+		const candidates = ownerCandidateQueries.flatMap(
+			(query) => query.data?.items ?? [],
+		);
+		return Array.from(
+			new Map(
+				candidates.map((candidate) => [candidate.userId, candidate]),
+			).values(),
+		).map((candidate) => ({
+			value: candidate.userId,
+			label: candidate.name,
+		}));
+	}, [ownerCandidateQueries]);
 	const targetStudentQuery = useQuery({
 		...orpc.training.students.get.queryOptions({
 			input: { id: studentId ?? "" },
@@ -187,9 +235,10 @@ function StudentsRoute() {
 			campusId: campusId ?? undefined,
 			status,
 			tagId: tagId ?? undefined,
+			ownerUserId: ownerUserId ?? undefined,
 			pageSize: 20,
 		}),
-		[campusId, deferredSearch, status, tagId],
+		[campusId, deferredSearch, ownerUserId, status, tagId],
 	);
 	const listQuery = useInfiniteQuery({
 		queryKey: ["training-students", organization.id, sessionUserId, filters],
@@ -203,15 +252,51 @@ function StudentsRoute() {
 	});
 	const items = listQuery.data?.pages.flatMap((page) => page.items) ?? [];
 	const total = listQuery.data?.pages[0]?.total ?? 0;
-	const isFiltered = Boolean(search || campusId || tagId || status !== "all");
+	const isFiltered = Boolean(
+		search || campusId || tagId || ownerUserId || status !== "all",
+	);
 	const canManageTags =
 		organization.role === "owner" || organization.role === "admin";
+	const canExport = ["owner", "admin", "campus_manager"].includes(
+		organization.role,
+	);
+	const canBulkManage = canExport;
+	const templateMutation = useMutation({
+		mutationFn: () => client.training.students.importTemplate(),
+		onSuccess: ({ csv, fileName }) => {
+			downloadCsv(csv, fileName);
+			toast.success("学员导入模板已开始下载");
+		},
+		onError: () => toast.error("暂时无法下载学员导入模板"),
+	});
+	const exportMutation = useMutation(
+		orpc.training.students.export.mutationOptions({
+			onSuccess: ({ csv, fileName }) => {
+				downloadCsv(csv, fileName);
+				toast.success("学员导出已开始下载");
+			},
+			onError: () => toast.error("暂时无法导出学员，请稍后重试"),
+		}),
+	);
 
 	function clearFilters() {
 		setSearch("");
 		setCampusId(null);
 		setStatus("all");
 		setTagId(null);
+		setOwnerUserId(null);
+	}
+
+	function toggleStudentSelection(student: StudentSummary, checked: boolean) {
+		setSelectedStudents((current) => {
+			if (!checked) return current.filter((item) => item.id !== student.id);
+			if (current.some((item) => item.id === student.id)) return current;
+			if (current.length >= 200) {
+				toast.error("单次最多选择 200 位学员");
+				return current;
+			}
+			return [...current, student];
+		});
 	}
 
 	return (
@@ -225,6 +310,44 @@ function StudentsRoute() {
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
+					<Button
+						variant="outline"
+						disabled={templateMutation.isPending}
+						onClick={() => templateMutation.mutate()}
+					>
+						<DownloadIcon data-icon="inline-start" />
+						下载模板
+					</Button>
+					<Button variant="outline" onClick={() => setImportOpen(true)}>
+						<UploadIcon data-icon="inline-start" />
+						导入
+					</Button>
+					{canExport ? (
+						<Button
+							variant="outline"
+							disabled={exportMutation.isPending}
+							onClick={() =>
+								exportMutation.mutate({
+									query: deferredSearch || undefined,
+									campusId: campusId ?? undefined,
+									status,
+									tagId: tagId ?? undefined,
+									ownerUserId: ownerUserId ?? undefined,
+									limit: 5_000,
+								})
+							}
+						>
+							{exportMutation.isPending ? (
+								<LoaderCircleIcon
+									className="animate-spin"
+									data-icon="inline-start"
+								/>
+							) : (
+								<DownloadIcon data-icon="inline-start" />
+							)}
+							导出
+						</Button>
+					) : null}
 					<Button
 						variant="outline"
 						onClick={() => setIndependentEnrollmentOpen(true)}
@@ -244,7 +367,7 @@ function StudentsRoute() {
 					</Button>
 				</div>
 			</section>
-			<section className="grid gap-3 border p-3 md:grid-cols-2 xl:grid-cols-4">
+			<section className="grid gap-3 border p-3 md:grid-cols-2 xl:grid-cols-5">
 				<div className="relative md:col-span-2 xl:col-span-1">
 					<SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
 					<Input
@@ -285,17 +408,60 @@ function StudentsRoute() {
 						})),
 					]}
 				/>
+				<FilterSelect
+					label="按负责人筛选"
+					value={ownerUserId ?? "all"}
+					onValueChange={(value) =>
+						setOwnerUserId(value === "all" ? null : value)
+					}
+					items={[
+						{ value: "all", label: "全部负责人" },
+						{ value: "unassigned", label: "未分配" },
+						...ownerFilterItems,
+					]}
+				/>
 				{isFiltered ? (
 					<Button
 						type="button"
 						variant="ghost"
-						className="md:col-span-2 md:justify-self-end xl:col-span-4"
+						className="md:col-span-2 md:justify-self-end xl:col-span-5"
 						onClick={clearFilters}
 					>
 						清除筛选
 					</Button>
 				) : null}
 			</section>
+			{canBulkManage && selectedStudents.length > 0 ? (
+				<section className="flex flex-wrap items-center gap-2 border bg-muted/30 p-3">
+					<p className="mr-auto text-sm">
+						已选择 {selectedStudents.length} 位学员
+					</p>
+					<Button variant="outline" onClick={() => setBulkAction("owner")}>
+						调整负责人
+					</Button>
+					<Button variant="outline" onClick={() => setBulkAction("addTag")}>
+						添加标签
+					</Button>
+					<Button variant="outline" onClick={() => setBulkAction("removeTag")}>
+						移除标签
+					</Button>
+					<Button
+						variant="outline"
+						onClick={() => setBulkAction("assignClass")}
+					>
+						分配班级
+					</Button>
+					<Button
+						variant="outline"
+						onClick={() => setBulkAction("withdrawClass")}
+					>
+						移出班级
+					</Button>
+					<Button variant="ghost" onClick={() => setSelectedStudents([])}>
+						清空选择
+					</Button>
+				</section>
+			) : null}
 			<StudentResults
 				items={items}
 				isFiltered={isFiltered}
@@ -305,6 +471,8 @@ function StudentsRoute() {
 				onEdit={setEditor}
 				onTimeline={setTimelineTarget}
 				onMerge={canManageTags ? setMergeTarget : undefined}
+				selectedIds={new Set(selectedStudents.map((student) => student.id))}
+				onToggleSelected={canBulkManage ? toggleStudentSelection : undefined}
 			/>
 			{listQuery.hasNextPage ? (
 				<div className="flex justify-center">
@@ -361,7 +529,651 @@ function StudentsRoute() {
 					onOpenChange={setTagsOpen}
 				/>
 			) : null}
+			<StudentImportDialog
+				open={importOpen}
+				organizationId={organization.id}
+				onOpenChange={setImportOpen}
+			/>
+			{bulkAction &&
+			bulkAction !== "assignClass" &&
+			bulkAction !== "withdrawClass" ? (
+				<StudentBulkOperationDialog
+					action={bulkAction}
+					students={selectedStudents}
+					ownerItems={ownerFilterItems}
+					tags={tagsQuery.data?.items.filter((tag) => tag.isActive) ?? []}
+					organizationId={organization.id}
+					onClose={() => setBulkAction(null)}
+					onSuccess={() => {
+						setBulkAction(null);
+						setSelectedStudents([]);
+					}}
+				/>
+			) : null}
+			{bulkAction === "assignClass" || bulkAction === "withdrawClass" ? (
+				<EnrollmentBulkOperationDialog
+					action={bulkAction}
+					students={selectedStudents}
+					organizationId={organization.id}
+					onClose={() => setBulkAction(null)}
+					onSuccess={() => {
+						setBulkAction(null);
+						setSelectedStudents([]);
+					}}
+				/>
+			) : null}
 		</div>
+	);
+}
+
+function downloadCsv(csv: string, fileName: string) {
+	const url = URL.createObjectURL(
+		new Blob([csv], { type: "text/csv;charset=utf-8" }),
+	);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = fileName;
+	anchor.click();
+	URL.revokeObjectURL(url);
+}
+
+function StudentBulkOperationDialog({
+	action,
+	students,
+	ownerItems,
+	tags,
+	organizationId,
+	onClose,
+	onSuccess,
+}: {
+	action: "owner" | "addTag" | "removeTag";
+	students: StudentSummary[];
+	ownerItems: Array<{ value: string; label: string }>;
+	tags: StudentTag[];
+	organizationId: string;
+	onClose: () => void;
+	onSuccess: () => void;
+}) {
+	const [value, setValue] = useState<string | null>(null);
+	const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+	const [preview, setPreview] =
+		useState<PreviewStudentBulkOperationResult | null>(null);
+	const targets = students.map((student) => ({
+		studentId: student.id,
+		expectedVersion: student.version,
+	}));
+	const operationInput: PreviewStudentBulkOperationInput | null =
+		action === "owner"
+			? value === "unassigned"
+				? { kind: "clearStudentOwner", targets }
+				: value
+					? { kind: "setStudentOwner", targets, ownerUserId: value }
+					: null
+			: value
+				? {
+						kind: action === "addTag" ? "addStudentTag" : "removeStudentTag",
+						targets,
+						tagId: value,
+					}
+				: null;
+	const previewMutation = useMutation(
+		orpc.training.students.previewBulk.mutationOptions({
+			onSuccess: setPreview,
+			onError: () => toast.error("批量预览失败，请刷新学员列表后重试。"),
+		}),
+	);
+	const commitMutation = useMutation(
+		orpc.training.students.commitBulk.mutationOptions({
+			onSuccess: async (result) => {
+				await queryClient.invalidateQueries({
+					queryKey: ["training-students", organizationId],
+				});
+				toast.success(
+					`批量操作完成：变更 ${result.changedCount} 位，无变化 ${result.unchangedCount} 位。`,
+				);
+				onSuccess();
+			},
+			onError: () => {
+				setPreview(null);
+				setRequestId(crypto.randomUUID());
+				toast.error("提交时数据已变化，整批未执行。请刷新并重新预览。");
+			},
+		}),
+	);
+
+	function changeValue(nextValue: string | null) {
+		setValue(nextValue);
+		setPreview(null);
+		setRequestId(crypto.randomUUID());
+		previewMutation.reset();
+		commitMutation.reset();
+	}
+
+	return (
+		<Dialog open onOpenChange={(open) => !open && onClose()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>
+						{action === "owner"
+							? "批量调整负责人"
+							: action === "addTag"
+								? "批量添加标签"
+								: "批量移除标签"}
+					</DialogTitle>
+					<DialogDescription>
+						将对 {students.length}{" "}
+						位明确选择的学员执行操作。预览不会锁定数据，提交时会重新校验版本、权限和目标资格。
+					</DialogDescription>
+				</DialogHeader>
+				<Field name="student-bulk-value">
+					<FieldLabel>
+						{action === "owner" ? "目标负责人" : "目标标签"}
+					</FieldLabel>
+					<Select
+						value={value ?? ""}
+						onValueChange={(next) => changeValue(next ?? null)}
+						disabled={commitMutation.isPending}
+					>
+						<SelectTrigger>
+							<SelectValue>
+								{() =>
+									action === "owner"
+										? value === "unassigned"
+											? "清空负责人"
+											: (ownerItems.find((item) => item.value === value)
+													?.label ?? "请选择负责人")
+										: (tags.find((tag) => tag.id === value)?.name ??
+											"请选择标签")
+								}
+							</SelectValue>
+						</SelectTrigger>
+						<SelectContent>
+							<SelectGroup>
+								{action === "owner" ? (
+									<>
+										<SelectItem value="unassigned">清空负责人</SelectItem>
+										{ownerItems.map((item) => (
+											<SelectItem key={item.value} value={item.value}>
+												{item.label}
+											</SelectItem>
+										))}
+									</>
+								) : (
+									tags.map((tag) => (
+										<SelectItem key={tag.id} value={tag.id}>
+											{tag.name}
+										</SelectItem>
+									))
+								)}
+							</SelectGroup>
+						</SelectContent>
+					</Select>
+				</Field>
+				{preview ? (
+					<div className="space-y-2 text-sm">
+						<p>
+							将变更 {preview.changeCount} 位，无变化 {preview.noChangeCount}{" "}
+							位，阻断 {preview.blockedCount} 位。
+						</p>
+						<ul className="max-h-52 space-y-1 overflow-y-auto border p-3 text-xs">
+							{preview.items.map((item) => (
+								<li key={item.studentId}>
+									{item.studentName ?? item.studentId}：
+									{item.status === "change"
+										? "将变更"
+										: item.status === "no_change"
+											? "无变化"
+											: `已阻断（${item.blockerCode}）`}
+								</li>
+							))}
+						</ul>
+					</div>
+				) : null}
+				<DialogFooter>
+					<Button variant="outline" onClick={onClose}>
+						取消
+					</Button>
+					{preview ? (
+						<Button
+							disabled={preview.blockedCount > 0 || commitMutation.isPending}
+							onClick={() => {
+								if (!operationInput) return;
+								commitMutation.mutate({ ...operationInput, requestId });
+							}}
+						>
+							{commitMutation.isPending ? "正在提交" : "确认提交"}
+						</Button>
+					) : (
+						<Button
+							disabled={!operationInput || previewMutation.isPending}
+							onClick={() =>
+								operationInput && previewMutation.mutate(operationInput)
+							}
+						>
+							{previewMutation.isPending ? "正在预览" : "预览变更"}
+						</Button>
+					)}
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function EnrollmentBulkOperationDialog({
+	action,
+	students,
+	organizationId,
+	onClose,
+	onSuccess,
+}: {
+	action: "assignClass" | "withdrawClass";
+	students: StudentSummary[];
+	organizationId: string;
+	onClose: () => void;
+	onSuccess: () => void;
+}) {
+	const [selectedEnrollmentIds, setSelectedEnrollmentIds] = useState<
+		ReadonlySet<string>
+	>(new Set());
+	const [classGroupId, setClassGroupId] = useState<string | null>(null);
+	const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+	const [preview, setPreview] =
+		useState<PreviewEnrollmentBulkOperationResult | null>(null);
+	const optionsQuery = useQuery(
+		orpc.training.students.activeEnrollmentOptions.queryOptions({
+			input: { studentIds: students.map((student) => student.id) },
+		}),
+	);
+	const classesQuery = useQuery(
+		orpc.training.teaching.classes.list.queryOptions({ input: {} }),
+	);
+	const enrollmentOptions = optionsQuery.data?.items ?? [];
+	const selectedEnrollments = enrollmentOptions.filter((item) =>
+		selectedEnrollmentIds.has(item.enrollmentId),
+	);
+	const targets = selectedEnrollments.map((item) => ({
+		enrollmentId: item.enrollmentId,
+		expectedVersion: item.version,
+	}));
+	const operationInput: PreviewEnrollmentBulkOperationInput | null =
+		targets.length === 0
+			? null
+			: action === "assignClass"
+				? classGroupId
+					? { kind: "assignEnrollmentClass", targets, classGroupId }
+					: null
+				: { kind: "withdrawEnrollmentClass", targets };
+	const firstSelected = selectedEnrollments[0];
+	const availableClasses = (classesQuery.data?.items ?? []).filter(
+		(item) =>
+			(item.status === "recruiting" || item.status === "running") &&
+			(!firstSelected ||
+				(item.courseId === firstSelected.courseId &&
+					item.campusId === firstSelected.studentCampusId)),
+	);
+	const previewMutation = useMutation(
+		orpc.training.students.previewEnrollmentBulk.mutationOptions({
+			onSuccess: setPreview,
+			onError: () => toast.error("班级调整预览失败，请刷新报名信息后重试。"),
+		}),
+	);
+	const commitMutation = useMutation(
+		orpc.training.students.commitEnrollmentBulk.mutationOptions({
+			onSuccess: async (result) => {
+				await Promise.all([
+					queryClient.invalidateQueries({
+						queryKey: ["training-students", organizationId],
+					}),
+					queryClient.invalidateQueries({
+						queryKey: orpc.training.students.activeEnrollmentOptions.key(),
+					}),
+				]);
+				toast.success(
+					`班级批量调整完成：变更 ${result.changedCount} 项，无变化 ${result.unchangedCount} 项。`,
+				);
+				onSuccess();
+			},
+			onError: () => {
+				setPreview(null);
+				setRequestId(crypto.randomUUID());
+				toast.error("提交时报名或容量已变化，整批未执行。请重新预览。");
+			},
+		}),
+	);
+
+	function resetPreview() {
+		setPreview(null);
+		setRequestId(crypto.randomUUID());
+		previewMutation.reset();
+		commitMutation.reset();
+	}
+
+	function toggleEnrollment(enrollmentId: string, checked: boolean) {
+		setSelectedEnrollmentIds((current) => {
+			const next = new Set(current);
+			if (checked) {
+				if (next.size >= 200) {
+					toast.error("单次最多选择 200 条报名");
+					return current;
+				}
+				next.add(enrollmentId);
+			} else {
+				next.delete(enrollmentId);
+			}
+			return next;
+		});
+		setClassGroupId(null);
+		resetPreview();
+	}
+
+	return (
+		<Dialog open onOpenChange={(open) => !open && onClose()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>
+						{action === "assignClass" ? "批量分配班级" : "批量移出班级"}
+					</DialogTitle>
+					<DialogDescription>
+						请明确选择 active
+						报名；同一学员有多条报名时不会自动猜测。提交时会按整批最终状态重新校验容量和重复学员。
+					</DialogDescription>
+				</DialogHeader>
+				<div className="space-y-2">
+					<p className="font-medium text-sm">选择报名</p>
+					{optionsQuery.isPending ? (
+						<p className="text-muted-foreground text-sm">正在加载报名…</p>
+					) : optionsQuery.isError ? (
+						<p className="text-destructive text-sm">报名加载失败，请重试。</p>
+					) : enrollmentOptions.length === 0 ? (
+						<p className="text-muted-foreground text-sm">
+							所选学员没有 active 报名。
+						</p>
+					) : (
+						<ul className="max-h-52 space-y-2 overflow-y-auto border p-3 text-sm">
+							{enrollmentOptions.map((item) => (
+								<li key={item.enrollmentId} className="flex items-start gap-2">
+									<Checkbox
+										aria-label={`选择 ${item.studentName} 的 ${item.courseName} 报名`}
+										checked={selectedEnrollmentIds.has(item.enrollmentId)}
+										onCheckedChange={(checked) =>
+											toggleEnrollment(item.enrollmentId, checked === true)
+										}
+									/>
+									<div className="min-w-0">
+										<p>
+											{item.studentName} · {item.courseName}
+										</p>
+										<p className="text-muted-foreground text-xs">
+											当前班级：{item.className ?? "未分班"}
+										</p>
+									</div>
+								</li>
+							))}
+						</ul>
+					)}
+				</div>
+				{action === "assignClass" ? (
+					<Field name="enrollment-bulk-class">
+						<FieldLabel>目标班级</FieldLabel>
+						<Select
+							value={classGroupId ?? ""}
+							onValueChange={(value) => {
+								setClassGroupId(value ?? null);
+								resetPreview();
+							}}
+							disabled={
+								selectedEnrollments.length === 0 || commitMutation.isPending
+							}
+						>
+							<SelectTrigger>
+								<SelectValue>
+									{() =>
+										availableClasses.find((item) => item.id === classGroupId)
+											?.name ?? "请选择班级"
+									}
+								</SelectValue>
+							</SelectTrigger>
+							<SelectContent>
+								<SelectGroup>
+									{availableClasses.map((item) => (
+										<SelectItem key={item.id} value={item.id}>
+											{item.name}（{item.courseName}）
+										</SelectItem>
+									))}
+								</SelectGroup>
+							</SelectContent>
+						</Select>
+					</Field>
+				) : null}
+				{selectedEnrollments.length > 1 &&
+				new Set(selectedEnrollments.map((item) => item.courseId)).size > 1 &&
+				action === "assignClass" ? (
+					<p className="text-destructive text-xs">
+						所选报名属于不同课程，不能分配到同一班级。
+					</p>
+				) : null}
+				{preview ? (
+					<div className="space-y-2 text-sm">
+						<p>
+							将变更 {preview.changeCount} 项，无变化 {preview.noChangeCount}{" "}
+							项，阻断 {preview.blockedCount} 项。
+						</p>
+						<ul className="max-h-44 space-y-1 overflow-y-auto border p-3 text-xs">
+							{preview.items.map((item) => (
+								<li key={item.enrollmentId}>
+									{item.studentName ?? item.enrollmentId} ·{" "}
+									{item.courseName ?? "未知课程"}：
+									{item.status === "change"
+										? `${item.beforeClassName ?? "未分班"} → ${item.afterClassName ?? "未分班"}`
+										: item.status === "no_change"
+											? "无变化"
+											: `已阻断（${item.blockerCode}）`}
+								</li>
+							))}
+						</ul>
+					</div>
+				) : null}
+				<DialogFooter>
+					<Button variant="outline" onClick={onClose}>
+						取消
+					</Button>
+					{preview ? (
+						<Button
+							disabled={preview.blockedCount > 0 || commitMutation.isPending}
+							onClick={() => {
+								if (!operationInput) return;
+								commitMutation.mutate({ ...operationInput, requestId });
+							}}
+						>
+							{commitMutation.isPending ? "正在提交" : "确认提交"}
+						</Button>
+					) : (
+						<Button
+							disabled={!operationInput || previewMutation.isPending}
+							onClick={() =>
+								operationInput && previewMutation.mutate(operationInput)
+							}
+						>
+							{previewMutation.isPending ? "正在预览" : "预览变更"}
+						</Button>
+					)}
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function StudentImportDialog({
+	open,
+	organizationId,
+	onOpenChange,
+}: {
+	open: boolean;
+	organizationId: string;
+	onOpenChange: (open: boolean) => void;
+}) {
+	const [content, setContent] = useState<string | null>(null);
+	const [requestId, setRequestId] = useState<string | null>(null);
+	const [preview, setPreview] = useState<PreviewStudentImportResult | null>(
+		null,
+	);
+	const previewMutation = useMutation(
+		orpc.training.students.previewImport.mutationOptions({
+			onSuccess: setPreview,
+			onError: () => toast.error("无法解析 CSV，请确认使用最新模板。"),
+		}),
+	);
+	const confirmMutation = useMutation(
+		orpc.training.students.confirmImport.mutationOptions({
+			onSuccess: async (result) => {
+				await queryClient.invalidateQueries({
+					queryKey: ["training-students", organizationId],
+				});
+				if (result.errorRows > 0) {
+					setPreview({
+						totalRows: result.importedRows + result.errorRows,
+						validRows: result.importedRows,
+						errors: result.errors,
+					});
+					setRequestId(null);
+					toast.error(
+						`已导入 ${result.importedRows} 位学员，${result.errorRows} 行未导入。`,
+					);
+					return;
+				}
+				toast.success(`已导入 ${result.importedRows} 位学员`);
+				closeDialog();
+			},
+			onError: () => toast.error("学员导入失败，请保留文件并重试。"),
+		}),
+	);
+
+	function reset() {
+		setContent(null);
+		setRequestId(null);
+		setPreview(null);
+		previewMutation.reset();
+		confirmMutation.reset();
+	}
+
+	function closeDialog() {
+		reset();
+		onOpenChange(false);
+	}
+
+	function replaceFile(nextContent: string) {
+		const nextRequestId = crypto.randomUUID();
+		if (
+			getLeadImportRpcBodyBytes({ content: nextContent }) >
+				LEAD_IMPORT_RPC_BODY_LIMIT_BYTES ||
+			getLeadImportRpcBodyBytes({
+				content: nextContent,
+				requestId: nextRequestId,
+			}) > LEAD_IMPORT_RPC_BODY_LIMIT_BYTES
+		) {
+			toast.error(LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE);
+			return;
+		}
+		setContent(nextContent);
+		setRequestId(nextRequestId);
+		setPreview(null);
+		previewMutation.mutate({ content: nextContent });
+	}
+
+	return (
+		<Dialog
+			open={open}
+			onOpenChange={(nextOpen) => {
+				if (nextOpen) onOpenChange(true);
+				else closeDialog();
+			}}
+		>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>导入学员</DialogTitle>
+					<DialogDescription>
+						仅创建新学员，不创建报名、账单或班级关系。请使用最新模板；标签必须已存在且启用。
+					</DialogDescription>
+				</DialogHeader>
+				<Input
+					type="file"
+					accept=".csv,text/csv"
+					disabled={previewMutation.isPending || confirmMutation.isPending}
+					onChange={(event) => {
+						const file = event.target.files?.[0];
+						if (!file) return;
+						const reader = new FileReader();
+						reader.onload = () => {
+							if (typeof reader.result === "string") replaceFile(reader.result);
+						};
+						reader.onerror = () => toast.error("无法读取所选 CSV 文件。");
+						reader.readAsText(file);
+					}}
+				/>
+				<p className="text-muted-foreground text-xs">
+					状态使用 active、trial、paused、graduated 或 atRisk；多个标签用 |
+					分隔。
+				</p>
+				{previewMutation.isPending ? (
+					<p className="text-muted-foreground text-sm" aria-live="polite">
+						正在校验 CSV…
+					</p>
+				) : null}
+				{preview ? (
+					<div className="flex min-w-0 flex-col gap-2 text-sm">
+						<p aria-live="polite">
+							共 {preview.totalRows} 行，其中 {preview.validRows} 行可导入
+							{preview.errors.length
+								? `，${preview.errors.length} 行需要修正。`
+								: "。"}
+						</p>
+						{preview.errors.length ? (
+							<ul className="max-h-56 space-y-2 overflow-y-auto border p-3 text-xs">
+								{preview.errors.map((error) => (
+									<li key={`${error.row}-${error.code}`}>
+										<p>
+											第 {error.row} 行：{error.message}
+										</p>
+										{error.duplicateCandidate ? (
+											<Link
+												className="text-primary underline-offset-4 hover:underline"
+												to="/students"
+												search={{ studentId: error.duplicateCandidate.id }}
+												onClick={closeDialog}
+											>
+												查看 {error.duplicateCandidate.name}（
+												{error.duplicateCandidate.phoneMasked}）
+											</Link>
+										) : null}
+									</li>
+								))}
+							</ul>
+						) : null}
+					</div>
+				) : null}
+				<DialogFooter>
+					<Button variant="outline" onClick={closeDialog}>
+						取消
+					</Button>
+					<Button
+						disabled={
+							!content ||
+							!requestId ||
+							!preview?.validRows ||
+							previewMutation.isPending ||
+							confirmMutation.isPending
+						}
+						onClick={() =>
+							content &&
+							requestId &&
+							confirmMutation.mutate({ content, requestId })
+						}
+					>
+						{confirmMutation.isPending ? "正在导入" : "确认导入"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }
 
@@ -405,6 +1217,8 @@ function StudentResults({
 	onEdit,
 	onTimeline,
 	onMerge,
+	selectedIds,
+	onToggleSelected,
 }: {
 	items: StudentSummary[];
 	isFiltered: boolean;
@@ -414,6 +1228,8 @@ function StudentResults({
 	onEdit: (student: StudentSummary) => void;
 	onTimeline: (student: StudentSummary) => void;
 	onMerge?: (student: StudentSummary) => void;
+	selectedIds: ReadonlySet<string>;
+	onToggleSelected?: (student: StudentSummary, checked: boolean) => void;
 }) {
 	if (isPending)
 		return (
@@ -461,9 +1277,15 @@ function StudentResults({
 					<TableCaption className="sr-only">学员列表</TableCaption>
 					<TableHeader>
 						<TableRow>
+							{onToggleSelected ? (
+								<TableHead className="w-12">
+									<span className="sr-only">选择</span>
+								</TableHead>
+							) : null}
 							<TableHead>学员</TableHead>
 							<TableHead>校区</TableHead>
 							<TableHead>主要联系人</TableHead>
+							<TableHead>负责人</TableHead>
 							<TableHead>状态与标签</TableHead>
 							<TableHead className="text-right">操作</TableHead>
 						</TableRow>
@@ -476,6 +1298,8 @@ function StudentResults({
 								onEdit={onEdit}
 								onTimeline={onTimeline}
 								onMerge={onMerge}
+								selected={selectedIds.has(student.id)}
+								onToggleSelected={onToggleSelected}
 							/>
 						))}
 					</TableBody>
@@ -489,6 +1313,8 @@ function StudentResults({
 						onEdit={onEdit}
 						onTimeline={onTimeline}
 						onMerge={onMerge}
+						selected={selectedIds.has(student.id)}
+						onToggleSelected={onToggleSelected}
 					/>
 				))}
 			</div>
@@ -501,14 +1327,29 @@ function StudentTableRow({
 	onEdit,
 	onTimeline,
 	onMerge,
+	selected,
+	onToggleSelected,
 }: {
 	student: StudentSummary;
 	onEdit: (student: StudentSummary) => void;
 	onTimeline: (student: StudentSummary) => void;
 	onMerge?: (student: StudentSummary) => void;
+	selected: boolean;
+	onToggleSelected?: (student: StudentSummary, checked: boolean) => void;
 }) {
 	return (
 		<TableRow>
+			{onToggleSelected ? (
+				<TableCell>
+					<Checkbox
+						aria-label={`选择 ${student.name}`}
+						checked={selected}
+						onCheckedChange={(checked) =>
+							onToggleSelected(student, checked === true)
+						}
+					/>
+				</TableCell>
+			) : null}
 			<TableCell>
 				<p className="font-medium">{student.name}</p>
 				<p className="mt-0.5 text-muted-foreground text-xs">
@@ -522,6 +1363,7 @@ function StudentTableRow({
 					{student.primaryContactPhoneMasked}
 				</p>
 			</TableCell>
+			<TableCell>{student.ownerName ?? "未分配"}</TableCell>
 			<TableCell>
 				<div className="flex flex-wrap gap-1">
 					<StudentStatusBadge status={student.status} />
@@ -557,20 +1399,42 @@ function StudentCompactRow({
 	onEdit,
 	onTimeline,
 	onMerge,
+	selected,
+	onToggleSelected,
 }: {
 	student: StudentSummary;
 	onEdit: (student: StudentSummary) => void;
 	onTimeline: (student: StudentSummary) => void;
 	onMerge?: (student: StudentSummary) => void;
+	selected: boolean;
+	onToggleSelected?: (student: StudentSummary, checked: boolean) => void;
 }) {
 	return (
 		<article className="flex flex-col gap-3 p-3">
+			{onToggleSelected ? (
+				<label
+					className="flex items-center gap-2 text-sm"
+					htmlFor={`student-select-mobile-${student.id}`}
+				>
+					<Checkbox
+						id={`student-select-mobile-${student.id}`}
+						checked={selected}
+						onCheckedChange={(checked) =>
+							onToggleSelected(student, checked === true)
+						}
+					/>
+					选择 {student.name}
+				</label>
+			) : null}
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0">
 					<p className="font-medium">{student.name}</p>
 					<p className="mt-1 text-muted-foreground text-xs">
 						{student.campusName} · {student.primaryContactName} ·{" "}
 						{student.primaryContactPhoneMasked}
+					</p>
+					<p className="mt-1 text-muted-foreground text-xs">
+						负责人：{student.ownerName ?? "未分配"}
 					</p>
 				</div>
 				<StudentStatusBadge status={student.status} />
@@ -641,11 +1505,14 @@ function StudentMergeDialog({
 }) {
 	const [search, setSearch] = useState("");
 	const [source, setSource] = useState<StudentSummary | null>(null);
-	const [fieldSources, setFieldSources] = useState({
-		name: "target" as const,
-		campusId: "target" as const,
-		birthDate: "target" as const,
-		status: "target" as const,
+	const [fieldSources, setFieldSources] = useState<
+		MergeStudentsInput["fieldSources"]
+	>({
+		name: "target",
+		campusId: "target",
+		birthDate: "target",
+		status: "target",
+		ownerUserId: "target",
 		primaryContactId: "",
 	});
 	const candidatesQuery = useQuery({
@@ -697,8 +1564,8 @@ function StudentMergeDialog({
 		mutation.mutate({
 			sourceStudentId: source.id,
 			targetStudentId: target.id,
-			expectedSourceUpdatedAt: preview.source.updatedAt,
-			expectedTargetUpdatedAt: preview.target.updatedAt,
+			expectedSourceVersion: preview.source.version,
+			expectedTargetVersion: preview.target.version,
 			requestId: crypto.randomUUID(),
 			fieldSources,
 		});
@@ -803,6 +1670,31 @@ function StudentMergeDialog({
 							))}
 						</div>
 						<Field>
+							<FieldLabel>负责人</FieldLabel>
+							<Select
+								value={fieldSources.ownerUserId}
+								onValueChange={(ownerUserId) =>
+									ownerUserId &&
+									setFieldSources((current) => ({
+										...current,
+										ownerUserId: ownerUserId as "source" | "target",
+									}))
+								}
+							>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="target">
+										保留主档案：{preview.target.ownerName ?? "未分配"}
+									</SelectItem>
+									<SelectItem value="source">
+										采用来源：{preview.source.ownerName ?? "未分配"}
+									</SelectItem>
+								</SelectContent>
+							</Select>
+						</Field>
+						<Field>
 							<FieldLabel>合并后的主要联系人</FieldLabel>
 							<Select
 								value={fieldSources.primaryContactId}
@@ -890,10 +1782,16 @@ function StudentEditor({
 	});
 	const detailQuery = useQuery({ ...detailOptions, enabled: isEditing });
 	const [values, setValues] = useState<StudentFormValues>(emptyStudentForm);
+	const ownerCandidatesQuery = useQuery({
+		...orpc.training.students.ownerCandidates.queryOptions({
+			input: {
+				campusId: values.campusId || "00000000-0000-0000-0000-000000000000",
+			},
+		}),
+		enabled: Boolean(values.campusId),
+	});
 	const [formError, setFormError] = useState<string | null>(null);
-	const [expectedUpdatedAt, setExpectedUpdatedAt] = useState<string | null>(
-		null,
-	);
+	const [expectedVersion, setExpectedVersion] = useState<number | null>(null);
 	const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
 	const [hasVersionConflict, setHasVersionConflict] = useState(false);
 	const [isRefreshingDetails, setIsRefreshingDetails] = useState(false);
@@ -922,7 +1820,7 @@ function StudentEditor({
 	useEffect(() => {
 		if (!hasInitializedDraft && detailQuery.data) {
 			setValues(toStudentForm(detailQuery.data));
-			setExpectedUpdatedAt(detailQuery.data.updatedAt);
+			setExpectedVersion(detailQuery.data.version);
 			setHasInitializedDraft(true);
 		}
 	}, [detailQuery.data, hasInitializedDraft]);
@@ -972,13 +1870,13 @@ function StudentEditor({
 			})),
 		};
 		if (isEditing) {
-			if (!expectedUpdatedAt) {
+			if (!expectedVersion) {
 				setFormError("未能获取资料版本，请刷新页面后重试。");
 				return;
 			}
 			const parsed = updateStudentInputSchema.safeParse({
 				id: studentId,
-				expectedUpdatedAt,
+				expectedVersion,
 				data: omitCampus(normalized),
 			});
 			if (!parsed.success) {
@@ -1003,7 +1901,7 @@ function StudentEditor({
 		try {
 			const result = await detailQuery.refetch();
 			if (result.isSuccess && result.data) {
-				setExpectedUpdatedAt(result.data.updatedAt);
+				setExpectedVersion(result.data.version);
 				setHasVersionConflict(false);
 				setFormError(null);
 				toast.success("已刷新最新资料版本，当前草稿未改动。");
@@ -1072,7 +1970,11 @@ function StudentEditor({
 										value={values.campusId}
 										onValueChange={(campusId) =>
 											campusId &&
-											setValues((current) => ({ ...current, campusId }))
+											setValues((current) => ({
+												...current,
+												campusId,
+												ownerUserId: null,
+											}))
 										}
 									>
 										<SelectTrigger id="student-campus">
@@ -1095,6 +1997,44 @@ function StudentEditor({
 										</SelectContent>
 									</Select>
 								)}
+							</Field>
+							<Field>
+								<FieldLabel htmlFor="student-owner">运营负责人</FieldLabel>
+								<Select
+									value={values.ownerUserId ?? "unassigned"}
+									onValueChange={(ownerUserId) =>
+										ownerUserId &&
+										setValues((current) => ({
+											...current,
+											ownerUserId:
+												ownerUserId === "unassigned" ? null : ownerUserId,
+										}))
+									}
+									disabled={!values.campusId || ownerCandidatesQuery.isPending}
+								>
+									<SelectTrigger id="student-owner">
+										<SelectValue>
+											{() =>
+												ownerCandidatesQuery.data?.items.find(
+													(item) => item.userId === values.ownerUserId,
+												)?.name ?? "未分配"
+											}
+										</SelectValue>
+									</SelectTrigger>
+									<SelectContent>
+										<SelectGroup>
+											<SelectItem value="unassigned">未分配</SelectItem>
+											{(ownerCandidatesQuery.data?.items ?? []).map((owner) => (
+												<SelectItem key={owner.userId} value={owner.userId}>
+													{owner.name} · {owner.email}
+												</SelectItem>
+											))}
+										</SelectGroup>
+									</SelectContent>
+								</Select>
+								{ownerCandidatesQuery.isError ? (
+									<FieldError>负责人列表加载失败，请稍后重试。</FieldError>
+								) : null}
 							</Field>
 							<TextField
 								id="student-birth-date"
@@ -1592,6 +2532,7 @@ function TagManager({
 const emptyStudentForm: StudentFormValues = {
 	name: "",
 	campusId: "",
+	ownerUserId: null,
 	birthDate: "",
 	status: "trial",
 	contacts: [{ name: "", phone: "", relationship: "", isPrimary: true }],
@@ -1601,6 +2542,7 @@ function toStudentForm(student: StudentDetail): StudentFormValues {
 	return {
 		name: student.name,
 		campusId: student.campusId,
+		ownerUserId: student.ownerUserId,
 		birthDate: student.birthDate ?? "",
 		status: student.status,
 		contacts: student.contacts.map((contact) => ({

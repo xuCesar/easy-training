@@ -37,6 +37,7 @@ function createIds() {
 		classId: randomUUID(),
 		concurrentClassId: randomUUID(),
 		studentId: randomUUID(),
+		ownerAdjustmentStudentId: randomUUID(),
 		pausedStudentId: randomUUID(),
 		userId: `${prefix}-user`,
 	};
@@ -130,6 +131,15 @@ async function seed(ids: Ids) {
 			guardianPhone: "13900139000",
 			status: "paused",
 		},
+		{
+			id: ids.ownerAdjustmentStudentId,
+			organizationId: ids.organizationId,
+			campusId: ids.campusId,
+			name: "负责人调整学员",
+			guardianName: "负责人调整联系人",
+			guardianPhone: "13700137000",
+			status: "active",
+		},
 	]);
 }
 
@@ -187,7 +197,13 @@ function baseInput(ids: Ids, requestId = randomUUID()) {
 		organizationId: ids.organizationId,
 		operatorUserId: ids.userId,
 		requestId,
-		student: { mode: "existing" as const, studentId: ids.studentId },
+		student: {
+			mode: "existing" as const,
+			studentId: ids.studentId,
+			expectedVersion: 1,
+		},
+		conversionOwnerUserId: ids.userId,
+		adjustStudentOwner: false,
 		courseId: ids.courseId,
 		classGroupId: null,
 		purchasedLessons: 12,
@@ -229,11 +245,21 @@ test("独立报名原子创建、重放、续费拦截与并发名额保护", as
 		);
 		assert.deepEqual(replay, { ...result, replayed: true });
 		const [createdEnrollment] = await db
-			.select({ leadId: enrollment.leadId, status: enrollment.status })
+			.select({
+				leadId: enrollment.leadId,
+				status: enrollment.status,
+				conversionOwnerUserId: enrollment.conversionOwnerUserId,
+			})
 			.from(enrollment)
 			.where(eq(enrollment.id, result.enrollmentId));
 		assert.equal(createdEnrollment?.leadId, null);
 		assert.equal(createdEnrollment?.status, "active");
+		assert.equal(createdEnrollment?.conversionOwnerUserId, ids.userId);
+		const [unchangedExistingStudent] = await db
+			.select({ ownerUserId: student.ownerUserId })
+			.from(student)
+			.where(eq(student.id, ids.studentId));
+		assert.equal(unchangedExistingStudent?.ownerUserId, null);
 		const audits = await db
 			.select({ id: organizationAuditEvent.id })
 			.from(organizationAuditEvent)
@@ -259,7 +285,11 @@ test("独立报名原子创建、重放、续费拦截与并发名额保护", as
 		await expectRegistrationError(
 			createIndependentEnrollmentRecord({
 				...baseInput(ids),
-				student: { mode: "existing", studentId: ids.pausedStudentId },
+				student: {
+					mode: "existing",
+					studentId: ids.pausedStudentId,
+					expectedVersion: 1,
+				},
 			}),
 			"STUDENT_NOT_ENROLLABLE",
 		);
@@ -291,6 +321,11 @@ test("独立报名原子创建、重放、续费拦截与并发名额保护", as
 			relationship: "母亲",
 			isPrimary: true,
 		});
+		const [newStudentOwner] = await db
+			.select({ ownerUserId: student.ownerUserId })
+			.from(student)
+			.where(eq(student.id, newStudentResult.studentId));
+		assert.equal(newStudentOwner?.ownerUserId, ids.userId);
 
 		const concurrent = await Promise.allSettled([
 			createIndependentEnrollmentRecord({
@@ -331,6 +366,65 @@ test("独立报名原子创建、重放、续费拦截与并发名额保护", as
 			.from(enrollment)
 			.where(eq(enrollment.classGroupId, ids.concurrentClassId));
 		assert.equal(concurrentEnrollments.length, 1);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("已有学员负责人调整会校验版本与管理角色并整体回滚报名", async () => {
+	const ids = createIds();
+	const adjustmentInput = (expectedVersion: number) => ({
+		...baseInput(ids),
+		student: {
+			mode: "existing" as const,
+			studentId: ids.ownerAdjustmentStudentId,
+			expectedVersion,
+		},
+		adjustStudentOwner: true,
+	});
+
+	try {
+		await seed(ids);
+		await expectRegistrationError(
+			createIndependentEnrollmentRecord(adjustmentInput(2)),
+			"STUDENT_VERSION_CONFLICT",
+		);
+
+		await db
+			.update(organizationMember)
+			.set({ role: "consultant", campusAccessMode: "all" })
+			.where(
+				and(
+					eq(organizationMember.organizationId, ids.organizationId),
+					eq(organizationMember.userId, ids.userId),
+				),
+			);
+		await expectRegistrationError(
+			createIndependentEnrollmentRecord(adjustmentInput(1)),
+			"STUDENT_OWNER_ADJUST_FORBIDDEN",
+		);
+
+		const [persistedStudent, createdEnrollments, createdInvoices] =
+			await Promise.all([
+				db
+					.select({
+						ownerUserId: student.ownerUserId,
+						version: student.version,
+					})
+					.from(student)
+					.where(eq(student.id, ids.ownerAdjustmentStudentId)),
+				db
+					.select({ id: enrollment.id })
+					.from(enrollment)
+					.where(eq(enrollment.studentId, ids.ownerAdjustmentStudentId)),
+				db
+					.select({ id: invoice.id })
+					.from(invoice)
+					.where(eq(invoice.studentId, ids.ownerAdjustmentStudentId)),
+			]);
+		assert.deepEqual(persistedStudent, [{ ownerUserId: null, version: 1 }]);
+		assert.deepEqual(createdEnrollments, []);
+		assert.deepEqual(createdInvoices, []);
 	} finally {
 		await cleanup(ids);
 	}

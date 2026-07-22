@@ -5,6 +5,7 @@ import {
 	type StudentListResult,
 } from "@easy-training/api/contracts/training";
 import { Button } from "@easy-training/ui/components/button";
+import { Checkbox } from "@easy-training/ui/components/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -43,7 +44,13 @@ import {
 	UserPlusIcon,
 	UsersRoundIcon,
 } from "lucide-react";
-import { type FormEvent, useDeferredValue, useMemo, useState } from "react";
+import {
+	type FormEvent,
+	useDeferredValue,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import { toast } from "sonner";
 import { client, orpc, queryClient } from "@/utils/orpc";
 import { useOrganization } from "./organization-context";
@@ -172,6 +179,10 @@ function IndependentEnrollmentForm({
 		initialCourse ? formatCentsAsYuan(initialCourse.listPriceInCents) : "",
 	);
 	const [invoiceDueDate, setInvoiceDueDate] = useState(getShanghaiToday);
+	const [conversionOwnerUserId, setConversionOwnerUserId] = useState<
+		string | null
+	>(null);
+	const [adjustStudentOwner, setAdjustStudentOwner] = useState(false);
 	const [requestId] = useState(() => crypto.randomUUID());
 	const [errors, setErrors] = useState<EnrollmentErrors>({});
 	const duplicateCandidatesQuery = useQuery({
@@ -198,6 +209,25 @@ function IndependentEnrollmentForm({
 		studentListQuery.data?.pages.flatMap((page) => page.items) ?? [];
 	const selectedCampusId =
 		mode === "existing" ? selectedStudent?.campusId : campusId;
+	const ownerCandidatesQuery = useQuery({
+		...orpc.training.students.ownerCandidates.queryOptions({
+			input: {
+				campusId: selectedCampusId ?? "00000000-0000-0000-0000-000000000000",
+			},
+		}),
+		enabled: Boolean(selectedCampusId),
+	});
+	useEffect(() => {
+		if (
+			conversionOwnerUserId &&
+			ownerCandidatesQuery.data &&
+			!ownerCandidatesQuery.data.items.some(
+				(candidate) => candidate.userId === conversionOwnerUserId,
+			)
+		) {
+			setConversionOwnerUserId(null);
+		}
+	}, [conversionOwnerUserId, ownerCandidatesQuery.data]);
 	const availableClasses = useMemo(
 		() =>
 			options.classes.filter(
@@ -266,7 +296,10 @@ function IndependentEnrollmentForm({
 						student: {
 							mode: "existing" as const,
 							studentId: selectedStudent?.id ?? "",
+							expectedVersion: selectedStudent?.version ?? 0,
 						},
+						conversionOwnerUserId,
+						adjustStudentOwner,
 						courseId,
 						classGroupId,
 						purchasedLessons: lessons,
@@ -285,6 +318,8 @@ function IndependentEnrollmentForm({
 								relationship: contactRelationship.trim() || null,
 							},
 						},
+						conversionOwnerUserId,
+						adjustStudentOwner: false,
 						courseId,
 						classGroupId,
 						purchasedLessons: lessons,
@@ -397,6 +432,72 @@ function IndependentEnrollmentForm({
 					}}
 				/>
 			)}
+
+			<Field>
+				<FieldLabel htmlFor="independent-enrollment-owner">
+					成交归属人
+				</FieldLabel>
+				<Select
+					value={conversionOwnerUserId ?? "unassigned"}
+					onValueChange={(value) =>
+						setConversionOwnerUserId(
+							value === "unassigned" ? null : (value ?? null),
+						)
+					}
+					disabled={!selectedCampusId || ownerCandidatesQuery.isPending}
+				>
+					<SelectTrigger id="independent-enrollment-owner" className="w-full">
+						<SelectValue>
+							{() =>
+								conversionOwnerUserId
+									? (ownerCandidatesQuery.data?.items.find(
+											(candidate) => candidate.userId === conversionOwnerUserId,
+										)?.name ?? "请选择")
+									: "未分配"
+							}
+						</SelectValue>
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="unassigned">未分配</SelectItem>
+						{(ownerCandidatesQuery.data?.items ?? []).map((candidate) => (
+							<SelectItem key={candidate.userId} value={candidate.userId}>
+								{candidate.name} · {candidate.email}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+				<p className="text-muted-foreground text-xs">
+					该归属会冻结在本次报名中，不随学员负责人变化。
+				</p>
+				{mode === "existing" ? (
+					options.permissions.canAdjustStudentOwner ? (
+						<label
+							className="flex items-start gap-2 text-sm"
+							htmlFor="independent-enrollment-adjust-student-owner"
+						>
+							<Checkbox
+								id="independent-enrollment-adjust-student-owner"
+								checked={adjustStudentOwner}
+								onCheckedChange={(checked) =>
+									setAdjustStudentOwner(checked === true)
+								}
+							/>
+							<span>
+								同时调整学员负责人（当前：
+								{selectedStudent?.ownerName ?? "未分配"}）
+							</span>
+						</label>
+					) : (
+						<p className="text-muted-foreground text-xs">
+							已有学员负责人保持不变。
+						</p>
+					)
+				) : (
+					<p className="text-muted-foreground text-xs">
+						新学员未选择时保持未分配；选择后使用相同人员作为运营负责人。
+					</p>
+				)}
+			</Field>
 
 			<div className="grid min-w-0 gap-4 sm:grid-cols-2">
 				<CourseField

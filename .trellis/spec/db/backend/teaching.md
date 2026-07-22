@@ -331,3 +331,79 @@ await tx.insert(enrollmentLifecycleEvent).values({
   requestId,
 });
 ```
+
+## Scenario: 报名班级原子批量调整
+
+### 1. Scope / Trigger
+
+- 适用于管理者把多条 active 报名原子分配到同一班级，或从当前班级批量移出。
+- 批量目标必须是明确的 enrollment；不能从 student 推断唯一报名，因为同一学员可同时拥有多门课程报名。
+
+### 2. Signatures
+
+- 查询候选：`listStudentActiveEnrollmentOptionsRecord({ organizationId, userId, studentIds })`。
+- 共享规划器：`planEnrollmentBulkOperation(tx, { organizationId, campusAccess, kind, targets, classGroupId? })`。
+- 预览/提交：`previewEnrollmentBulkOperationRecord(...)`、`commitEnrollmentBulkOperationRecord(...)`。
+- `targets` 最多 200 条且必须显式携带 `{ enrollmentId, expectedVersion }`；`kind` 为 `assignEnrollmentClass | withdrawEnrollmentClass`。
+
+### 3. Contracts
+
+- 预览逐条返回 `change | no_change | blocked` 和稳定 blocker code；预览不是锁，提交必须在同一事务重新读取当前成员权限、报名版本、active 状态、班级状态及容量。
+- 单条 `assignClass` 与批量分配必须复用 `planEnrollmentBulkOperation`，避免课程、校区、班级状态、重复学员、班级容量和未来课次教室容量规则漂移。
+- 规划器按稳定顺序锁定报名、目标/来源班级和未来课次，并以整批应用后的最终状态计算重复学员与容量；任一阻断使整批不写入。
+- 带 `leftJoin` 的报名读取只锁主报名表：Drizzle 使用 `.for("update", { of: enrollment })`。PostgreSQL 不允许对外连接 nullable 一侧直接 `FOR UPDATE`，不得省略 `of` 让所有关联表都被锁定。
+- 成功提交只对实际变化的报名递增 version，并逐条追加关联 `bulkOperationBatchId` 的 `enrollment_lifecycle_event`；中央审计只写一次批次摘要。相同 requestId 和输入哈希重放不得重复写事件或审计。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 非管理角色、校区越权 | `MEMBER_FORBIDDEN` / `CAMPUS_OUT_OF_SCOPE` |
+| 报名不存在、非 active 或版本陈旧 | `ENROLLMENT_NOT_FOUND` / `ENROLLMENT_NOT_ACTIVE` / `ENROLLMENT_VERSION_CONFLICT` |
+| 目标班级课程、校区或状态不匹配 | `CLASS_COURSE_MISMATCH` / `CLASS_CAMPUS_MISMATCH` / `CLASS_NOT_AVAILABLE` |
+| 最终状态重复学员、班级或未来教室超容 | `CLASS_STUDENT_DUPLICATE` / `CLASS_FULL`，整批回滚 |
+| 相同 requestId 的载荷不同 | `IDEMPOTENCY_CONFLICT` |
+
+### 5. Good / Base / Bad Cases
+
+- Good：同一批次把多条明确报名分配到目标班级，规划器基于整批最终状态统一校验后一次提交。
+- Base：目标报名已经在目标班级时返回 `no_change`，仍校验版本和权限，但不递增 version、不写生命周期事件。
+- Bad：按 studentId 自动选择“第一条报名”，或在循环中调用会自行开启事务的公开单条命令；这会选错课程报名或造成部分提交。
+- Bad：在包含 `leftJoin(classGroup, ...)` 的查询末尾直接 `.for("update")`；PostgreSQL 会因尝试锁定外连接 nullable 一侧而拒绝执行。
+
+### 6. Tests Required
+
+- PostgreSQL 集成测试覆盖明确 active 报名候选、分配/换班/移出、no-op、报名版本、课程/校区/状态和权限变化。
+- 覆盖整批最终状态下的重复学员、班级容量和未来课次教室容量；任一阻断时报名、批次、生命周期事件和中央审计均不得部分写入。
+- 覆盖成功逐报名写 lifecycle event 且关联同一 batch、中央审计恰好一条，以及同载荷重放和异载荷冲突。
+- 保留单条 `assignClass` 回归测试，证明其与批量 planner 使用相同 blocker 语义。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const rows = await tx
+	.select()
+	.from(enrollment)
+	.leftJoin(classGroup, eq(classGroup.id, enrollment.classGroupId))
+	.for("update");
+```
+
+#### Correct
+
+```ts
+const rows = await tx
+	.select()
+	.from(enrollment)
+	.leftJoin(classGroup, eq(classGroup.id, enrollment.classGroupId))
+	.for("update", { of: enrollment });
+
+const plan = await planEnrollmentBulkOperation(tx, {
+	organizationId,
+	campusAccess,
+	kind: "assignEnrollmentClass",
+	classGroupId,
+	targets,
+});
+```

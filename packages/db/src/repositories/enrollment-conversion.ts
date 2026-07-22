@@ -1,4 +1,5 @@
 import { and, asc, countDistinct, eq, inArray, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { db } from "../index";
 import {
@@ -9,13 +10,41 @@ import {
 	invoice,
 	lead,
 	leadActivity,
+	organizationMember,
 	student,
 	studentContact,
 	user,
 } from "../schema";
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import type { CampusAccess } from "./organization";
-import { normalizeStudentPhone } from "./student-phone";
+import {
+	assertEligibleStudentOwner,
+	recordStudentOwnerAssignment,
+	StudentOwnershipError,
+	setStudentOwnerInTransaction,
+} from "./student-ownership";
+import {
+	lockStudentPhonesInTransaction,
+	normalizeStudentPhone,
+} from "./student-phone";
+import {
+	getCurrentWriteCampusAccess,
+	TeachingRepositoryError,
+} from "./teaching";
+
+type MemberRole = (typeof organizationMember.$inferSelect)["role"];
+
+const studentWriteRoles = new Set<MemberRole>([
+	"owner",
+	"admin",
+	"campus_manager",
+	"consultant",
+]);
+const studentOwnerManagementRoles = new Set<MemberRole>([
+	"owner",
+	"admin",
+	"campus_manager",
+]);
 
 const convertibleLeadStages = ["new", "contacted", "trial_booked"] as const;
 const availableClassStatuses = ["recruiting", "running"] as const;
@@ -24,8 +53,12 @@ export type EnrollmentConversionErrorCode =
 	| "LEAD_NOT_FOUND"
 	| "LEAD_ALREADY_CONVERTED"
 	| "LEAD_NOT_CONVERTIBLE"
+	| "MEMBER_FORBIDDEN"
 	| "STUDENT_NOT_FOUND"
 	| "STUDENT_PHONE_MISMATCH"
+	| "STUDENT_VERSION_CONFLICT"
+	| "STUDENT_OWNER_NOT_ELIGIBLE"
+	| "STUDENT_OWNER_ADJUST_FORBIDDEN"
 	| "CAMPUS_NOT_FOUND"
 	| "COURSE_NOT_FOUND"
 	| "CLASS_NOT_FOUND"
@@ -55,6 +88,8 @@ export type LeadConversionOptionsRecord = {
 		stage: "new" | "contacted" | "trial_booked";
 		campusId: string | null;
 		interestedCourseId: string | null;
+		ownerUserId: string | null;
+		ownerName: string | null;
 	};
 	matchingStudents: Array<{
 		id: string;
@@ -63,6 +98,9 @@ export type LeadConversionOptionsRecord = {
 		campusId: string;
 		campusName: string;
 		status: (typeof student.$inferSelect)["status"];
+		ownerUserId: string | null;
+		ownerName: string | null;
+		version: number;
 	}>;
 	campuses: Array<{ id: string; name: string }>;
 	courses: Array<{
@@ -91,7 +129,7 @@ export type ConvertLeadRecordInput = {
 	campusAccess: CampusAccess;
 	leadId: string;
 	student:
-		| { mode: "existing"; studentId: string }
+		| { mode: "existing"; studentId: string; expectedVersion: number }
 		| {
 				mode: "new";
 				name: string;
@@ -99,6 +137,8 @@ export type ConvertLeadRecordInput = {
 				campusId: string;
 		  };
 	courseId: string;
+	conversionOwnerUserId: string | null;
+	adjustStudentOwner: boolean;
 	classGroupId: string | null;
 	purchasedLessons: number;
 	amountInCents: number;
@@ -182,6 +222,8 @@ export async function getLeadConversionOptionsRecord(input: {
 	leadId: string;
 	campusAccess: CampusAccess;
 }): Promise<LeadConversionOptionsRecord> {
+	const leadOwner = alias(user, "lead_conversion_owner");
+	const studentOwner = alias(user, "lead_conversion_student_owner");
 	const [leadRecord] = await db
 		.select({
 			id: lead.id,
@@ -190,8 +232,11 @@ export async function getLeadConversionOptionsRecord(input: {
 			stage: lead.stage,
 			campusId: lead.campusId,
 			interestedCourseId: lead.interestedCourseId,
+			ownerUserId: lead.ownerUserId,
+			ownerName: leadOwner.name,
 		})
 		.from(lead)
+		.leftJoin(leadOwner, eq(leadOwner.id, lead.ownerUserId))
 		.where(
 			and(
 				eq(lead.id, input.leadId),
@@ -220,6 +265,9 @@ export async function getLeadConversionOptionsRecord(input: {
 				campusId: student.campusId,
 				campusName: campus.name,
 				status: student.status,
+				ownerUserId: student.ownerUserId,
+				ownerName: studentOwner.name,
+				version: student.version,
 			})
 			.from(student)
 			.innerJoin(
@@ -229,6 +277,7 @@ export async function getLeadConversionOptionsRecord(input: {
 					eq(campus.organizationId, input.organizationId),
 				),
 			)
+			.leftJoin(studentOwner, eq(studentOwner.id, student.ownerUserId))
 			.where(
 				and(
 					eq(student.organizationId, input.organizationId),
@@ -326,6 +375,24 @@ export async function convertLeadRecord(
 			await tx.execute(
 				sql`SELECT pg_advisory_xact_lock(hashtext(${input.organizationId}))`,
 			);
+			const currentCampusAccess = await getCurrentWriteCampusAccess(tx, {
+				organizationId: input.organizationId,
+				userId: input.operatorUserId,
+				allowedRoles: studentWriteRoles,
+			});
+			const [currentMember] = await tx
+				.select({ role: organizationMember.role })
+				.from(organizationMember)
+				.where(
+					and(
+						eq(organizationMember.organizationId, input.organizationId),
+						eq(organizationMember.userId, input.operatorUserId),
+					),
+				)
+				.limit(1);
+			if (!currentMember || !studentWriteRoles.has(currentMember.role)) {
+				throw new EnrollmentConversionError("MEMBER_FORBIDDEN");
+			}
 			const [leadRecord] = await tx
 				.select({
 					id: lead.id,
@@ -346,7 +413,7 @@ export async function convertLeadRecord(
 			if (!leadRecord) {
 				throw new EnrollmentConversionError("LEAD_NOT_FOUND");
 			}
-			if (!isCampusAccessible(input.campusAccess, leadRecord.campusId)) {
+			if (!isCampusAccessible(currentCampusAccess, leadRecord.campusId)) {
 				throw new EnrollmentConversionError("CAMPUS_OUT_OF_SCOPE");
 			}
 			const [leadCampus] = leadRecord.campusId
@@ -422,6 +489,13 @@ export async function convertLeadRecord(
 
 			let studentId: string;
 			let studentCampusId: string;
+			let existingStudentRecord: {
+				id: string;
+				campusId: string;
+				ownerUserId: string | null;
+				version: number;
+			} | null = null;
+			let existingStudentExpectedVersion: number | null = null;
 
 			if (input.student.mode === "existing") {
 				const [studentRecord] = await tx
@@ -429,6 +503,8 @@ export async function convertLeadRecord(
 						id: student.id,
 						campusId: student.campusId,
 						guardianPhone: student.guardianPhone,
+						ownerUserId: student.ownerUserId,
+						version: student.version,
 						mergedIntoStudentId: student.mergedIntoStudentId,
 					})
 					.from(student)
@@ -447,7 +523,7 @@ export async function convertLeadRecord(
 				if (studentRecord.mergedIntoStudentId) {
 					throw new EnrollmentConversionError("STUDENT_NOT_FOUND");
 				}
-				if (!isCampusAccessible(input.campusAccess, studentRecord.campusId)) {
+				if (!isCampusAccessible(currentCampusAccess, studentRecord.campusId)) {
 					throw new EnrollmentConversionError("CAMPUS_OUT_OF_SCOPE");
 				}
 				const [studentCampus] = await tx
@@ -473,8 +549,10 @@ export async function convertLeadRecord(
 
 				studentId = studentRecord.id;
 				studentCampusId = studentRecord.campusId;
+				existingStudentRecord = studentRecord;
+				existingStudentExpectedVersion = input.student.expectedVersion;
 			} else {
-				if (!isCampusAccessible(input.campusAccess, input.student.campusId)) {
+				if (!isCampusAccessible(currentCampusAccess, input.student.campusId)) {
 					throw new EnrollmentConversionError("CAMPUS_OUT_OF_SCOPE");
 				}
 				const [campusRecord] = await tx
@@ -493,6 +571,10 @@ export async function convertLeadRecord(
 				if (!campusRecord) {
 					throw new EnrollmentConversionError("CAMPUS_NOT_FOUND");
 				}
+				await lockStudentPhonesInTransaction(tx, {
+					organizationId: input.organizationId,
+					normalizedPhones: [normalizeStudentPhone(leadRecord.phone)],
+				});
 
 				const [createdStudent] = await tx
 					.insert(student)
@@ -504,6 +586,7 @@ export async function convertLeadRecord(
 						guardianPhone: leadRecord.phone,
 						guardianPhoneNormalized: normalizeStudentPhone(leadRecord.phone),
 						status: "active",
+						ownerUserId: input.conversionOwnerUserId,
 					})
 					.returning({ id: student.id, campusId: student.campusId });
 
@@ -521,6 +604,41 @@ export async function convertLeadRecord(
 
 				studentId = createdStudent.id;
 				studentCampusId = createdStudent.campusId;
+				await recordStudentOwnerAssignment(tx, {
+					organizationId: input.organizationId,
+					studentId,
+					campusId: studentCampusId,
+					beforeOwnerUserId: null,
+					afterOwnerUserId: input.conversionOwnerUserId,
+					operatorUserId: input.operatorUserId,
+					source: "lead_conversion",
+				});
+			}
+
+			if (input.conversionOwnerUserId) {
+				await assertEligibleStudentOwner(tx, {
+					organizationId: input.organizationId,
+					ownerUserId: input.conversionOwnerUserId,
+					campusId: studentCampusId,
+				});
+			}
+			if (existingStudentRecord && input.adjustStudentOwner) {
+				if (!studentOwnerManagementRoles.has(currentMember.role)) {
+					throw new EnrollmentConversionError("STUDENT_OWNER_ADJUST_FORBIDDEN");
+				}
+				if (existingStudentRecord.version !== existingStudentExpectedVersion) {
+					throw new EnrollmentConversionError("STUDENT_VERSION_CONFLICT");
+				}
+				await setStudentOwnerInTransaction(tx, {
+					organizationId: input.organizationId,
+					studentId: existingStudentRecord.id,
+					campusId: existingStudentRecord.campusId,
+					beforeOwnerUserId: existingStudentRecord.ownerUserId,
+					afterOwnerUserId: input.conversionOwnerUserId,
+					expectedVersion: existingStudentRecord.version,
+					operatorUserId: input.operatorUserId,
+					source: "lead_conversion",
+				});
 			}
 
 			const [activeCourseEnrollment] = await tx
@@ -562,7 +680,7 @@ export async function convertLeadRecord(
 				if (!classRecord) {
 					throw new EnrollmentConversionError("CLASS_NOT_FOUND");
 				}
-				if (!isCampusAccessible(input.campusAccess, classRecord.campusId)) {
+				if (!isCampusAccessible(currentCampusAccess, classRecord.campusId)) {
 					throw new EnrollmentConversionError("CAMPUS_OUT_OF_SCOPE");
 				}
 				const [classCampus] = await tx
@@ -630,6 +748,7 @@ export async function convertLeadRecord(
 					organizationId: input.organizationId,
 					leadId: input.leadId,
 					studentId,
+					conversionOwnerUserId: input.conversionOwnerUserId,
 					courseId: input.courseId,
 					classGroupId: input.classGroupId,
 					purchasedLessons: input.purchasedLessons,
@@ -709,6 +828,18 @@ export async function convertLeadRecord(
 	} catch (error) {
 		if (error instanceof EnrollmentConversionError) {
 			throw error;
+		}
+		if (error instanceof StudentOwnershipError) {
+			throw new EnrollmentConversionError(error.code);
+		}
+		if (error instanceof TeachingRepositoryError) {
+			throw new EnrollmentConversionError(
+				error.code === "MEMBER_FORBIDDEN"
+					? "MEMBER_FORBIDDEN"
+					: error.code === "CAMPUS_OUT_OF_SCOPE"
+						? "CAMPUS_OUT_OF_SCOPE"
+						: "RESOURCE_UNAVAILABLE",
+			);
 		}
 
 		const databaseError = getDatabaseError(error);

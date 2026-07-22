@@ -16,6 +16,10 @@ import {
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
+import {
+	clearInvalidStudentOwnersForMember,
+	countInvalidStudentOwnersForMember,
+} from "./student-ownership";
 
 export type OrganizationManagementErrorCode =
 	| "CAMPUS_NOT_FOUND"
@@ -449,6 +453,77 @@ export async function listMemberRecords(input: {
 	}));
 }
 
+export async function previewMemberOwnerImpactRecord(input: {
+	organizationId: string;
+	actorUserId: string;
+	change:
+		| {
+				kind: "update";
+				memberId: string;
+				role: MemberRole;
+				campusAccessMode: AccessMode;
+				campusIds: string[];
+		  }
+		| { kind: "remove"; memberId: string };
+}): Promise<{ affectedStudentCount: number }> {
+	return db.transaction(async (tx) => {
+		const actor = await getLockedMember(
+			tx,
+			input.organizationId,
+			input.actorUserId,
+		);
+		if (!actor) throw new OrganizationManagementError("MEMBER_FORBIDDEN");
+		const [target] = await tx
+			.select({
+				id: organizationMember.id,
+				userId: organizationMember.userId,
+				role: organizationMember.role,
+			})
+			.from(organizationMember)
+			.where(
+				and(
+					eq(organizationMember.id, input.change.memberId),
+					eq(organizationMember.organizationId, input.organizationId),
+				),
+			)
+			.limit(1)
+			.for("update");
+		if (!target) throw new OrganizationManagementError("MEMBER_NOT_FOUND");
+
+		if (input.change.kind === "remove") {
+			ensureManagementPermission(actor.role, target.role);
+			return {
+				affectedStudentCount: await countInvalidStudentOwnersForMember(tx, {
+					organizationId: input.organizationId,
+					memberUserId: target.userId,
+					nextRole: null,
+					nextCampusAccessMode: "selected",
+					nextCampusIds: [],
+				}),
+			};
+		}
+
+		ensureManagementPermission(actor.role, target.role, input.change.role);
+		const nextCampusAccessMode = isOrganizationWideRole(input.change.role)
+			? "all"
+			: input.change.campusAccessMode;
+		const nextCampusIds =
+			nextCampusAccessMode === "selected"
+				? [...new Set(input.change.campusIds)]
+				: [];
+		await assertScopedCampuses(tx, input.organizationId, nextCampusIds);
+		return {
+			affectedStudentCount: await countInvalidStudentOwnersForMember(tx, {
+				organizationId: input.organizationId,
+				memberUserId: target.userId,
+				nextRole: input.change.role,
+				nextCampusAccessMode,
+				nextCampusIds,
+			}),
+		};
+	});
+}
+
 export async function updateMemberRecord(input: {
 	organizationId: string;
 	actorUserId: string;
@@ -522,6 +597,14 @@ export async function updateMemberRecord(input: {
 			campusAccessMode: target.campusAccessMode,
 			campusIds: currentScopes.map((scope) => scope.campusId),
 		};
+		const clearedStudentIds = await clearInvalidStudentOwnersForMember(tx, {
+			organizationId: input.organizationId,
+			memberUserId: target.userId,
+			nextRole: input.role,
+			nextCampusAccessMode,
+			nextCampusIds,
+			operatorUserId: input.actorUserId,
+		});
 		await tx
 			.update(organizationMember)
 			.set({
@@ -551,6 +634,12 @@ export async function updateMemberRecord(input: {
 				role: input.role,
 				campusAccessMode: nextCampusAccessMode,
 				campusIds: nextCampusIds,
+				...(clearedStudentIds.length > 0
+					? {
+							ownerClearedCount: clearedStudentIds.length,
+							studentIds: clearedStudentIds,
+						}
+					: {}),
 			},
 		});
 	});
@@ -616,6 +705,14 @@ export async function removeMemberRecord(input: {
 			.select({ campusId: organizationMemberCampus.campusId })
 			.from(organizationMemberCampus)
 			.where(eq(organizationMemberCampus.organizationMemberId, target.id));
+		const clearedStudentIds = await clearInvalidStudentOwnersForMember(tx, {
+			organizationId: input.organizationId,
+			memberUserId: target.userId,
+			nextRole: null,
+			nextCampusAccessMode: "selected",
+			nextCampusIds: [],
+			operatorUserId: input.actorUserId,
+		});
 		await tx
 			.delete(organizationMember)
 			.where(eq(organizationMember.id, target.id));
@@ -639,6 +736,12 @@ export async function removeMemberRecord(input: {
 				role: target.role,
 				campusAccessMode: target.campusAccessMode,
 				campusIds: currentScopes.map((scope) => scope.campusId),
+				...(clearedStudentIds.length > 0
+					? {
+							ownerClearedCount: clearedStudentIds.length,
+							studentIds: clearedStudentIds,
+						}
+					: {}),
 			},
 		});
 	});

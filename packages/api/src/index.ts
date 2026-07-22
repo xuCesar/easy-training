@@ -101,6 +101,18 @@ export const leadExportProcedure = publicProcedure.use(
 		"当前角色无权导出招生线索。",
 	),
 );
+export const studentExportProcedure = publicProcedure.use(
+	createOrganizationMiddleware(
+		organizationOperationsRoles,
+		"当前角色无权导出学员联系人。",
+	),
+);
+export const studentBulkProcedure = publicProcedure.use(
+	createOrganizationMiddleware(
+		organizationOperationsRoles,
+		"当前角色无权执行学员批量调整。",
+	),
+);
 export const financeProcedure = publicProcedure.use(requireFinanceManager);
 export const organizationManagementProcedure = publicProcedure.use(
 	createOrganizationMiddleware(

@@ -6,6 +6,7 @@ import {
 	listInvitationRecords,
 	listMemberRecords,
 	OrganizationManagementError,
+	previewMemberOwnerImpactRecord,
 	removeMemberRecord,
 	resendInvitationRecord,
 	revokeInvitationRecord,
@@ -26,6 +27,8 @@ import type {
 	CreateInvitationResult,
 	InvitationListResult,
 	MemberListResult,
+	MemberOwnerImpactInput,
+	MemberOwnerImpactResult,
 	RemoveMemberInput,
 	ResendInvitationInput,
 	RevokeInvitationInput,
@@ -209,6 +212,21 @@ export async function updateMember(
 			role: input.role,
 			campusAccessMode: input.campusAccessMode,
 			campusIds: input.campusIds,
+		});
+	} catch (error) {
+		return throwRepositoryError(error);
+	}
+}
+
+export async function previewMemberOwnerImpact(
+	scope: OrganizationScope,
+	input: MemberOwnerImpactInput,
+): Promise<MemberOwnerImpactResult> {
+	try {
+		return await previewMemberOwnerImpactRecord({
+			organizationId: scope.organizationId,
+			actorUserId: scope.userId,
+			change: input,
 		});
 	} catch (error) {
 		return throwRepositoryError(error);

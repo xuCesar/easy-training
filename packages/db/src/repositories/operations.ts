@@ -1,4 +1,3 @@
-import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import {
@@ -28,6 +27,12 @@ import {
 	type OrganizationAuditAction,
 	writeOrganizationAuditEvent,
 } from "./audit";
+import {
+	CsvRepositoryError,
+	type CsvRow,
+	MAX_IMPORT_ROWS,
+	parseCsvRecords,
+} from "./csv";
 import { createLeadRecordInTransaction, type WritableLeadStage } from "./leads";
 import type { CampusAccess } from "./organization";
 
@@ -236,53 +241,6 @@ export async function recordLeadExport(input: {
 	);
 }
 
-// 仓储调用可绕过 RPC schema；该内容防线独立于 envelope 上限，且更宽松。
-const MAX_IMPORT_CONTENT_BYTES = 500_000;
-const MAX_IMPORT_ROWS = 1_000;
-
-type CsvRow = { cells: string[]; row: number };
-
-function parseCsv(content: string): CsvRow[] {
-	if (Buffer.byteLength(content, "utf8") > MAX_IMPORT_CONTENT_BYTES) {
-		throw new OperationsRepositoryError("IMPORT_LIMIT_EXCEEDED");
-	}
-
-	const rows: CsvRow[] = [];
-	let row: string[] = [];
-	let value = "";
-	let quoted = false;
-	let line = 1;
-	let rowStart = 1;
-	for (let index = 0; index < content.length; index += 1) {
-		const char = content[index] ?? "";
-		if (char === '"') {
-			if (quoted && content[index + 1] === '"') {
-				value += '"';
-				index += 1;
-			} else quoted = !quoted;
-		} else if (char === "," && !quoted) {
-			row.push(value.trim());
-			value = "";
-		} else if (char === "\n" || char === "\r") {
-			if (char === "\r" && content[index + 1] === "\n") index += 1;
-			line += 1;
-			if (quoted) {
-				value += "\n";
-				continue;
-			}
-			row.push(value.trim());
-			if (row.some(Boolean)) rows.push({ cells: row, row: rowStart });
-			row = [];
-			value = "";
-			rowStart = line;
-		} else value += char;
-	}
-	if (quoted) throw new OperationsRepositoryError("IMPORT_INVALID_CSV");
-	row.push(value.trim());
-	if (row.some(Boolean)) rows.push({ cells: row, row: rowStart });
-	return rows;
-}
-
 type ParsedLead = {
 	row: number;
 	name: string;
@@ -312,7 +270,19 @@ function getHeaderIndex(
 }
 
 function parseLeadImport(content: string): ParsedLeadImport {
-	const records = parseCsv(content.replace(/^\uFEFF/, ""));
+	let records: CsvRow[];
+	try {
+		records = parseCsvRecords(content.replace(/^\uFEFF/, ""));
+	} catch (error) {
+		if (error instanceof CsvRepositoryError) {
+			throw new OperationsRepositoryError(
+				error.code === "LIMIT_EXCEEDED"
+					? "IMPORT_LIMIT_EXCEEDED"
+					: "IMPORT_INVALID_CSV",
+			);
+		}
+		throw error;
+	}
 	const [header, ...data] = records;
 	if (!header) throw new OperationsRepositoryError("IMPORT_INVALID_CSV");
 	if (data.length > MAX_IMPORT_ROWS) {

@@ -90,6 +90,9 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"operation_task_completed",
 	"operation_task_reopened",
 	"operation_task_cancelled",
+	"student_imported",
+	"student_exported",
+	"students_bulk_updated",
 ]);
 export const organizationNotificationType = pgEnum(
 	"organization_notification_type",
@@ -126,6 +129,26 @@ export const studentStatus = pgEnum("student_status", [
 	"paused",
 	"graduated",
 	"at_risk",
+]);
+export const studentOwnerAssignmentSource = pgEnum(
+	"student_owner_assignment_source",
+	[
+		"manual",
+		"import",
+		"lead_conversion",
+		"direct_enrollment",
+		"bulk",
+		"merge",
+		"authorization_revoked",
+	],
+);
+export const studentBulkOperationKind = pgEnum("student_bulk_operation_kind", [
+	"set_owner",
+	"clear_owner",
+	"add_tag",
+	"remove_tag",
+	"assign_class",
+	"withdraw_class",
 ]);
 export const courseCategory = pgEnum("course_category", [
 	"language",
@@ -596,6 +619,9 @@ export const student = pgTable(
 		campusId: uuid("campus_id")
 			.notNull()
 			.references(() => campus.id),
+		ownerUserId: text("owner_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
 		name: text("name").notNull(),
 		guardianName: text("guardian_name").notNull(),
 		guardianPhone: text("guardian_phone").notNull(),
@@ -604,6 +630,7 @@ export const student = pgTable(
 			.notNull(),
 		birthDate: date("birth_date"),
 		status: studentStatus("status").default("trial").notNull(),
+		version: integer("version").default(1).notNull(),
 		mergedIntoStudentId: uuid("merged_into_student_id"),
 		mergedAt: timestamp("merged_at", { withTimezone: true }),
 		createdAt: timestamp("created_at", { withTimezone: true })
@@ -617,6 +644,11 @@ export const student = pgTable(
 	(table) => [
 		index("student_org_idx").on(table.organizationId),
 		index("student_campus_idx").on(table.campusId),
+		index("student_org_campus_owner_idx").on(
+			table.organizationId,
+			table.campusId,
+			table.ownerUserId,
+		),
 		index("student_org_guardian_phone_idx").on(
 			table.organizationId,
 			table.guardianPhone,
@@ -626,6 +658,112 @@ export const student = pgTable(
 			table.guardianPhoneNormalized,
 		),
 		index("student_merged_into_idx").on(table.mergedIntoStudentId),
+	],
+);
+
+export const studentOwnerAssignmentEvent = pgTable(
+	"student_owner_assignment_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		studentId: uuid("student_id")
+			.notNull()
+			.references(() => student.id, { onDelete: "cascade" }),
+		campusId: uuid("campus_id")
+			.notNull()
+			.references(() => campus.id),
+		beforeOwnerUserId: text("before_owner_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		afterOwnerUserId: text("after_owner_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		operatorUserId: text("operator_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		source: studentOwnerAssignmentSource("source").notNull(),
+		batchId: uuid("batch_id"),
+		occurredAt: timestamp("occurred_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		index("student_owner_event_org_student_occurred_idx").on(
+			table.organizationId,
+			table.studentId,
+			table.occurredAt,
+			table.id,
+		),
+		index("student_owner_event_batch_idx").on(table.batchId),
+	],
+);
+
+export const studentImportBatch = pgTable(
+	"student_import_batch",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		requestId: uuid("request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		createdByUserId: text("created_by_user_id")
+			.notNull()
+			.references(() => user.id),
+		totalRows: integer("total_rows").notNull(),
+		importedRows: integer("imported_rows").notNull(),
+		errorRows: integer("error_rows").notNull(),
+		errors: jsonb("errors").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("student_import_batch_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("student_import_batch_org_created_idx").on(
+			table.organizationId,
+			table.createdAt,
+			table.id,
+		),
+	],
+);
+
+export const studentBulkOperationBatch = pgTable(
+	"student_bulk_operation_batch",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		requestId: uuid("request_id").notNull(),
+		inputHash: text("input_hash").notNull(),
+		kind: studentBulkOperationKind("kind").notNull(),
+		targetCount: integer("target_count").notNull(),
+		changedCount: integer("changed_count").notNull(),
+		unchangedCount: integer("unchanged_count").notNull(),
+		targetIds: uuid("target_ids").array().notNull(),
+		createdByUserId: text("created_by_user_id")
+			.notNull()
+			.references(() => user.id),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("student_bulk_operation_org_request_uidx").on(
+			table.organizationId,
+			table.requestId,
+		),
+		index("student_bulk_operation_org_created_idx").on(
+			table.organizationId,
+			table.createdAt,
+			table.id,
+		),
 	],
 );
 
@@ -1054,6 +1192,10 @@ export const enrollment = pgTable(
 		studentId: uuid("student_id")
 			.notNull()
 			.references(() => student.id),
+		conversionOwnerUserId: text("conversion_owner_user_id").references(
+			() => user.id,
+			{ onDelete: "set null" },
+		),
 		courseId: uuid("course_id")
 			.notNull()
 			.references(() => course.id),
@@ -1107,6 +1249,10 @@ export const enrollmentLifecycleEvent = pgTable(
 			.references(() => user.id),
 		requestId: uuid("request_id").notNull(),
 		inputHash: text("input_hash").notNull(),
+		bulkOperationBatchId: uuid("bulk_operation_batch_id").references(
+			() => studentBulkOperationBatch.id,
+			{ onDelete: "set null" },
+		),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),

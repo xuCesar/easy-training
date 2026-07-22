@@ -21,9 +21,18 @@ import {
 	studentStatusEvent,
 	studentTag,
 	studentTagAssignment,
+	user,
 } from "../schema";
 import type { CampusAccess } from "./organization";
-import { normalizeStudentPhone } from "./student-phone";
+import {
+	assertEligibleStudentOwner,
+	recordStudentOwnerAssignment,
+	StudentOwnershipError,
+} from "./student-ownership";
+import {
+	lockStudentPhonesInTransaction,
+	normalizeStudentPhone,
+} from "./student-phone";
 
 export type StudentRepositoryErrorCode =
 	| "STUDENT_NOT_FOUND"
@@ -37,6 +46,7 @@ export type StudentRepositoryErrorCode =
 	| "STUDENT_TAG_DUPLICATE"
 	| "MEMBER_FORBIDDEN"
 	| "STUDENT_MERGED"
+	| "STUDENT_OWNER_NOT_ELIGIBLE"
 	| "INVALID_CURSOR";
 
 export class StudentRepositoryError extends Error {
@@ -66,6 +76,9 @@ export type StudentSummaryRecord = {
 	campusId: string;
 	campusName: string;
 	status: (typeof student.$inferSelect)["status"];
+	ownerUserId: string | null;
+	ownerName: string | null;
+	version: number;
 	primaryContactName: string;
 	primaryContactPhoneMasked: string;
 	tags: StudentTagRecord[];
@@ -93,6 +106,13 @@ export type DuplicateStudentCandidateRecord = {
 	phoneMasked: string;
 };
 
+export type StudentOwnerCandidateRecord = {
+	userId: string;
+	name: string;
+	email: string;
+	role: "owner" | "admin" | "campus_manager" | "consultant";
+};
+
 export type CreateStudentRecordInput = {
 	organizationId: string;
 	userId: string;
@@ -101,6 +121,7 @@ export type CreateStudentRecordInput = {
 	campusId: string;
 	birthDate: string | null;
 	status: (typeof student.$inferInsert)["status"];
+	ownerUserId: string | null;
 	contacts: StudentContactInput[];
 	tagIds: string[];
 };
@@ -109,6 +130,7 @@ export type UpdateStudentRecordInput = {
 	name: string;
 	birthDate: string | null;
 	status: (typeof student.$inferInsert)["status"];
+	ownerUserId: string | null;
 	contacts: StudentContactInput[];
 	tagIds: string[];
 };
@@ -148,7 +170,7 @@ function isOrganizationWideMember(
 	);
 }
 
-async function getCurrentWriteCampusAccess(
+export async function getCurrentStudentWriteCampusAccess(
 	tx: Transaction,
 	input: {
 		organizationId: string;
@@ -506,6 +528,7 @@ export async function listStudentRecords(input: {
 	campusId?: string;
 	status?: (typeof student.$inferSelect)["status"];
 	tagId?: string;
+	ownerUserId?: string | null;
 	cursor?: string;
 	pageSize: number;
 }): Promise<{
@@ -528,6 +551,10 @@ export async function listStudentRecords(input: {
 	];
 	if (input.campusId) baseFilters.push(eq(student.campusId, input.campusId));
 	if (input.status) baseFilters.push(eq(student.status, input.status));
+	if (input.ownerUserId === null) baseFilters.push(isNull(student.ownerUserId));
+	else if (input.ownerUserId) {
+		baseFilters.push(eq(student.ownerUserId, input.ownerUserId));
+	}
 	if (input.tagId) {
 		baseFilters.push(sql<boolean>`exists (
 			select 1 from "student_tag_assignment"
@@ -570,6 +597,9 @@ export async function listStudentRecords(input: {
 				campusId: student.campusId,
 				campusName: campus.name,
 				status: student.status,
+				ownerUserId: student.ownerUserId,
+				ownerName: user.name,
+				version: student.version,
 				primaryContactName: studentContact.name,
 				primaryContactPhone: studentContact.phone,
 				createdAt: student.createdAt,
@@ -583,6 +613,7 @@ export async function listStudentRecords(input: {
 					eq(campus.organizationId, input.organizationId),
 				),
 			)
+			.leftJoin(user, eq(user.id, student.ownerUserId))
 			.innerJoin(
 				studentContact,
 				and(
@@ -618,6 +649,9 @@ export async function listStudentRecords(input: {
 		campusId: row.campusId,
 		campusName: row.campusName,
 		status: row.status,
+		ownerUserId: row.ownerUserId,
+		ownerName: row.ownerName,
+		version: row.version,
 		primaryContactName: row.primaryContactName,
 		primaryContactPhoneMasked: maskPhone(row.primaryContactPhone),
 		tags: tagsByStudent.get(row.id) ?? [],
@@ -664,6 +698,9 @@ export async function getStudentRecord(input: {
 			campusName: campus.name,
 			birthDate: student.birthDate,
 			status: student.status,
+			ownerUserId: student.ownerUserId,
+			ownerName: user.name,
+			version: student.version,
 			primaryContactName: studentContact.name,
 			primaryContactPhone: studentContact.phone,
 			createdAt: student.createdAt,
@@ -677,6 +714,7 @@ export async function getStudentRecord(input: {
 				eq(campus.organizationId, input.organizationId),
 			),
 		)
+		.leftJoin(user, eq(user.id, student.ownerUserId))
 		.innerJoin(
 			studentContact,
 			and(
@@ -715,6 +753,9 @@ export async function getStudentRecord(input: {
 		campusName: row.campusName,
 		birthDate: row.birthDate,
 		status: row.status,
+		ownerUserId: row.ownerUserId,
+		ownerName: row.ownerName,
+		version: row.version,
 		primaryContactName: row.primaryContactName,
 		primaryContactPhoneMasked: maskPhone(row.primaryContactPhone),
 		tags: tagsByStudent.get(row.id) ?? [],
@@ -722,6 +763,44 @@ export async function getStudentRecord(input: {
 		updatedAt: row.updatedAt,
 		contacts,
 	};
+}
+
+export async function listStudentOwnerCandidateRecords(input: {
+	organizationId: string;
+	campusAccess: CampusAccess;
+	campusId: string;
+}): Promise<StudentOwnerCandidateRecord[]> {
+	if (!isCampusAccessible(input.campusAccess, input.campusId)) {
+		throw new StudentRepositoryError("CAMPUS_OUT_OF_SCOPE");
+	}
+	const roles = ["owner", "admin", "campus_manager", "consultant"] as const;
+	return db
+		.select({
+			userId: organizationMember.userId,
+			name: user.name,
+			email: user.email,
+			role: organizationMember.role,
+		})
+		.from(organizationMember)
+		.innerJoin(user, eq(user.id, organizationMember.userId))
+		.where(
+			and(
+				eq(organizationMember.organizationId, input.organizationId),
+				inArray(organizationMember.role, roles),
+				or(
+					inArray(organizationMember.role, ["owner", "admin"]),
+					eq(organizationMember.campusAccessMode, "all"),
+					sql<boolean>`exists (
+						select 1 from "organization_member_campus"
+						where "organization_member_campus"."organization_member_id" = ${organizationMember.id}
+							and "organization_member_campus"."campus_id" = ${input.campusId}
+					)`,
+				),
+			),
+		)
+		.orderBy(asc(user.name), asc(organizationMember.userId)) as Promise<
+		StudentOwnerCandidateRecord[]
+	>;
 }
 
 export async function createStudentRecord(
@@ -733,12 +812,19 @@ export async function createStudentRecord(
 	const tagIds = normalizeTagIds(input.tagIds);
 	try {
 		const id = await db.transaction(async (tx) => {
-			const campusAccess = await getCurrentWriteCampusAccess(tx, {
+			const campusAccess = await getCurrentStudentWriteCampusAccess(tx, {
 				organizationId: input.organizationId,
 				userId: input.userId,
 				allowedRoles: studentWriteRoles,
 			});
 			await assertWritableCampus(tx, { ...input, campusAccess });
+			if (input.ownerUserId) {
+				await assertEligibleStudentOwner(tx, {
+					organizationId: input.organizationId,
+					ownerUserId: input.ownerUserId,
+					campusId: input.campusId,
+				});
+			}
 			await assertAssignableTags(tx, {
 				organizationId: input.organizationId,
 				studentId: null,
@@ -748,11 +834,18 @@ export async function createStudentRecord(
 			const primaryContact = contacts.find((contact) => contact.isPrimary);
 			if (!primaryContact)
 				throw new StudentRepositoryError("CONTACT_INVARIANT");
+			await lockStudentPhonesInTransaction(tx, {
+				organizationId: input.organizationId,
+				normalizedPhones: contacts.map((contact) =>
+					normalizeStudentPhone(contact.phone),
+				),
+			});
 			const [created] = await tx
 				.insert(student)
 				.values({
 					organizationId: input.organizationId,
 					campusId: input.campusId,
+					ownerUserId: input.ownerUserId,
 					name: input.name.trim(),
 					birthDate: input.birthDate,
 					status: input.status,
@@ -763,6 +856,17 @@ export async function createStudentRecord(
 				.returning({ id: student.id });
 			if (!created)
 				throw new Error("Student creation did not return a record.");
+			if (input.ownerUserId) {
+				await recordStudentOwnerAssignment(tx, {
+					organizationId: input.organizationId,
+					studentId: created.id,
+					campusId: input.campusId,
+					beforeOwnerUserId: null,
+					afterOwnerUserId: input.ownerUserId,
+					operatorUserId: input.userId,
+					source: "manual",
+				});
+			}
 
 			await tx.insert(studentContact).values(
 				contacts.map((contact) => ({
@@ -783,6 +887,9 @@ export async function createStudentRecord(
 			id,
 		});
 	} catch (error) {
+		if (error instanceof StudentOwnershipError) {
+			throw new StudentRepositoryError(error.code);
+		}
 		if (error instanceof StudentRepositoryError) throw error;
 		return mapDatabaseError(error);
 	}
@@ -793,7 +900,7 @@ export async function updateStudentRecord(input: {
 	userId: string;
 	campusAccess: CampusAccess;
 	id: string;
-	expectedUpdatedAt: Date;
+	expectedVersion: number;
 	data: UpdateStudentRecordInput;
 }): Promise<StudentDetailRecord> {
 	const contacts = normalizeContacts(input.data.contacts, {
@@ -804,7 +911,7 @@ export async function updateStudentRecord(input: {
 	if (!nextStatus) throw new Error("Student status is required.");
 	try {
 		await db.transaction(async (tx) => {
-			const campusAccess = await getCurrentWriteCampusAccess(tx, {
+			const campusAccess = await getCurrentStudentWriteCampusAccess(tx, {
 				organizationId: input.organizationId,
 				userId: input.userId,
 				allowedRoles: studentWriteRoles,
@@ -813,7 +920,8 @@ export async function updateStudentRecord(input: {
 				.select({
 					id: student.id,
 					campusId: student.campusId,
-					updatedAt: student.updatedAt,
+					version: student.version,
+					ownerUserId: student.ownerUserId,
 					mergedIntoStudentId: student.mergedIntoStudentId,
 					status: student.status,
 				})
@@ -835,8 +943,15 @@ export async function updateStudentRecord(input: {
 				campusAccess,
 				campusId: current.campusId,
 			});
-			if (current.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) {
+			if (current.version !== input.expectedVersion) {
 				throw new StudentRepositoryError("STUDENT_VERSION_CONFLICT");
+			}
+			if (input.data.ownerUserId) {
+				await assertEligibleStudentOwner(tx, {
+					organizationId: input.organizationId,
+					ownerUserId: input.data.ownerUserId,
+					campusId: current.campusId,
+				});
 			}
 
 			const existingContacts = await tx
@@ -881,14 +996,25 @@ export async function updateStudentRecord(input: {
 				.update(student)
 				.set({
 					name: input.data.name.trim(),
+					ownerUserId: input.data.ownerUserId,
 					birthDate: input.data.birthDate,
 					status: nextStatus,
 					guardianName: primaryContact.name,
 					guardianPhone: primaryContact.phone,
 					guardianPhoneNormalized: normalizeStudentPhone(primaryContact.phone),
+					version: sql`${student.version} + 1`,
 					updatedAt: sql`greatest(clock_timestamp(), ${student.updatedAt} + interval '1 millisecond')`,
 				})
 				.where(eq(student.id, current.id));
+			await recordStudentOwnerAssignment(tx, {
+				organizationId: input.organizationId,
+				studentId: current.id,
+				campusId: current.campusId,
+				beforeOwnerUserId: current.ownerUserId,
+				afterOwnerUserId: input.data.ownerUserId,
+				operatorUserId: input.userId,
+				source: "manual",
+			});
 			const currentStatus = current.status;
 			if (!currentStatus) throw new Error("Student status is missing.");
 			if (currentStatus !== nextStatus) {
@@ -908,6 +1034,9 @@ export async function updateStudentRecord(input: {
 			id: input.id,
 		});
 	} catch (error) {
+		if (error instanceof StudentOwnershipError) {
+			throw new StudentRepositoryError(error.code);
+		}
 		if (error instanceof StudentRepositoryError) throw error;
 		return mapDatabaseError(error);
 	}
@@ -942,7 +1071,7 @@ export async function createStudentTagRecord(input: {
 	const tagName = ensureTagName(input.name);
 	try {
 		const created = await db.transaction(async (tx) => {
-			await getCurrentWriteCampusAccess(tx, {
+			await getCurrentStudentWriteCampusAccess(tx, {
 				organizationId: input.organizationId,
 				userId: input.userId,
 				allowedRoles: studentTagWriteRoles,
@@ -982,7 +1111,7 @@ export async function renameStudentTagRecord(input: {
 	const tagName = ensureTagName(input.name);
 	try {
 		const updated = await db.transaction(async (tx) => {
-			await getCurrentWriteCampusAccess(tx, {
+			await getCurrentStudentWriteCampusAccess(tx, {
 				organizationId: input.organizationId,
 				userId: input.userId,
 				allowedRoles: studentTagWriteRoles,
@@ -1024,7 +1153,7 @@ export async function setStudentTagActiveRecord(input: {
 	isActive: boolean;
 }): Promise<StudentTagRecord> {
 	const updated = await db.transaction(async (tx) => {
-		await getCurrentWriteCampusAccess(tx, {
+		await getCurrentStudentWriteCampusAccess(tx, {
 			organizationId: input.organizationId,
 			userId: input.userId,
 			allowedRoles: studentTagWriteRoles,

@@ -21,7 +21,16 @@ import {
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
 import type { CampusAccess } from "./organization";
-import { normalizeStudentPhone } from "./student-phone";
+import {
+	assertEligibleStudentOwner,
+	recordStudentOwnerAssignment,
+	StudentOwnershipError,
+	setStudentOwnerInTransaction,
+} from "./student-ownership";
+import {
+	lockStudentPhonesInTransaction,
+	normalizeStudentPhone,
+} from "./student-phone";
 import {
 	assertWritableCampus,
 	getCurrentWriteCampusAccess,
@@ -48,6 +57,9 @@ export type EnrollmentRegistrationErrorCode =
 	| "MEMBER_FORBIDDEN"
 	| "STUDENT_NOT_FOUND"
 	| "STUDENT_NOT_ENROLLABLE"
+	| "STUDENT_VERSION_CONFLICT"
+	| "STUDENT_OWNER_NOT_ELIGIBLE"
+	| "STUDENT_OWNER_ADJUST_FORBIDDEN"
 	| "CAMPUS_NOT_FOUND"
 	| "CAMPUS_OUT_OF_SCOPE"
 	| "CAMPUS_INACTIVE"
@@ -84,7 +96,7 @@ export class EnrollmentRegistrationError extends Error {
 }
 
 type RegistrationStudentChoice =
-	| { mode: "existing"; studentId: string }
+	| { mode: "existing"; studentId: string; expectedVersion: number }
 	| {
 			mode: "new";
 			name: string;
@@ -122,6 +134,8 @@ export type CreateIndependentEnrollmentRecordInput = {
 	organizationId: string;
 	operatorUserId: string;
 	student: RegistrationStudentChoice;
+	conversionOwnerUserId: string | null;
+	adjustStudentOwner: boolean;
 	courseId: string;
 	classGroupId: string | null;
 	purchasedLessons: number;
@@ -181,6 +195,8 @@ function inputHash(input: CreateIndependentEnrollmentRecordInput): string {
 		.update(
 			JSON.stringify({
 				student: input.student,
+				conversionOwnerUserId: input.conversionOwnerUserId,
+				adjustStudentOwner: input.adjustStudentOwner,
 				courseId: input.courseId,
 				classGroupId: input.classGroupId,
 				purchasedLessons: input.purchasedLessons,
@@ -468,12 +484,19 @@ async function assertExistingStudent(
 		campusAccess: CampusAccess;
 		studentId: string;
 	},
-): Promise<{ id: string; campusId: string }> {
+): Promise<{
+	id: string;
+	campusId: string;
+	ownerUserId: string | null;
+	version: number;
+}> {
 	const [record] = await tx
 		.select({
 			id: student.id,
 			campusId: student.campusId,
 			status: student.status,
+			ownerUserId: student.ownerUserId,
+			version: student.version,
 			mergedIntoStudentId: student.mergedIntoStudentId,
 		})
 		.from(student)
@@ -497,7 +520,12 @@ async function assertExistingStudent(
 		campusAccess: input.campusAccess,
 		campusId: record.campusId,
 	});
-	return { id: record.id, campusId: record.campusId };
+	return {
+		id: record.id,
+		campusId: record.campusId,
+		ownerUserId: record.ownerUserId,
+		version: record.version,
+	};
 }
 
 async function assertNoActiveCourseEnrollment(
@@ -571,6 +599,10 @@ export async function createIndependentEnrollmentRecord(
 
 			let studentId: string;
 			let studentCampusId: string;
+			let existingStudentRecord: Awaited<
+				ReturnType<typeof assertExistingStudent>
+			> | null = null;
+			let existingStudentExpectedVersion: number | null = null;
 			if (input.student.mode === "existing") {
 				const record = await assertExistingStudent(tx, {
 					organizationId: input.organizationId,
@@ -579,11 +611,19 @@ export async function createIndependentEnrollmentRecord(
 				});
 				studentId = record.id;
 				studentCampusId = record.campusId;
+				existingStudentRecord = record;
+				existingStudentExpectedVersion = input.student.expectedVersion;
 			} else {
 				await assertActiveCampus(tx, {
 					organizationId: input.organizationId,
 					campusAccess: access.campusAccess,
 					campusId: input.student.campusId,
+				});
+				await lockStudentPhonesInTransaction(tx, {
+					organizationId: input.organizationId,
+					normalizedPhones: [
+						normalizeStudentPhone(input.student.primaryContact.phone),
+					],
 				});
 				const [createdStudent] = await tx
 					.insert(student)
@@ -597,6 +637,7 @@ export async function createIndependentEnrollmentRecord(
 							input.student.primaryContact.phone,
 						),
 						status: "active",
+						ownerUserId: input.conversionOwnerUserId,
 					})
 					.returning({ id: student.id, campusId: student.campusId });
 				if (!createdStudent)
@@ -613,6 +654,43 @@ export async function createIndependentEnrollmentRecord(
 				});
 				studentId = createdStudent.id;
 				studentCampusId = createdStudent.campusId;
+				await recordStudentOwnerAssignment(tx, {
+					organizationId: input.organizationId,
+					studentId,
+					campusId: studentCampusId,
+					beforeOwnerUserId: null,
+					afterOwnerUserId: input.conversionOwnerUserId,
+					operatorUserId: input.operatorUserId,
+					source: "direct_enrollment",
+				});
+			}
+
+			if (input.conversionOwnerUserId) {
+				await assertEligibleStudentOwner(tx, {
+					organizationId: input.organizationId,
+					ownerUserId: input.conversionOwnerUserId,
+					campusId: studentCampusId,
+				});
+			}
+			if (existingStudentRecord && input.adjustStudentOwner) {
+				if (!canOverridePackageTerms(access.role)) {
+					throw new EnrollmentRegistrationError(
+						"STUDENT_OWNER_ADJUST_FORBIDDEN",
+					);
+				}
+				if (existingStudentRecord.version !== existingStudentExpectedVersion) {
+					throw new EnrollmentRegistrationError("STUDENT_VERSION_CONFLICT");
+				}
+				await setStudentOwnerInTransaction(tx, {
+					organizationId: input.organizationId,
+					studentId: existingStudentRecord.id,
+					campusId: existingStudentRecord.campusId,
+					beforeOwnerUserId: existingStudentRecord.ownerUserId,
+					afterOwnerUserId: input.conversionOwnerUserId,
+					expectedVersion: existingStudentRecord.version,
+					operatorUserId: input.operatorUserId,
+					source: "direct_enrollment",
+				});
 			}
 
 			await assertNoActiveCourseEnrollment(tx, {
@@ -696,6 +774,7 @@ export async function createIndependentEnrollmentRecord(
 					organizationId: input.organizationId,
 					leadId: null,
 					studentId,
+					conversionOwnerUserId: input.conversionOwnerUserId,
 					courseId: input.courseId,
 					classGroupId: input.classGroupId,
 					purchasedLessons: input.purchasedLessons,
@@ -789,6 +868,9 @@ export async function createIndependentEnrollmentRecord(
 		});
 	} catch (error) {
 		if (error instanceof EnrollmentRegistrationError) throw error;
+		if (error instanceof StudentOwnershipError) {
+			throw new EnrollmentRegistrationError(error.code);
+		}
 		const databaseError = getDatabaseError(error);
 		if (
 			databaseError?.code === "23505" &&

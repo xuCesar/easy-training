@@ -13,6 +13,7 @@ import {
 	listCampusRecords,
 	listInvitationRecords,
 	OrganizationManagementError,
+	previewMemberOwnerImpactRecord,
 	removeMemberRecord,
 	resendInvitationRecord,
 	revokeInvitationRecord,
@@ -26,6 +27,8 @@ import {
 	organizationAuditEvent,
 	organizationMember,
 	session,
+	student,
+	studentOwnerAssignmentEvent,
 	user,
 } from "../src/schema";
 
@@ -565,6 +568,107 @@ test("成员角色、校区范围和移除均保留事务内审计", async () =>
 				),
 			);
 		assert.equal(failedActionCount.length, 2);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("成员权限预览与确认会原子清空失效学员负责人并保留历史", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seedFixture(ids);
+		const [ownerBMember] = await db
+			.select({ id: organizationMember.id })
+			.from(organizationMember)
+			.where(
+				and(
+					eq(organizationMember.organizationId, ids.organizationA),
+					eq(organizationMember.userId, ids.ownerB),
+				),
+			);
+		assert.ok(ownerBMember);
+		const studentAId = randomUUID();
+		const studentOtherId = randomUUID();
+		await db.insert(student).values([
+			{
+				id: studentAId,
+				organizationId: ids.organizationA,
+				campusId: ids.campusA,
+				name: "负责人范围内学员",
+				guardianName: "联系人 A",
+				guardianPhone: "13800138001",
+				guardianPhoneNormalized: "13800138001",
+				ownerUserId: ids.ownerB,
+			},
+			{
+				id: studentOtherId,
+				organizationId: ids.organizationA,
+				campusId: ids.campusAOther,
+				name: "负责人范围外学员",
+				guardianName: "联系人 B",
+				guardianPhone: "13800138002",
+				guardianPhoneNormalized: "13800138002",
+				ownerUserId: ids.ownerB,
+			},
+		]);
+
+		const preview = await previewMemberOwnerImpactRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			change: {
+				kind: "update",
+				memberId: ownerBMember.id,
+				role: "campus_manager",
+				campusAccessMode: "selected",
+				campusIds: [ids.campusA],
+			},
+		});
+		assert.equal(preview.affectedStudentCount, 1);
+
+		await updateMemberRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			memberId: ownerBMember.id,
+			role: "campus_manager",
+			campusAccessMode: "selected",
+			campusIds: [ids.campusA],
+		});
+		const students = await db
+			.select({
+				id: student.id,
+				ownerUserId: student.ownerUserId,
+				version: student.version,
+			})
+			.from(student)
+			.where(inArray(student.id, [studentAId, studentOtherId]));
+		const byId = new Map(students.map((item) => [item.id, item]));
+		assert.deepEqual(byId.get(studentAId), {
+			id: studentAId,
+			ownerUserId: ids.ownerB,
+			version: 1,
+		});
+		assert.deepEqual(byId.get(studentOtherId), {
+			id: studentOtherId,
+			ownerUserId: null,
+			version: 2,
+		});
+		const assignmentEvents = await db
+			.select({
+				studentId: studentOwnerAssignmentEvent.studentId,
+				source: studentOwnerAssignmentEvent.source,
+				beforeOwnerUserId: studentOwnerAssignmentEvent.beforeOwnerUserId,
+				afterOwnerUserId: studentOwnerAssignmentEvent.afterOwnerUserId,
+			})
+			.from(studentOwnerAssignmentEvent)
+			.where(eq(studentOwnerAssignmentEvent.studentId, studentOtherId));
+		assert.deepEqual(assignmentEvents, [
+			{
+				studentId: studentOtherId,
+				source: "authorization_revoked",
+				beforeOwnerUserId: ids.ownerB,
+				afterOwnerUserId: null,
+			},
+		]);
 	} finally {
 		await cleanupFixture(ids);
 	}
