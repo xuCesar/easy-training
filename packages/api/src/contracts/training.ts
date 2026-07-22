@@ -45,7 +45,7 @@ export const globalSearchItemSchema = z.discriminatedUnion("kind", [
 	globalSearchItemBaseSchema.extend({ kind: z.literal("lead") }),
 	globalSearchItemBaseSchema.extend({ kind: z.literal("student") }),
 	globalSearchItemBaseSchema.extend({ kind: z.literal("course") }),
-	globalSearchItemBaseSchema.extend({ kind: z.literal("class") }),
+	globalSearchItemBaseSchema.extend({ kind: z.literal("classGroup") }),
 	globalSearchItemBaseSchema.extend({ kind: z.literal("lesson") }),
 	globalSearchItemBaseSchema.extend({ kind: z.literal("invoice") }),
 	globalSearchItemBaseSchema.extend({
@@ -60,7 +60,7 @@ export const globalSearchResultSchema = z.object({
 				"lead",
 				"student",
 				"course",
-				"class",
+				"classGroup",
 				"lesson",
 				"invoice",
 				"receipt",
@@ -368,7 +368,7 @@ export const leadListInputSchema = leadListFiltersSchema
 	})
 	.superRefine(validateCreatedAtRange);
 
-const leadRecordSchema = z.object({
+export const leadRecordSchema = z.object({
 	id: z.uuid(),
 	name: z.string(),
 	phone: z.string(),
@@ -390,6 +390,8 @@ export const leadListResultSchema = z.object({
 	total: z.number().int().nonnegative(),
 	nextCursor: z.string().nullable(),
 });
+
+export const leadDetailInputSchema = z.object({ id: z.uuid() });
 
 export const createLeadResultSchema = z.object({
 	lead: leadRecordSchema,
@@ -661,6 +663,7 @@ export const updateLeadInputSchema = z.object({
 
 export type LeadListInput = z.infer<typeof leadListInputSchema>;
 export type LeadListResult = z.infer<typeof leadListResultSchema>;
+export type LeadDetailInput = z.infer<typeof leadDetailInputSchema>;
 export type CreateLeadInput = z.infer<typeof createLeadInputSchema>;
 export type CreateLeadResult = z.infer<typeof createLeadResultSchema>;
 export type UpdateLeadInput = z.infer<typeof updateLeadInputSchema>;
@@ -1846,6 +1849,7 @@ const courseSchema = courseDataSchema.extend({
 
 export const courseListInputSchema = z.object({
 	includeInactive: z.boolean().default(false),
+	targetId: z.uuid().optional(),
 });
 export const courseListResultSchema = z.object({
 	items: z.array(courseSchema),
@@ -1918,6 +1922,7 @@ const classGroupSchema = classGroupDataSchema.extend({
 export const classGroupListInputSchema = z.object({
 	campusId: z.uuid().optional(),
 	status: classStatusSchema.optional(),
+	targetId: z.uuid().optional(),
 });
 export const classGroupListResultSchema = z.object({
 	items: z.array(classGroupSchema),
@@ -2041,6 +2046,7 @@ export const lessonListInputSchema = z.object({
 	classGroupId: z.uuid().optional(),
 	from: z.iso.datetime({ offset: true }).optional(),
 	to: z.iso.datetime({ offset: true }).optional(),
+	targetId: z.uuid().optional(),
 });
 export const lessonListResultSchema = z.object({
 	items: z.array(lessonSchema),
@@ -2100,6 +2106,7 @@ export const lessonAttendanceResultSchema = z.object({
 export const teacherWorkspaceInputSchema = z.object({
 	from: z.iso.datetime({ offset: true }),
 	to: z.iso.datetime({ offset: true }),
+	targetId: z.uuid().optional(),
 });
 export const teacherWorkspaceResultSchema = z.object({
 	teacher: z.object({ id: z.uuid(), name: z.string() }).nullable(),

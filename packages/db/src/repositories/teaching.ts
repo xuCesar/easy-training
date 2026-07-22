@@ -518,9 +518,11 @@ async function assertBindableTeacherUser(
 export async function listCourseRecords(input: {
 	organizationId: string;
 	includeInactive?: boolean;
+	targetId?: string;
 }): Promise<CourseRecord[]> {
 	const filters = [eq(course.organizationId, input.organizationId)];
 	if (!input.includeInactive) filters.push(eq(course.isActive, true));
+	if (input.targetId) filters.push(eq(course.id, input.targetId));
 	return db
 		.select()
 		.from(course)
@@ -943,6 +945,7 @@ export async function listClassGroupRecords(input: {
 	campusAccess: CampusAccess;
 	campusId?: string;
 	status?: (typeof classGroup.$inferSelect)["status"];
+	targetId?: string;
 }): Promise<ClassGroupRecord[]> {
 	if (input.campusAccess.kind === "none") return [];
 	const filters = [
@@ -951,6 +954,7 @@ export async function listClassGroupRecords(input: {
 	];
 	if (input.campusId) filters.push(eq(classGroup.campusId, input.campusId));
 	if (input.status) filters.push(eq(classGroup.status, input.status));
+	if (input.targetId) filters.push(eq(classGroup.id, input.targetId));
 	return db
 		.select(classSelection)
 		.from(classGroup)
@@ -1766,6 +1770,7 @@ export async function listLessonRecords(input: {
 	teacherId?: string;
 	from?: Date;
 	to?: Date;
+	targetId?: string;
 }): Promise<LessonRecord[]> {
 	if (input.campusAccess.kind === "none") return [];
 	const filters = [eq(lesson.organizationId, input.organizationId)];
@@ -1777,6 +1782,7 @@ export async function listLessonRecords(input: {
 	if (input.teacherId) filters.push(eq(lesson.teacherId, input.teacherId));
 	if (input.from) filters.push(gte(lesson.startsAt, input.from));
 	if (input.to) filters.push(lte(lesson.startsAt, input.to));
+	if (input.targetId) filters.push(eq(lesson.id, input.targetId));
 	const now = new Date();
 	const records = await db
 		.select({
@@ -2846,6 +2852,7 @@ export async function getTeacherWorkspaceRecord(input: {
 	userId: string;
 	from: Date;
 	to: Date;
+	targetId?: string;
 }): Promise<TeacherWorkspaceRecord> {
 	const [member] = await db
 		.select({ role: organizationMember.role })
@@ -2870,17 +2877,28 @@ export async function getTeacherWorkspaceRecord(input: {
 			),
 		)
 		.limit(1);
-	if (!binding) return { teacher: null, lessons: [] };
-	return {
-		teacher: binding,
-		lessons: await listLessonRecords({
+	if (!binding) {
+		if (input.targetId) throw new TeachingRepositoryError("LESSON_NOT_FOUND");
+		return { teacher: null, lessons: [] };
+	}
+	const lessons = await listLessonRecords({
+		organizationId: input.organizationId,
+		campusAccess: { kind: "all" },
+		teacherId: binding.id,
+		from: input.from,
+		to: input.to,
+	});
+	if (input.targetId && !lessons.some((item) => item.id === input.targetId)) {
+		const [target] = await listLessonRecords({
 			organizationId: input.organizationId,
 			campusAccess: { kind: "all" },
 			teacherId: binding.id,
-			from: input.from,
-			to: input.to,
-		}),
-	};
+			targetId: input.targetId,
+		});
+		if (!target) throw new TeachingRepositoryError("LESSON_NOT_FOUND");
+		lessons.push(target);
+	}
+	return { teacher: binding, lessons };
 }
 
 export async function getTeacherLessonAttendanceRecord(input: {

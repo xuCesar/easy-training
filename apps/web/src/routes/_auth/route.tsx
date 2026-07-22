@@ -201,6 +201,7 @@ function AuthLayout() {
 		}
 
 		setMobileNavOpen(false);
+		setGlobalSearchOpen(false);
 		setIsSwitchingOrganization(true);
 		setExpectedOrganizationId(null);
 		notifyOrganizationSwitchStarted();

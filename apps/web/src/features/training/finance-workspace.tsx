@@ -81,6 +81,10 @@ import {
 	type ReceiptDocumentDialogMode,
 } from "./receipt-document-dialog";
 import { RefundApprovalPanel } from "./refund-approval-panel";
+import {
+	isUnavailableTargetError,
+	unavailableTargetMessage,
+} from "./target-navigation";
 
 type InvoiceSummary = InvoiceListResult["items"][number];
 type InvoiceStatusFilter = InvoiceListInput["status"];
@@ -116,13 +120,17 @@ export function FinanceWorkspace({
 	organizationRole,
 	sessionUserId,
 	initialInvoiceId,
+	initialReceiptId,
 	onInvoiceIdChange,
+	onReceiptIdChange,
 }: {
 	organizationId: string;
 	organizationRole: CurrentOrganization["role"];
 	sessionUserId: string;
 	initialInvoiceId?: string;
+	initialReceiptId?: string;
 	onInvoiceIdChange?: (invoiceId: string | null) => void;
+	onReceiptIdChange?: (receiptId: string | null) => void;
 }) {
 	const [search, setSearch] = useState("");
 	const [status, setStatus] = useState<InvoiceStatusFilter>("open");
@@ -212,6 +220,7 @@ export function FinanceWorkspace({
 				<InvoiceDetailSheet
 					key={selectedInvoiceId}
 					invoiceId={selectedInvoiceId}
+					initialReceiptId={initialReceiptId}
 					organizationId={organizationId}
 					organizationRole={organizationRole}
 					sessionUserId={sessionUserId}
@@ -219,6 +228,7 @@ export function FinanceWorkspace({
 						setSelectedInvoiceId(null);
 						onInvoiceIdChange?.(null);
 					}}
+					onReceiptIdChange={onReceiptIdChange}
 				/>
 			) : null}
 
@@ -387,16 +397,20 @@ function InvoiceResults({
 
 function InvoiceDetailSheet({
 	invoiceId,
+	initialReceiptId,
 	organizationId,
 	organizationRole,
 	sessionUserId,
 	onClose,
+	onReceiptIdChange,
 }: {
 	invoiceId: string;
+	initialReceiptId?: string;
 	organizationId: string;
 	organizationRole: CurrentOrganization["role"];
 	sessionUserId: string;
 	onClose: () => void;
+	onReceiptIdChange?: (receiptId: string | null) => void;
 }) {
 	const [paymentFormGeneration, setPaymentFormGeneration] = useState(0);
 	const [paymentPending, setPaymentPending] = useState(false);
@@ -408,6 +422,12 @@ function InvoiceDetailSheet({
 		...detailOptions,
 		queryKey: [...detailOptions.queryKey, { organizationId }],
 	});
+	useEffect(() => {
+		if (!detailQuery.isError || !isUnavailableTargetError(detailQuery.error))
+			return;
+		toast.error(unavailableTargetMessage);
+		onClose();
+	}, [detailQuery.error, detailQuery.isError, onClose]);
 
 	return (
 		<Sheet
@@ -457,6 +477,7 @@ function InvoiceDetailSheet({
 				) : (
 					<InvoiceDetailContent
 						detail={detailQuery.data}
+						initialReceiptId={initialReceiptId}
 						organizationId={organizationId}
 						organizationRole={organizationRole}
 						sessionUserId={sessionUserId}
@@ -466,6 +487,7 @@ function InvoiceDetailSheet({
 							setPaymentFormGeneration((current) => current + 1)
 						}
 						onPaymentPendingChange={setPaymentPending}
+						onReceiptIdChange={onReceiptIdChange}
 					/>
 				)}
 			</SheetContent>
@@ -487,6 +509,7 @@ function InvoiceDetailSheet({
 
 function InvoiceDetailContent({
 	detail,
+	initialReceiptId,
 	organizationId,
 	organizationRole,
 	sessionUserId,
@@ -494,8 +517,10 @@ function InvoiceDetailContent({
 	onAdjust,
 	onPaymentCreated,
 	onPaymentPendingChange,
+	onReceiptIdChange,
 }: {
 	detail: InvoiceDetail;
+	initialReceiptId?: string;
 	organizationId: string;
 	organizationRole: CurrentOrganization["role"];
 	sessionUserId: string;
@@ -503,6 +528,7 @@ function InvoiceDetailContent({
 	onAdjust: () => void;
 	onPaymentCreated: () => void;
 	onPaymentPendingChange: (pending: boolean) => void;
+	onReceiptIdChange?: (receiptId: string | null) => void;
 }) {
 	const { invoice } = detail;
 	const [reversalTarget, setReversalTarget] = useState<
@@ -512,6 +538,18 @@ function InvoiceDetailContent({
 		payment: InvoiceDetail["payments"][number];
 		mode: ReceiptDocumentDialogMode;
 	} | null>(null);
+	useEffect(() => {
+		if (!initialReceiptId) return;
+		const payment = detail.payments.find(
+			(item) => item.receipt?.id === initialReceiptId,
+		);
+		if (!payment) {
+			toast.error(unavailableTargetMessage);
+			onReceiptIdChange?.(null);
+			return;
+		}
+		setReceiptTarget({ payment, mode: "view" });
+	}, [detail.payments, initialReceiptId, onReceiptIdChange]);
 	const payments = [...detail.payments].sort(
 		(left, right) =>
 			new Date(right.receivedAt).getTime() -
@@ -846,7 +884,10 @@ function InvoiceDetailContent({
 					studentName={invoice.studentName}
 					initialReceiptId={receiptTarget.payment.receipt?.id ?? null}
 					initialMode={receiptTarget.mode}
-					onClose={() => setReceiptTarget(null)}
+					onClose={() => {
+						setReceiptTarget(null);
+						if (initialReceiptId) onReceiptIdChange?.(null);
+					}}
 					onPendingChange={onPaymentPendingChange}
 				/>
 			) : null}

@@ -35,7 +35,7 @@ const financeRoles = new Set(["owner", "admin", "campus_manager", "finance"]);
 function FinanceRoute() {
 	const sessionUserId = Route.useRouteContext().session.data?.user.id;
 	const navigate = Route.useNavigate();
-	const { invoiceId } = Route.useSearch();
+	const { invoiceId, receiptId } = Route.useSearch();
 	const { organization } = useOrganization();
 
 	if (!financeRoles.has(organization.role)) {
@@ -61,9 +61,21 @@ function FinanceRoute() {
 			organizationRole={organization.role}
 			sessionUserId={sessionUserId}
 			initialInvoiceId={invoiceId}
+			initialReceiptId={receiptId}
 			onInvoiceIdChange={(nextInvoiceId) =>
 				void navigate({
 					search: nextInvoiceId ? { invoiceId: nextInvoiceId } : {},
+					replace: true,
+				})
+			}
+			onReceiptIdChange={(nextReceiptId) =>
+				void navigate({
+					search:
+						invoiceId && nextReceiptId
+							? { invoiceId, receiptId: nextReceiptId }
+							: invoiceId
+								? { invoiceId }
+								: {},
 					replace: true,
 				})
 			}

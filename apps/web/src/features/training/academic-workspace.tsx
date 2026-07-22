@@ -57,6 +57,10 @@ import { formatCentsToCurrency, formatDateTime } from "./format";
 import { MakeupLessonDialog } from "./makeup-lesson-dialog";
 import { RoomsPanel } from "./rooms-panel";
 import { ScheduleRulesDialog } from "./schedule-rules-dialog";
+import {
+	isUnavailableTargetError,
+	unavailableTargetMessage,
+} from "./target-navigation";
 
 type AcademicTab = "classes" | "lessons" | "rooms" | "courses" | "teachers";
 type Editor =
@@ -77,12 +81,18 @@ const tabs: Array<{ id: AcademicTab; label: string }> = [
 export function AcademicWorkspace({
 	initialTab,
 	initialLessonId,
+	initialCourseId,
+	initialClassGroupId,
+	onTargetClear,
 	organizationId,
 	sessionUserId,
 	role,
 }: {
 	initialTab: AcademicTab;
 	initialLessonId?: string;
+	initialCourseId?: string;
+	initialClassGroupId?: string;
+	onTargetClear: () => void;
 	organizationId: string;
 	sessionUserId: string | undefined;
 	role: string;
@@ -112,7 +122,7 @@ export function AcademicWorkspace({
 		input: { includeInactive: false },
 	});
 	const coursesOptions = orpc.training.teaching.courses.list.queryOptions({
-		input: { includeInactive: true },
+		input: { includeInactive: true, targetId: initialCourseId },
 	});
 	const teachersOptions = orpc.training.teaching.teachers.list.queryOptions();
 	const classroomsOptions = orpc.training.teaching.classrooms.list.queryOptions(
@@ -128,12 +138,13 @@ export function AcademicWorkspace({
 			classStatus === "all"
 				? undefined
 				: (classStatus as "recruiting" | "running" | "paused" | "completed"),
+		targetId: initialClassGroupId,
 	};
 	const classesOptions = orpc.training.teaching.classes.list.queryOptions({
 		input: classesInput,
 	});
 	const lessonsOptions = orpc.training.teaching.lessons.list.queryOptions({
-		input: { campusId },
+		input: { campusId, targetId: initialLessonId },
 	});
 	const campusesQuery = useQuery({
 		...campusesOptions,
@@ -164,13 +175,39 @@ export function AcademicWorkspace({
 		...lessonsOptions,
 		queryKey: [...lessonsOptions.queryKey, context, { campusId }],
 	});
+	const targetQuery =
+		initialTab === "courses" && initialCourseId
+			? coursesQuery
+			: initialTab === "classes" && initialClassGroupId
+				? classesQuery
+				: initialTab === "lessons" && initialLessonId
+					? lessonsQuery
+					: null;
 	useEffect(() => {
-		if (!initialLessonId || initialTab !== "lessons" || lessonsQuery.isPending)
+		if (!targetQuery?.isError || !isUnavailableTargetError(targetQuery.error))
 			return;
+		toast.error(unavailableTargetMessage);
+		onTargetClear();
+	}, [onTargetClear, targetQuery?.error, targetQuery?.isError]);
+	useEffect(() => {
+		const targetId =
+			initialTab === "lessons"
+				? initialLessonId
+				: initialTab === "classes"
+					? initialClassGroupId
+					: initialCourseId;
+		if (!targetId || targetQuery?.isPending) return;
+		const elementPrefix = initialTab === "lessons" ? "lesson" : initialTab;
 		document
-			.getElementById(`lesson-${initialLessonId}`)
+			.getElementById(`${elementPrefix}-${targetId}`)
 			?.scrollIntoView({ behavior: "smooth", block: "center" });
-	}, [initialLessonId, initialTab, lessonsQuery.isPending]);
+	}, [
+		initialClassGroupId,
+		initialCourseId,
+		initialLessonId,
+		initialTab,
+		targetQuery?.isPending,
+	]);
 
 	function refresh() {
 		return invalidateAcademicQueries();
@@ -181,7 +218,8 @@ export function AcademicWorkspace({
 					label: "新增课次",
 					onClick: () => setEditor({ kind: "lesson", value: null }),
 				}
-			: initialTab === "rooms"
+			: initialTab === "rooms" ||
+					(initialTab === "courses" && !canManageCatalog)
 				? null
 				: initialTab === "courses" && canManageCatalog
 					? {
@@ -219,11 +257,7 @@ export function AcademicWorkspace({
 				aria-label="教务功能"
 			>
 				{tabs
-					.filter(
-						(item) =>
-							canManageCatalog ||
-							(item.id !== "courses" && item.id !== "teachers"),
-					)
+					.filter((item) => canManageCatalog || item.id !== "teachers")
 					.map((item) => (
 						<Link
 							key={item.id}
@@ -235,6 +269,19 @@ export function AcademicWorkspace({
 						</Link>
 					))}
 			</nav>
+			{initialCourseId || initialClassGroupId || initialLessonId ? (
+				<div className="flex items-center justify-between gap-3 border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+					<span>已定位全局搜索目标</span>
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						onClick={onTargetClear}
+					>
+						取消定位
+					</Button>
+				</div>
+			) : null}
 			{initialTab === "classes" ? (
 				<ClassesPanel
 					campuses={campusesQuery.data?.items ?? []}
@@ -245,6 +292,7 @@ export function AcademicWorkspace({
 					isError={classesQuery.isError}
 					campusId={campusId}
 					status={classStatus}
+					highlightedClassGroupId={initialClassGroupId}
 					onCampusChange={setCampusId}
 					onStatusChange={setClassStatus}
 					onEdit={(value) => setEditor({ kind: "class", value })}
@@ -284,12 +332,18 @@ export function AcademicWorkspace({
 					onRetry={() => void lessonsQuery.refetch()}
 				/>
 			) : null}
-			{initialTab === "courses" && canManageCatalog ? (
+			{initialTab === "courses" ? (
 				<CoursesPanel
 					courses={coursesQuery.data?.items ?? []}
+					highlightedCourseId={initialCourseId}
+					canManage={canManageCatalog}
 					isPending={coursesQuery.isPending}
 					isError={coursesQuery.isError}
-					onCreate={() => setEditor({ kind: "course", value: null })}
+					onCreate={
+						canManageCatalog
+							? () => setEditor({ kind: "course", value: null })
+							: undefined
+					}
 					onEdit={(value) => setEditor({ kind: "course", value })}
 					onRetry={() => void coursesQuery.refetch()}
 				/>
@@ -442,6 +496,7 @@ function ClassesPanel({
 	isError,
 	campusId,
 	status,
+	highlightedClassGroupId,
 	onCampusChange,
 	onStatusChange,
 	onEdit,
@@ -459,13 +514,14 @@ function ClassesPanel({
 	isError: boolean;
 	campusId: string | undefined;
 	status: string;
+	highlightedClassGroupId?: string;
 	onCampusChange: (value: string | undefined) => void;
 	onStatusChange: (value: string) => void;
 	onEdit: (item: ClassGroup) => void;
 	onSchedule: (item: ClassGroup) => void;
 	onManageMembers: (item: ClassGroup) => void;
 	onChangeStatus: (item: ClassGroup, action: "pause" | "resume") => void;
-	onCreate: () => void;
+	onCreate?: () => void;
 	onRetry: () => void;
 }) {
 	const [expandedClassId, setExpandedClassId] = useState<string | null>(null);
@@ -518,7 +574,8 @@ function ClassesPanel({
 						return (
 							<article
 								key={item.id}
-								className="grid gap-3 border p-3 md:grid-cols-[minmax(12rem,1.4fr)_repeat(4,minmax(0,1fr))_auto] md:items-center"
+								id={`classes-${item.id}`}
+								className={`grid scroll-mt-20 gap-3 border p-3 md:grid-cols-[minmax(12rem,1.4fr)_repeat(4,minmax(0,1fr))_auto] md:items-center ${highlightedClassGroupId === item.id ? "ring-2 ring-primary" : ""}`}
 							>
 								<div className="min-w-0">
 									<p className="truncate font-medium">{item.name}</p>
@@ -813,6 +870,8 @@ function LessonsPanel({
 
 function CoursesPanel({
 	courses,
+	highlightedCourseId,
+	canManage,
 	isPending,
 	isError,
 	onCreate,
@@ -820,9 +879,11 @@ function CoursesPanel({
 	onRetry,
 }: {
 	courses: Course[];
+	highlightedCourseId?: string;
+	canManage: boolean;
 	isPending: boolean;
 	isError: boolean;
-	onCreate: () => void;
+	onCreate?: () => void;
 	onEdit: (item: Course) => void;
 	onRetry: () => void;
 }) {
@@ -840,7 +901,8 @@ function CoursesPanel({
 				{courses.map((item) => (
 					<article
 						key={item.id}
-						className="grid gap-3 border p-3 md:grid-cols-[minmax(14rem,1.4fr)_repeat(3,minmax(0,1fr))_auto] md:items-center"
+						id={`courses-${item.id}`}
+						className={`grid scroll-mt-20 gap-3 border p-3 md:grid-cols-[minmax(14rem,1.4fr)_repeat(3,minmax(0,1fr))_auto] md:items-center ${highlightedCourseId === item.id ? "ring-2 ring-primary" : ""}`}
 					>
 						<div className="min-w-0">
 							<p className="truncate font-medium">{item.name}</p>
@@ -862,17 +924,19 @@ function CoursesPanel({
 								{item.tags.join(" · ") || "无标签"}
 							</p>
 						</div>
-						<div className="flex gap-1">
-							<Button
-								size="icon-sm"
-								variant="ghost"
-								aria-label={`编辑${item.name}`}
-								onClick={() => onEdit(item)}
-							>
-								<PencilIcon />
-							</Button>
-							<CoursePowerButton course={item} />
-						</div>
+						{canManage ? (
+							<div className="flex gap-1">
+								<Button
+									size="icon-sm"
+									variant="ghost"
+									aria-label={`编辑${item.name}`}
+									onClick={() => onEdit(item)}
+								>
+									<PencilIcon />
+								</Button>
+								<CoursePowerButton course={item} />
+							</div>
+						) : null}
 					</article>
 				))}
 			</div>
@@ -1024,7 +1088,7 @@ function PanelState({
 	emptyTitle: string;
 	emptyDescription: string;
 	onRetry: () => void;
-	onCreate: () => void;
+	onCreate?: () => void;
 	children: React.ReactNode;
 }) {
 	if (pending)
@@ -1058,10 +1122,12 @@ function PanelState({
 					<EmptyTitle>{emptyTitle}</EmptyTitle>
 					<EmptyDescription>{emptyDescription}</EmptyDescription>
 				</EmptyHeader>
-				<Button onClick={onCreate}>
-					<PlusIcon data-icon="inline-start" />
-					新建
-				</Button>
+				{onCreate ? (
+					<Button onClick={onCreate}>
+						<PlusIcon data-icon="inline-start" />
+						新建
+					</Button>
+				) : null}
 			</Empty>
 		);
 	return <>{children}</>;

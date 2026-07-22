@@ -18,15 +18,15 @@
 3. API repository/router ✅
    - 新增 `packages/api/src/repositories/global-search.ts` 做日期序列化和判别联合映射。
    - 在 `packages/api/src/routers/index.ts` 增加 `training.search.global`，传入服务端 context 的 role、userId 和 campusAccess。
-4. 可刷新深链接（进行中）
+4. 可刷新深链接 ✅
    - 为 leads/students/academic/finance/teacher 路由补 Zod search 参数。
    - 为线索增加单条受权读取；为教务列表和教师工作台补按目标 ID 的受权加载路径。
    - 复用现有详情、时间线、教务定位、账单详情和凭证 Dialog；关闭或目标失效时清理 URL。
-5. 顶栏搜索 UI（基础面板已完成；键盘结果导航、焦点返回与机构切换主动关闭待补）
+5. 顶栏搜索 UI ✅
    - 新增 `global-search-dialog.tsx`，实现桌面/移动 trigger、快捷键、焦点管理、延迟请求和分组结果。
    - 完整呈现输入提示、加载、空、错误重试和 `hasMore`；使用穷尽 target 映射导航。
    - 机构切换时关闭并清理搜索状态。
-6. 测试与文档（契约规范已补；集成与浏览器测试待补）
+6. 测试与文档 ✅
    - 增加 PostgreSQL 集成测试和 API 契约断言，覆盖五类角色、跨租户/校区、结果上限、稳定排序与脱敏。
    - 补路由/组件关键行为测试；记录新增深链接参数。
 

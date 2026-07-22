@@ -43,7 +43,7 @@ export const globalSearchKinds = [
 	"lead",
 	"student",
 	"course",
-	"class",
+	"classGroup",
 	"lesson",
 	"invoice",
 	"receipt",

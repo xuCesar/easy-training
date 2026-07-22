@@ -89,6 +89,20 @@ type TeachingScope = {
 	campusAccess: Parameters<typeof listTeacherRecords>[0]["campusAccess"];
 };
 
+function appendTarget<T extends { id: string }>(
+	items: T[],
+	target: T | undefined,
+) {
+	if (!target || items.some((item) => item.id === target.id)) return items;
+	return [...items, target];
+}
+
+function throwTargetNotFound(): never {
+	throw new ORPCError("NOT_FOUND", {
+		message: "目标记录不存在或当前账号无权访问。",
+	});
+}
+
 function toCourse(
 	record: Awaited<ReturnType<typeof listCourseRecords>>[number],
 ): Course {
@@ -333,13 +347,20 @@ export async function listCourses(
 	scope: TeachingScope,
 	input: CourseListInput,
 ) {
+	const { targetId, ...filters } = input;
+	const [records, targetRecords] = await Promise.all([
+		listCourseRecords({ organizationId: scope.organizationId, ...filters }),
+		targetId
+			? listCourseRecords({
+					organizationId: scope.organizationId,
+					includeInactive: true,
+					targetId,
+				})
+			: Promise.resolve([]),
+	]);
+	if (targetId && !targetRecords[0]) throwTargetNotFound();
 	return {
-		items: (
-			await listCourseRecords({
-				organizationId: scope.organizationId,
-				...input,
-			})
-		).map(toCourse),
+		items: appendTarget(records, targetRecords[0]).map(toCourse),
 	};
 }
 export async function createCourse(
@@ -669,14 +690,20 @@ export async function listClassGroups(
 	scope: TeachingScope,
 	input: ClassGroupListInput,
 ) {
+	const { targetId, ...filters } = input;
+	const baseInput = {
+		organizationId: scope.organizationId,
+		campusAccess: scope.campusAccess,
+	};
+	const [records, targetRecords] = await Promise.all([
+		listClassGroupRecords({ ...baseInput, ...filters }),
+		targetId
+			? listClassGroupRecords({ ...baseInput, targetId })
+			: Promise.resolve([]),
+	]);
+	if (targetId && !targetRecords[0]) throwTargetNotFound();
 	return {
-		items: (
-			await listClassGroupRecords({
-				organizationId: scope.organizationId,
-				campusAccess: scope.campusAccess,
-				...input,
-			})
-		).map(toClassGroup),
+		items: appendTarget(records, targetRecords[0]).map(toClassGroup),
 	};
 }
 export async function createClassGroup(
@@ -777,17 +804,26 @@ export async function listLessons(
 	scope: TeachingScope,
 	input: LessonListInput,
 ) {
+	const { targetId, ...filters } = input;
+	const baseInput = {
+		organizationId: scope.organizationId,
+		campusAccess: scope.campusAccess,
+	};
+	const [records, targetRecords] = await Promise.all([
+		listLessonRecords({
+			...baseInput,
+			campusId: filters.campusId,
+			classGroupId: filters.classGroupId,
+			from: filters.from ? new Date(filters.from) : undefined,
+			to: filters.to ? new Date(filters.to) : undefined,
+		}),
+		targetId
+			? listLessonRecords({ ...baseInput, targetId })
+			: Promise.resolve([]),
+	]);
+	if (targetId && !targetRecords[0]) throwTargetNotFound();
 	return {
-		items: (
-			await listLessonRecords({
-				organizationId: scope.organizationId,
-				campusAccess: scope.campusAccess,
-				campusId: input.campusId,
-				classGroupId: input.classGroupId,
-				from: input.from ? new Date(input.from) : undefined,
-				to: input.to ? new Date(input.to) : undefined,
-			})
-		).map(toLesson),
+		items: appendTarget(records, targetRecords[0]).map(toLesson),
 	};
 }
 export async function createLesson(
@@ -891,6 +927,7 @@ export async function getTeacherWorkspace(
 			userId: scope.userId,
 			from: new Date(input.from),
 			to: new Date(input.to),
+			targetId: input.targetId,
 		});
 		return { teacher: record.teacher, lessons: record.lessons.map(toLesson) };
 	} catch (error) {

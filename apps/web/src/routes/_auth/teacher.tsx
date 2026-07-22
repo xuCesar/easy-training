@@ -18,5 +18,13 @@ export const Route = createFileRoute("/_auth/teacher")({
 
 function TeacherRoute() {
 	const { organization } = useOrganization();
-	return <TeacherWorkbench organizationId={organization.id} />;
+	const { lessonId } = Route.useSearch();
+	const navigate = Route.useNavigate();
+	return (
+		<TeacherWorkbench
+			organizationId={organization.id}
+			initialLessonId={lessonId}
+			onTargetClear={() => void navigate({ search: {}, replace: true })}
+		/>
+	);
 }

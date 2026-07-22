@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { inArray } from "drizzle-orm";
-import { dashboardSnapshotSchema } from "../../api/src/contracts/training";
+import { getGlobalSearchKindsForRole } from "../../api/src/authorization/training";
+import {
+	dashboardSnapshotSchema,
+	globalSearchResultSchema,
+} from "../../api/src/contracts/training";
+import { searchGlobal } from "../../api/src/repositories/global-search";
 import { getTrainingDashboardSnapshot } from "../../api/src/repositories/training-dashboard";
 import { db } from "../src";
+import { searchGlobalRecords } from "../src/repositories/global-search";
 import { getDashboardLearningSummary } from "../src/repositories/training-dashboard";
 import {
 	campus,
@@ -761,6 +767,135 @@ test("机构运营工作台按机构、时间窗口和角色返回一致数据",
 			},
 			{ studentCount: 2, enrollmentCount: 2, activeClassCount: 2 },
 		);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("全局搜索按机构、校区与教师绑定裁剪结果并转义通配符", async () => {
+	const ids = createFixtureIds();
+	const [organizationA] = ids.organizationIds;
+	try {
+		await seedFixture(ids);
+		const ownerGroups = await searchGlobalRecords({
+			organizationId: organizationA,
+			userId: ids.ownerA,
+			campusAccess: { kind: "all" },
+			kinds: ["lead", "student", "course", "classGroup", "lesson", "invoice"],
+			query: "A",
+		});
+		assert.deepEqual(
+			new Set(ownerGroups.map((group) => group.kind)),
+			new Set(["lead", "student", "course", "classGroup", "lesson", "invoice"]),
+		);
+		assert.ok(
+			ownerGroups
+				.flatMap((group) => group.items)
+				.every((item) => !item.title.startsWith("B ")),
+		);
+		const ownerResult = globalSearchResultSchema.parse(
+			await searchGlobal(
+				{
+					organizationId: organizationA,
+					userId: ids.ownerA,
+					role: "owner",
+					campusAccess: { kind: "all" },
+				},
+				{ query: "A" },
+			),
+		);
+		assert.ok(
+			ownerResult.groups.every((group) =>
+				[
+					"lead",
+					"student",
+					"course",
+					"classGroup",
+					"lesson",
+					"invoice",
+				].includes(group.kind),
+			),
+		);
+
+		const consultantResult = await searchGlobal(
+			{
+				organizationId: organizationA,
+				userId: ids.otherA,
+				role: "consultant",
+				campusAccess: { kind: "selected", campusIds: [ids.campusA] },
+			},
+			{ query: "A" },
+		);
+		assert.ok(
+			consultantResult.groups.every((group) =>
+				["lead", "student"].includes(group.kind),
+			),
+		);
+		const financeResult = await searchGlobal(
+			{
+				organizationId: organizationA,
+				userId: ids.financeA,
+				role: "finance",
+				campusAccess: { kind: "all" },
+			},
+			{ query: "A" },
+		);
+		assert.ok(
+			financeResult.groups.every((group) =>
+				["invoice", "receipt"].includes(group.kind),
+			),
+		);
+		assert.deepEqual(getGlobalSearchKindsForRole("admin"), [
+			"lead",
+			"student",
+			"course",
+			"classGroup",
+			"lesson",
+			"invoice",
+			"receipt",
+		]);
+		assert.deepEqual(
+			getGlobalSearchKindsForRole("campus_manager"),
+			getGlobalSearchKindsForRole("admin"),
+		);
+
+		const leadLimitResult = await searchGlobalRecords({
+			organizationId: organizationA,
+			userId: ids.ownerA,
+			campusAccess: { kind: "all" },
+			kinds: ["lead"],
+			query: "A 开放线索",
+		});
+		assert.equal(leadLimitResult[0]?.items.length, 5);
+		assert.equal(leadLimitResult[0]?.hasMore, true);
+		assert.ok(
+			leadLimitResult[0]?.items.every(
+				(item) => !item.subtitle?.includes(ids.prefix),
+			),
+		);
+
+		const teacherGroups = await searchGlobalRecords({
+			organizationId: organizationA,
+			userId: ids.teacherUserA,
+			campusAccess: { kind: "all" },
+			kinds: ["lesson"],
+			query: "A",
+		});
+		assert.ok(teacherGroups[0]?.items.length);
+		assert.ok(
+			teacherGroups[0]?.items.every((item) =>
+				item.subtitle?.includes("A 当前教师"),
+			),
+		);
+
+		const literalWildcard = await searchGlobalRecords({
+			organizationId: organizationA,
+			userId: ids.ownerA,
+			campusAccess: { kind: "all" },
+			kinds: ["lead"],
+			query: "%_",
+		});
+		assert.deepEqual(literalWildcard, []);
 	} finally {
 		await cleanupFixture(ids);
 	}

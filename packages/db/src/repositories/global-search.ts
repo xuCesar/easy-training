@@ -31,7 +31,7 @@ export const globalSearchKinds = [
 	"lead",
 	"student",
 	"course",
-	"class",
+	"classGroup",
 	"lesson",
 	"invoice",
 	"receipt",
@@ -89,7 +89,13 @@ async function searchLeads(input: SearchInput): Promise<GlobalSearchRecord[]> {
 			campusName: campus.name,
 		})
 		.from(lead)
-		.leftJoin(campus, eq(campus.id, lead.campusId))
+		.leftJoin(
+			campus,
+			and(
+				eq(campus.id, lead.campusId),
+				eq(campus.organizationId, input.organizationId),
+			),
+		)
 		.where(
 			and(
 				eq(lead.organizationId, input.organizationId),
@@ -132,7 +138,13 @@ async function searchStudents(
 			phone: studentContact.phone,
 		})
 		.from(student)
-		.leftJoin(campus, eq(campus.id, student.campusId))
+		.leftJoin(
+			campus,
+			and(
+				eq(campus.id, student.campusId),
+				eq(campus.organizationId, input.organizationId),
+			),
+		)
 		.leftJoin(
 			studentContact,
 			and(
@@ -204,13 +216,36 @@ async function searchClasses(
 			campusName: campus.name,
 		})
 		.from(classGroup)
-		.innerJoin(course, eq(course.id, classGroup.courseId))
-		.innerJoin(campus, eq(campus.id, classGroup.campusId))
+		.innerJoin(
+			course,
+			and(
+				eq(course.id, classGroup.courseId),
+				eq(course.organizationId, input.organizationId),
+			),
+		)
+		.innerJoin(
+			campus,
+			and(
+				eq(campus.id, classGroup.campusId),
+				eq(campus.organizationId, input.organizationId),
+			),
+		)
+		.innerJoin(
+			teacher,
+			and(
+				eq(teacher.id, classGroup.teacherId),
+				eq(teacher.organizationId, input.organizationId),
+			),
+		)
 		.where(
 			and(
 				eq(classGroup.organizationId, input.organizationId),
 				campusCondition(classGroup.campusId, input.campusAccess),
-				or(ilike(classGroup.name, query), ilike(course.name, query)),
+				or(
+					ilike(classGroup.name, query),
+					ilike(course.name, query),
+					ilike(teacher.name, query),
+				),
 			),
 		)
 		.orderBy(
@@ -220,7 +255,7 @@ async function searchClasses(
 		)
 		.limit(perKindLimit);
 	return rows.map((row) => ({
-		kind: "class",
+		kind: "classGroup",
 		id: row.id,
 		title: row.name,
 		subtitle: `${row.courseName} · ${row.campusName}`,
@@ -239,18 +274,44 @@ async function searchLessons(
 		.select({
 			id: lesson.id,
 			className: classGroup.name,
+			courseName: course.name,
+			teacherName: teacher.name,
 			room: lesson.room,
 			startsAt: lesson.startsAt,
 		})
 		.from(lesson)
-		.innerJoin(classGroup, eq(classGroup.id, lesson.classGroupId))
-		.innerJoin(teacher, eq(teacher.id, lesson.teacherId))
+		.innerJoin(
+			classGroup,
+			and(
+				eq(classGroup.id, lesson.classGroupId),
+				eq(classGroup.organizationId, input.organizationId),
+			),
+		)
+		.innerJoin(
+			course,
+			and(
+				eq(course.id, classGroup.courseId),
+				eq(course.organizationId, input.organizationId),
+			),
+		)
+		.innerJoin(
+			teacher,
+			and(
+				eq(teacher.id, lesson.teacherId),
+				eq(teacher.organizationId, input.organizationId),
+			),
+		)
 		.where(
 			and(
 				eq(lesson.organizationId, input.organizationId),
 				campusCondition(lesson.campusId, input.campusAccess),
 				teacherFilter,
-				or(ilike(classGroup.name, query), ilike(lesson.room, query)),
+				or(
+					ilike(classGroup.name, query),
+					ilike(course.name, query),
+					ilike(teacher.name, query),
+					ilike(lesson.room, query),
+				),
 			),
 		)
 		.orderBy(
@@ -263,7 +324,7 @@ async function searchLessons(
 		kind: "lesson",
 		id: row.id,
 		title: row.className,
-		subtitle: `${row.startsAt.toISOString()} · ${row.room}`,
+		subtitle: `${row.courseName} · ${row.teacherName} · ${row.startsAt.toISOString()} · ${row.room}`,
 	}));
 }
 
@@ -279,8 +340,20 @@ async function searchInvoices(
 			campusName: campus.name,
 		})
 		.from(invoice)
-		.innerJoin(student, eq(student.id, invoice.studentId))
-		.innerJoin(campus, eq(campus.id, student.campusId))
+		.innerJoin(
+			student,
+			and(
+				eq(student.id, invoice.studentId),
+				eq(student.organizationId, input.organizationId),
+			),
+		)
+		.innerJoin(
+			campus,
+			and(
+				eq(campus.id, student.campusId),
+				eq(campus.organizationId, input.organizationId),
+			),
+		)
 		.where(
 			and(
 				eq(invoice.organizationId, input.organizationId),
@@ -355,7 +428,7 @@ export async function searchGlobalRecords(input: SearchInput): Promise<
 		lead: () => searchLeads(input),
 		student: () => searchStudents(input),
 		course: () => searchCourses(input),
-		class: () => searchClasses(input),
+		classGroup: () => searchClasses(input),
 		lesson: () => searchLessons(input),
 		invoice: () => searchInvoices(input),
 		receipt: () => searchReceipts(input),

@@ -79,6 +79,10 @@ import { z } from "zod";
 import { IndependentEnrollmentDialog } from "@/features/training/independent-enrollment-dialog";
 import { useOrganization } from "@/features/training/organization-context";
 import { StudentTimelineSheet } from "@/features/training/student-timeline-sheet";
+import {
+	isUnavailableTargetError,
+	unavailableTargetMessage,
+} from "@/features/training/target-navigation";
 import { client, orpc, queryClient } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth/students")({
@@ -121,6 +125,8 @@ const studentStatuses: Array<{ value: StudentStatus; label: string }> = [
 function StudentsRoute() {
 	const sessionUserId = Route.useRouteContext().session.data?.user.id;
 	const { organization } = useOrganization();
+	const { studentId } = Route.useSearch();
+	const navigate = Route.useNavigate();
 	const [search, setSearch] = useState("");
 	const [campusId, setCampusId] = useState<string | null>(null);
 	const [status, setStatus] = useState<"all" | StudentStatus>("all");
@@ -149,6 +155,32 @@ function StudentsRoute() {
 		...tagsOptions,
 		queryKey: [...tagsOptions.queryKey, queryContext],
 	});
+	const targetStudentQuery = useQuery({
+		...orpc.training.students.get.queryOptions({
+			input: { id: studentId ?? "" },
+		}),
+		enabled: Boolean(studentId),
+		queryKey: ["training-student-target", organization.id, studentId],
+		retry: false,
+	});
+	useEffect(() => {
+		if (targetStudentQuery.data) setTimelineTarget(targetStudentQuery.data);
+	}, [targetStudentQuery.data]);
+	useEffect(() => {
+		if (
+			!studentId ||
+			!targetStudentQuery.isError ||
+			!isUnavailableTargetError(targetStudentQuery.error)
+		)
+			return;
+		toast.error(unavailableTargetMessage);
+		void navigate({ search: {}, replace: true });
+	}, [
+		navigate,
+		studentId,
+		targetStudentQuery.error,
+		targetStudentQuery.isError,
+	]);
 	const filters = useMemo(
 		() => ({
 			query: deferredSearch || undefined,
@@ -311,7 +343,10 @@ function StudentsRoute() {
 					student={timelineTarget}
 					organizationId={organization.id}
 					sessionUserId={sessionUserId}
-					onClose={() => setTimelineTarget(null)}
+					onClose={() => {
+						setTimelineTarget(null);
+						if (studentId) void navigate({ search: {}, replace: true });
+					}}
 				/>
 			) : null}
 			{independentEnrollmentOpen ? (

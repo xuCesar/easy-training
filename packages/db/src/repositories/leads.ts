@@ -313,7 +313,7 @@ function getDatabaseError(
 	return "cause" in error ? getDatabaseError(error.cause) : null;
 }
 
-async function getLeadRecord(input: {
+export async function getLeadRecord(input: {
 	organizationId: string;
 	id: string;
 	campusAccess: CampusAccess;
@@ -333,6 +333,7 @@ async function getLeadRecord(input: {
 			and(
 				eq(lead.id, input.id),
 				eq(lead.organizationId, input.organizationId),
+				ne(lead.stage, "enrolled"),
 				campusAccessCondition(input.campusAccess),
 			),
 		)

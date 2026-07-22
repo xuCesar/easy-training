@@ -71,6 +71,7 @@ import {
 	type FormEvent,
 	type SetStateAction,
 	useDeferredValue,
+	useEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -80,6 +81,10 @@ import { z } from "zod";
 
 import { LeadConversionDialog } from "@/features/training/lead-conversion-dialog";
 import { useOrganization } from "@/features/training/organization-context";
+import {
+	isUnavailableTargetError,
+	unavailableTargetMessage,
+} from "@/features/training/target-navigation";
 import { client, orpc, queryClient } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth/leads")({
@@ -152,6 +157,8 @@ const followUpStageOptions = stageOptions.filter(
 function LeadsRoute() {
 	const sessionUserId = Route.useRouteContext().session.data?.user.id;
 	const { organization } = useOrganization();
+	const { leadId } = Route.useSearch();
+	const navigate = Route.useNavigate();
 	const [search, setSearch] = useState("");
 	const [stage, setStage] = useState<LeadFilterStage>("all");
 	const [campusId, setCampusId] = useState<string | null>(null);
@@ -177,6 +184,25 @@ function LeadsRoute() {
 			{ organizationId: organization.id, sessionUserId },
 		],
 	});
+	const targetLeadQuery = useQuery({
+		...orpc.training.leads.get.queryOptions({ input: { id: leadId ?? "" } }),
+		enabled: Boolean(leadId),
+		queryKey: ["training-lead-target", organization.id, leadId],
+		retry: false,
+	});
+	useEffect(() => {
+		if (targetLeadQuery.data) setEditor(targetLeadQuery.data);
+	}, [targetLeadQuery.data]);
+	useEffect(() => {
+		if (
+			!leadId ||
+			!targetLeadQuery.isError ||
+			!isUnavailableTargetError(targetLeadQuery.error)
+		)
+			return;
+		toast.error(unavailableTargetMessage);
+		void navigate({ search: {}, replace: true });
+	}, [leadId, navigate, targetLeadQuery.error, targetLeadQuery.isError]);
 	const filters = useMemo(
 		() => ({
 			query: deferredSearch || undefined,
@@ -487,7 +513,10 @@ function LeadsRoute() {
 				key={editor === "new" ? "new" : (editor?.id ?? "closed")}
 				lead={editor}
 				onOpenChange={(open) => {
-					if (!open) setEditor(null);
+					if (!open) {
+						setEditor(null);
+						if (leadId) void navigate({ search: {}, replace: true });
+					}
 				}}
 			/>
 			{followUpLead ? (

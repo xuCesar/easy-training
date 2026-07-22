@@ -38,7 +38,8 @@ export const Route = createFileRoute("/_auth/academic")({
 function AcademicRoute() {
 	const sessionUserId = Route.useRouteContext().session.data?.user.id;
 	const { organization } = useOrganization();
-	const { tab, lessonId } = Route.useSearch();
+	const { tab, lessonId, courseId, classGroupId } = Route.useSearch();
+	const navigate = Route.useNavigate();
 	const canManageAcademic = ["owner", "admin", "campus_manager"].includes(
 		organization.role,
 	);
@@ -61,6 +62,11 @@ function AcademicRoute() {
 		<AcademicWorkspace
 			initialTab={tab ?? "classes"}
 			initialLessonId={lessonId}
+			initialCourseId={courseId}
+			initialClassGroupId={classGroupId}
+			onTargetClear={() =>
+				void navigate({ search: { tab: tab ?? "classes" }, replace: true })
+			}
 			organizationId={organization.id}
 			sessionUserId={sessionUserId}
 			role={organization.role}

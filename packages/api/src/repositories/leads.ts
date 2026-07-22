@@ -4,6 +4,7 @@ import {
 	courseExistsInOrganization,
 	createLeadRecord,
 	exportLeadRecords,
+	getLeadRecord,
 	type LeadActivityRow,
 	type LeadRecordRow,
 	LeadRepositoryError,
@@ -23,6 +24,7 @@ import type {
 	ExportLeadsInput,
 	ExportLeadsResult,
 	LeadActivityRecord,
+	LeadDetailInput,
 	LeadFilterOptions,
 	LeadHistoryResult,
 	LeadListInput,
@@ -165,6 +167,28 @@ export async function listLeads(
 			nextCursor: result.nextCursor,
 		};
 	} catch (error) {
+		return throwDatabaseError(error);
+	}
+}
+
+export async function getLead(
+	scope: LeadScope,
+	input: LeadDetailInput,
+): Promise<LeadRecord> {
+	try {
+		const record = await getLeadRecord({
+			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
+			id: input.id,
+		});
+		if (!record) {
+			throw new ORPCError("NOT_FOUND", {
+				message: "目标记录不存在或当前账号无权访问。",
+			});
+		}
+		return toLeadRecord(record);
+	} catch (error) {
+		if (error instanceof ORPCError) throw error;
 		return throwDatabaseError(error);
 	}
 }

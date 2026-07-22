@@ -34,11 +34,15 @@ import {
 	CircleAlertIcon,
 	LoaderCircleIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { orpc, queryClient } from "@/utils/orpc";
 import { formatDateTime } from "./format";
+import {
+	isUnavailableTargetError,
+	unavailableTargetMessage,
+} from "./target-navigation";
 
 type AttendanceDraft = LessonAttendance["members"][number] & {
 	status: "present" | "absent" | "late" | "leave";
@@ -53,14 +57,19 @@ const attendanceLabels = {
 
 export function TeacherWorkbench({
 	organizationId,
+	initialLessonId,
+	onTargetClear,
 }: {
 	organizationId: string;
+	initialLessonId?: string;
+	onTargetClear: () => void;
 }) {
 	const [target, setTarget] = useState<Lesson | null>(null);
 	const now = new Date();
 	const input = {
 		from: new Date(now.getTime() - 14 * 86_400_000).toISOString(),
 		to: new Date(now.getTime() + 60 * 86_400_000).toISOString(),
+		targetId: initialLessonId,
 	};
 	const options = orpc.training.teaching.teacherWorkspace.lessons.queryOptions({
 		input,
@@ -69,6 +78,22 @@ export function TeacherWorkbench({
 		...options,
 		queryKey: [...options.queryKey, { organizationId }],
 	});
+	useEffect(() => {
+		if (
+			!initialLessonId ||
+			!query.isError ||
+			!isUnavailableTargetError(query.error)
+		)
+			return;
+		toast.error(unavailableTargetMessage);
+		onTargetClear();
+	}, [initialLessonId, onTargetClear, query.error, query.isError]);
+	useEffect(() => {
+		if (!initialLessonId || query.isPending) return;
+		document
+			.getElementById(`teacher-lesson-${initialLessonId}`)
+			?.scrollIntoView({ behavior: "smooth", block: "center" });
+	}, [initialLessonId, query.isPending]);
 	if (query.isPending)
 		return <div className="min-h-64 animate-pulse border bg-muted/20" />;
 	if (query.isError)
@@ -89,6 +114,19 @@ export function TeacherWorkbench({
 	const lessons = query.data.lessons;
 	return (
 		<div className="grid gap-5">
+			{initialLessonId ? (
+				<div className="flex items-center justify-between gap-3 border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+					<span>已定位全局搜索目标</span>
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						onClick={onTargetClear}
+					>
+						取消定位
+					</Button>
+				</div>
+			) : null}
 			<header>
 				<p className="text-muted-foreground text-sm">教师工作台</p>
 				<h1 className="mt-1 font-semibold text-2xl">
@@ -113,7 +151,11 @@ export function TeacherWorkbench({
 							lesson.status === "scheduled" &&
 							Date.now() >= new Date(lesson.endsAt).getTime();
 						return (
-							<article key={lesson.id} className="grid gap-3 border p-4">
+							<article
+								key={lesson.id}
+								id={`teacher-lesson-${lesson.id}`}
+								className={`grid scroll-mt-20 gap-3 border p-4 ${initialLessonId === lesson.id ? "ring-2 ring-primary" : ""}`}
+							>
 								<div className="flex items-start justify-between gap-3">
 									<div>
 										<p className="font-medium">{lesson.className}</p>

@@ -93,11 +93,13 @@ import {
 	invoiceListResultSchema,
 	leadConversionOptionsInputSchema,
 	leadConversionOptionsSchema,
+	leadDetailInputSchema,
 	leadFilterOptionsSchema,
 	leadHistoryInputSchema,
 	leadHistoryResultSchema,
 	leadListInputSchema,
 	leadListResultSchema,
+	leadRecordSchema,
 	lessonAttendanceInputSchema,
 	lessonAttendanceResultSchema,
 	lessonListInputSchema,
@@ -234,6 +236,7 @@ import {
 	addLeadFollowUp,
 	createLead,
 	exportLeads,
+	getLead,
 	getLeadFilterOptions,
 	getLeadHistory,
 	listLeads,
@@ -1377,6 +1380,19 @@ export const appRouter = {
 				),
 		},
 		leads: {
+			get: leadProcedure
+				.input(leadDetailInputSchema)
+				.output(leadRecordSchema)
+				.handler(({ context, input }) =>
+					getLead(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
 			import: {
 				preview: leadProcedure
 					.input(previewLeadImportInputSchema)
