@@ -167,12 +167,15 @@ export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
 
 function getShanghaiDate(now = new Date()): string {
-	return new Intl.DateTimeFormat("en-CA", {
+	const parts = new Intl.DateTimeFormat("en", {
 		timeZone: "Asia/Shanghai",
 		year: "numeric",
 		month: "2-digit",
 		day: "2-digit",
-	}).format(now);
+	}).formatToParts(now);
+	const get = (type: Intl.DateTimeFormatPartTypes) =>
+		parts.find((part) => part.type === type)?.value;
+	return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 async function recordTeacherCapacityHistory(

@@ -11,6 +11,7 @@ import {
 	businessMetricFinancialDrilldownResultSchema,
 	businessMetricFinancialResultSchema,
 	businessMetricRenewalResultSchema,
+	businessMetricResourceResultSchema,
 	businessMetricSalesResultSchema,
 } from "../../api/src/contracts/business-metrics";
 import {
@@ -22,6 +23,7 @@ import {
 	getBusinessMetricFinancialAgingDrilldown,
 	getBusinessMetricFinancialDrilldown,
 	getBusinessMetricRenewal,
+	getBusinessMetricResource,
 	getBusinessMetricSales,
 } from "../../api/src/repositories/business-metrics";
 import { db } from "../src";
@@ -31,6 +33,7 @@ import {
 	getBusinessMetricRenewalRecord,
 	getBusinessMetricSalesRecord,
 } from "../src/repositories/business-metrics";
+import { getResourceUtilizationRecord } from "../src/repositories/resource-metrics";
 import {
 	attendance,
 	campus,
@@ -89,6 +92,14 @@ test("经营指标空机构查询返回稳定零值且所有 SQL 可执行", asy
 	assert.equal(attendance.present, 0);
 	assert.equal(consumption.consumedLessonCount, 0);
 	assert.equal(renewal.opportunityCount, 0);
+	const resource = await getResourceUtilizationRecord({
+		scope: emptyScope,
+		from,
+		to,
+		asOf: now,
+	});
+	assert.equal(resource.completedMinutes, 0);
+	assert.equal(resource.eligibleClassCount, 0);
 });
 
 test("经营指标角色权限和无效范围使用明确错误语义", async () => {
@@ -135,6 +146,30 @@ test("经营指标角色权限和无效范围使用明确错误语义", async ()
 		(error: unknown) =>
 			error instanceof Error && error.message.includes("晚于"),
 	);
+	await assert.rejects(
+		getBusinessMetricResource(
+			{ ...baseScope, role: "finance" },
+			{ range: { preset: "month" } },
+			now,
+		),
+		(error: unknown) =>
+			error instanceof Error && error.message.includes("教学经营指标"),
+	);
+});
+
+test("资源利用空机构保持契约和教师权限范围", async () => {
+	const scope = {
+		organizationId: emptyScope.organizationId,
+		userId: "resource-metric-user",
+		role: "teacher" as const,
+		campusAccess: emptyScope.campusAccess,
+	};
+	const result = businessMetricResourceResultSchema.parse(
+		await getBusinessMetricResource(scope, { range: { preset: "month" } }, now),
+	);
+	assert.equal(result.data.completedMinutes, 0);
+	assert.equal(result.data.eligibleClassCount, 0);
+	assert.equal(result.data.actualUtilizationRate.status, "notApplicable");
 });
 
 test("财务 summary 与事件下钻在空机构保持契约和权限稳定", async () => {
