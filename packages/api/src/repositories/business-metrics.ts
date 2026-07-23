@@ -13,6 +13,7 @@ import {
 	getFinancialReceiptEventPage,
 	getFinancialReceiptRecord,
 } from "@easy-training/db/repositories/financial-metrics";
+import { getResourceUtilizationRecord } from "@easy-training/db/repositories/resource-metrics";
 import { ORPCError } from "@orpc/server";
 
 import {
@@ -37,6 +38,7 @@ import {
 	type BusinessMetricQueryInput,
 	type BusinessMetricRatio,
 	type BusinessMetricRenewalResult,
+	type BusinessMetricResourceResult,
 	type BusinessMetricSalesResult,
 	FINANCIAL_METRIC_DEFINITION_VERSION,
 } from "../contracts/business-metrics";
@@ -583,6 +585,7 @@ export const businessMetricDefinitionRegistry = {
 	attendance: getBusinessMetricAttendance,
 	consumption: getBusinessMetricConsumption,
 	renewal: getBusinessMetricRenewal,
+	resource: getBusinessMetricResource,
 	financial: getBusinessMetricFinancial,
 	drilldown: getBusinessMetricDrilldown,
 } as const;
@@ -695,6 +698,64 @@ export async function getBusinessMetricConsumption(
 			})),
 		},
 	};
+}
+
+export async function getBusinessMetricResource(
+	scope: BusinessMetricScope,
+	input: BusinessMetricQueryInput,
+	now = new Date(),
+): Promise<BusinessMetricResourceResult> {
+	assertTeachingAccess(scope.role);
+	const { window, repositoryScope, base } = envelope(scope, input, now);
+	try {
+		const record = await getResourceUtilizationRecord({
+			scope: repositoryScope,
+			from: new Date(window.range.from),
+			to: new Date(window.range.to),
+			asOf: now,
+		});
+		return {
+			...base,
+			dataQuality: {
+				missingTeacherCapacityCount: record.capacityCoverageMissingTeacherCount,
+				partialTeacherCapacityCount: record.capacityCoveragePartialTeacherCount,
+				missingLessonCapacityCount: record.capacityCoverageMissingLessonCount,
+			},
+			data: {
+				actualUtilizationRate: ratio(
+					record.completedMinutes,
+					record.actualCapacityMinutes,
+				),
+				plannedUtilizationRate: ratio(
+					record.plannedMinutes,
+					record.plannedCapacityMinutes,
+				),
+				classCapacityUtilizationRate: ratio(
+					record.activeSeatCount,
+					record.classCapacity,
+				),
+				lessonOccupancyRate: ratio(
+					record.lessonOccupancyNumerator,
+					record.lessonOccupancyDenominator,
+				),
+				completedMinutes: record.completedMinutes,
+				plannedMinutes: record.plannedMinutes,
+				cancelledMinutes: record.cancelledMinutes,
+				actualCapacityMinutes: record.actualCapacityMinutes,
+				plannedCapacityMinutes: record.plannedCapacityMinutes,
+				activeSeatCount: record.activeSeatCount,
+				classCapacity: record.classCapacity,
+				fullClassCount: record.fullClassCount,
+				nearFullClassCount: record.nearFullClassCount,
+				eligibleClassCount: record.eligibleClassCount,
+			},
+		};
+	} catch (error) {
+		if (error instanceof ORPCError) throw error;
+		throw new ORPCError("INTERNAL_SERVER_ERROR", {
+			message: "暂时无法加载资源利用指标，请稍后重试。",
+		});
+	}
 }
 
 export async function getBusinessMetricRenewal(

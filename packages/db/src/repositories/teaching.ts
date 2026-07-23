@@ -22,6 +22,7 @@ import {
 	attendance,
 	campus,
 	classGroup,
+	classGroupCapacityHistory,
 	classroom,
 	classStatusEvent,
 	course,
@@ -37,6 +38,7 @@ import {
 	student,
 	teacher,
 	teacherCampus,
+	teacherCapacityHistory,
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
@@ -163,6 +165,83 @@ export async function markMakeupLessonsNeedsReschedule(
 
 export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
+
+function getShanghaiDate(now = new Date()): string {
+	return new Intl.DateTimeFormat("en-CA", {
+		timeZone: "Asia/Shanghai",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	}).format(now);
+}
+
+async function recordTeacherCapacityHistory(
+	tx: Transaction,
+	input: {
+		organizationId: string;
+		teacherId: string;
+		weeklyCapacityHours: number;
+		actorUserId: string;
+		now?: Date;
+	},
+) {
+	const now = input.now ?? new Date();
+	await tx
+		.insert(teacherCapacityHistory)
+		.values({
+			organizationId: input.organizationId,
+			teacherId: input.teacherId,
+			weeklyCapacityMinutes: input.weeklyCapacityHours * 60,
+			effectiveFrom: getShanghaiDate(now),
+			createdByUserId: input.actorUserId,
+			createdAt: now,
+		})
+		.onConflictDoUpdate({
+			target: [
+				teacherCapacityHistory.teacherId,
+				teacherCapacityHistory.effectiveFrom,
+			],
+			set: {
+				weeklyCapacityMinutes: input.weeklyCapacityHours * 60,
+				createdByUserId: input.actorUserId,
+				createdAt: now,
+			},
+		});
+}
+
+async function recordClassGroupCapacityHistory(
+	tx: Transaction,
+	input: {
+		organizationId: string;
+		classGroupId: string;
+		capacity: number;
+		actorUserId: string;
+		now?: Date;
+	},
+) {
+	const now = input.now ?? new Date();
+	await tx
+		.insert(classGroupCapacityHistory)
+		.values({
+			organizationId: input.organizationId,
+			classGroupId: input.classGroupId,
+			capacity: input.capacity,
+			effectiveFrom: getShanghaiDate(now),
+			createdByUserId: input.actorUserId,
+			createdAt: now,
+		})
+		.onConflictDoUpdate({
+			target: [
+				classGroupCapacityHistory.classGroupId,
+				classGroupCapacityHistory.effectiveFrom,
+			],
+			set: {
+				capacity: input.capacity,
+				createdByUserId: input.actorUserId,
+				createdAt: now,
+			},
+		});
+}
 type ClassStatus = (typeof classGroup.$inferSelect)["status"];
 
 const courseWriteRoles = new Set<MemberRole>(["owner", "admin"]);
@@ -779,6 +858,12 @@ export async function createTeacherRecord(input: {
 				.returning();
 			if (!created)
 				throw new Error("Teacher creation did not return a record.");
+			await recordTeacherCapacityHistory(tx, {
+				organizationId: input.organizationId,
+				teacherId: created.id,
+				weeklyCapacityHours: created.weeklyCapacityHours,
+				actorUserId: input.userId,
+			});
 			await tx.insert(teacherCampus).values(
 				input.campusIds.map((campusId) => ({
 					teacherId: created.id,
@@ -838,7 +923,10 @@ export async function updateTeacherRecord(input: {
 				});
 			}
 			const [existing] = await tx
-				.select({ userId: teacher.userId })
+				.select({
+					userId: teacher.userId,
+					weeklyCapacityHours: teacher.weeklyCapacityHours,
+				})
 				.from(teacher)
 				.where(
 					and(
@@ -868,6 +956,14 @@ export async function updateTeacherRecord(input: {
 				)
 				.returning();
 			if (!updated) throw new TeachingRepositoryError("TEACHER_NOT_FOUND");
+			if (existing.weeklyCapacityHours !== updated.weeklyCapacityHours) {
+				await recordTeacherCapacityHistory(tx, {
+					organizationId: input.organizationId,
+					teacherId: updated.id,
+					weeklyCapacityHours: updated.weeklyCapacityHours,
+					actorUserId: input.userId,
+				});
+			}
 			await tx
 				.delete(teacherCampus)
 				.where(eq(teacherCampus.teacherId, updated.id));
@@ -1047,6 +1143,12 @@ export async function createClassGroupRecord(input: {
 			})
 			.returning({ id: classGroup.id });
 		if (!created) throw new Error("Class creation did not return a record.");
+		await recordClassGroupCapacityHistory(tx, {
+			organizationId: input.organizationId,
+			classGroupId: created.id,
+			capacity: input.capacity,
+			actorUserId: input.userId,
+		});
 		return created.id;
 	});
 	const record = (
@@ -1144,6 +1246,14 @@ export async function updateClassGroupRecord(input: {
 			}
 		}
 		await assertClassDependencies(tx, { ...input, campusAccess: access });
+		if (existing.capacity !== input.capacity) {
+			await recordClassGroupCapacityHistory(tx, {
+				organizationId: input.organizationId,
+				classGroupId: existing.id,
+				capacity: input.capacity,
+				actorUserId: input.userId,
+			});
+		}
 		await tx
 			.update(classGroup)
 			.set({

@@ -21,11 +21,13 @@
   "children": [
     "07-23-p2-resource-utilization",
     "07-23-p2-management-comparison-ui",
-    "07-23-p2-financial-analytics",
-    "07-23-financial-analytics-production-performance"
+    "07-23-p2-financial-analytics"
   ],
   "parent": "07-22-p2-operations-analytics",
   "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "notes": "财务分析已完成；当前剩余资源利用与多维对比。生产等量性能复测已拆为未来上线门禁。",
+  "meta": {
+    "scopeAdjustedAt": "2026-07-23",
+    "productionPerformanceGateDeferred": true
+  }
 }

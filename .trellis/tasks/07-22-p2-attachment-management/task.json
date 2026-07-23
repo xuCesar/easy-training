@@ -19,12 +19,13 @@
   "pr_url": null,
   "subtasks": [],
   "children": [],
-  "parent": "07-22-p2-operations-analytics",
+  "parent": null,
   "relatedFiles": [],
-  "notes": "已完成 PRD、技术设计和实施计划，2026-07-22 按用户要求暂时搁置；未激活、未进入实现。恢复时从 Phase 1.4 规划复核开始。GitHub: #37。",
+  "notes": "已完成 PRD、技术设计和实施计划；2026-07-23 移出当前 P2，作为后续独立需求。具备对象存储、恶意文件扫描和生命周期运维条件后，从 Phase 1.4 复核恢复。GitHub: #37。",
   "meta": {
     "lifecycleState": "shelved",
     "shelvedAt": "2026-07-22",
+    "removedFromCurrentP2At": "2026-07-23",
     "githubIssue": 37,
     "resumePhase": "1.4"
   }

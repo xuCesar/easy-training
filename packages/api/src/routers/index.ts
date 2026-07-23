@@ -13,6 +13,7 @@ import {
 	businessMetricFinancialResultSchema,
 	businessMetricQueryInputSchema,
 	businessMetricRenewalResultSchema,
+	businessMetricResourceResultSchema,
 	businessMetricSalesResultSchema,
 } from "../contracts/business-metrics";
 
@@ -247,6 +248,7 @@ import {
 	getBusinessMetricFinancialDrilldown,
 	getBusinessMetricFinancialReceipts,
 	getBusinessMetricRenewal,
+	getBusinessMetricResource,
 	getBusinessMetricSales,
 } from "../repositories/business-metrics";
 import {
@@ -2258,6 +2260,20 @@ export const appRouter = {
 				.output(businessMetricFinancialReceiptResultSchema)
 				.handler(({ context, input }) =>
 					getBusinessMetricFinancialReceipts(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
+			resource: organizationProcedure
+				.input(businessMetricQueryInputSchema)
+				.output(businessMetricResourceResultSchema)
+				.handler(({ context, input }) =>
+					getBusinessMetricResource(
 						{
 							organizationId: context.organization.id,
 							userId: context.session.user.id,

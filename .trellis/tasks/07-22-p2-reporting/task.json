@@ -1,8 +1,8 @@
 {
   "id": "p2-reporting",
   "name": "p2-reporting",
-  "title": "P2 报表导出与定时报表",
-  "description": "交付统一口径导出、个人保存筛选、数据库调度、对象存储文件与站内送达。",
+  "title": "P2 保存筛选与即时 CSV 导出",
+  "description": "交付个人保存筛选和受控同步 CSV；完整定时报表移为后续独立需求。",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -21,6 +21,9 @@
   "children": [],
   "parent": "07-22-p2-operations-analytics",
   "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "notes": "2026-07-23 根据研发阶段条件缩减范围：保留保存筛选和即时 CSV，移除异步大结果、对象存储文件和定时报表。",
+  "meta": {
+    "scopeAdjustedAt": "2026-07-23",
+    "deferredCapability": "完整定时报表"
+  }
 }

@@ -152,6 +152,29 @@ export const businessMetricRenewalDataSchema = z.object({
 	renewalLessonCount: z.number().int().nonnegative(),
 });
 
+export const businessMetricResourceDataSchema = z.object({
+	actualUtilizationRate: businessMetricRatioSchema,
+	plannedUtilizationRate: businessMetricRatioSchema,
+	classCapacityUtilizationRate: businessMetricRatioSchema,
+	lessonOccupancyRate: businessMetricRatioSchema,
+	completedMinutes: z.number().nonnegative(),
+	plannedMinutes: z.number().nonnegative(),
+	cancelledMinutes: z.number().nonnegative(),
+	actualCapacityMinutes: z.number().nonnegative(),
+	plannedCapacityMinutes: z.number().nonnegative(),
+	activeSeatCount: z.number().int().nonnegative(),
+	classCapacity: z.number().int().nonnegative(),
+	fullClassCount: z.number().int().nonnegative(),
+	nearFullClassCount: z.number().int().nonnegative(),
+	eligibleClassCount: z.number().int().nonnegative(),
+});
+
+export const resourceMetricDataQualitySchema = z.object({
+	missingTeacherCapacityCount: z.number().int().nonnegative(),
+	partialTeacherCapacityCount: z.number().int().nonnegative(),
+	missingLessonCapacityCount: z.number().int().nonnegative(),
+});
+
 export const businessMetricSalesResultSchema =
 	businessMetricEnvelopeBaseSchema.extend({
 		data: businessMetricSalesDataSchema,
@@ -167,6 +190,11 @@ export const businessMetricConsumptionResultSchema =
 export const businessMetricRenewalResultSchema =
 	businessMetricEnvelopeBaseSchema.extend({
 		data: businessMetricRenewalDataSchema,
+	});
+export const businessMetricResourceResultSchema =
+	businessMetricEnvelopeBaseSchema.extend({
+		dataQuality: resourceMetricDataQualitySchema,
+		data: businessMetricResourceDataSchema,
 	});
 
 export const financialMetricDataQualitySchema = z.object({
@@ -398,6 +426,9 @@ export type BusinessMetricConsumptionResult = z.infer<
 >;
 export type BusinessMetricRenewalResult = z.infer<
 	typeof businessMetricRenewalResultSchema
+>;
+export type BusinessMetricResourceResult = z.infer<
+	typeof businessMetricResourceResultSchema
 >;
 export type BusinessMetricFinancialResult = z.infer<
 	typeof businessMetricFinancialResultSchema

@@ -598,6 +598,38 @@ export const teacher = pgTable(
 	],
 );
 
+export const teacherCapacityHistory = pgTable(
+	"teacher_capacity_history",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		teacherId: uuid("teacher_id")
+			.notNull()
+			.references(() => teacher.id, { onDelete: "cascade" }),
+		weeklyCapacityMinutes: integer("weekly_capacity_minutes").notNull(),
+		effectiveFrom: date("effective_from").notNull(),
+		createdByUserId: text("created_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("teacher_capacity_history_teacher_effective_uidx").on(
+			table.teacherId,
+			table.effectiveFrom,
+		),
+		index("teacher_capacity_history_org_teacher_effective_idx").on(
+			table.organizationId,
+			table.teacherId,
+			table.effectiveFrom,
+		),
+	],
+);
+
 export const teacherCampus = pgTable(
 	"teacher_campus",
 	{
@@ -1207,6 +1239,38 @@ export const classGroup = pgTable(
 			table.status,
 		),
 		index("class_group_campus_status_idx").on(table.campusId, table.status),
+	],
+);
+
+export const classGroupCapacityHistory = pgTable(
+	"class_group_capacity_history",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		classGroupId: uuid("class_group_id")
+			.notNull()
+			.references(() => classGroup.id, { onDelete: "cascade" }),
+		capacity: integer("capacity").notNull(),
+		effectiveFrom: date("effective_from").notNull(),
+		createdByUserId: text("created_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("class_group_capacity_history_group_effective_uidx").on(
+			table.classGroupId,
+			table.effectiveFrom,
+		),
+		index("class_group_capacity_history_org_group_effective_idx").on(
+			table.organizationId,
+			table.classGroupId,
+			table.effectiveFrom,
+		),
 	],
 );
 

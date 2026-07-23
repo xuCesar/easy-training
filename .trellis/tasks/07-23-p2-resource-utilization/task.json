@@ -3,9 +3,9 @@
   "name": "p2-resource-utilization",
   "title": "P2 教师与班级资源利用分析",
   "description": "交付教师标准授课容量历史、实际/计划利用率、班级容量历史、满班率和课次上座率。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
-  "scope": null,
+  "scope": "容量有效期历史、资源利用服务端查询、权限与集成测试；不包含多维对比 UI。",
   "package": "server",
   "priority": "P2",
   "creator": "xuCesar",
@@ -21,6 +21,9 @@
   "children": [],
   "parent": "07-22-p2-management-comparisons",
   "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "notes": "2026-07-23 已完成当前研发阶段规划；与既有分析 registry 复用，后续多维经营对比页面只消费本任务契约。",
+  "meta": {
+    "plannedAt": "2026-07-23",
+    "implementationBoundary": "db_api_and_existing_master_data_forms"
+  }
 }

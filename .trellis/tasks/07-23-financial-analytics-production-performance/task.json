@@ -3,7 +3,7 @@
   "name": "financial-analytics-production-performance",
   "title": "财务分析生产数据量性能验收",
   "description": "",
-  "status": "in_progress",
+  "status": "planning",
   "dev_type": null,
   "scope": null,
   "package": "server",
@@ -19,8 +19,18 @@
   "pr_url": null,
   "subtasks": [],
   "children": [],
-  "parent": "07-22-p2-management-comparisons",
+  "parent": null,
   "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "notes": "本地 20 万账单 mock 验证已完成；2026-07-23 移出当前 P2，作为具备生产等量脱敏只读副本和性能阈值后的上线门禁。",
+  "meta": {
+    "lifecycleState": "deferred_external_prerequisite",
+    "deferredAt": "2026-07-23",
+    "removedFromCurrentP2At": "2026-07-23",
+    "resumePrerequisites": [
+      "生产等量脱敏只读副本",
+      "代表性查询参数",
+      "明确性能阈值",
+      "受控只读执行权限"
+    ]
+  }
 }

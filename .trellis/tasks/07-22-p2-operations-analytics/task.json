@@ -2,10 +2,10 @@
   "id": "p2-operations-analytics",
   "name": "p2-operations-analytics",
   "title": "P2 运营效率与管理分析",
-  "description": "",
+  "description": "当前阶段交付资源利用、多维经营对比、保存筛选和即时 CSV；生产基础设施依赖转为后续需求。",
   "status": "planning",
   "dev_type": null,
-  "scope": null,
+  "scope": "研发阶段可由代码、本地 PostgreSQL、自动化测试和浏览器验证完成闭环的 P2 能力",
   "package": "server",
   "priority": "P2",
   "creator": "xuCesar",
@@ -22,13 +22,19 @@
     "07-22-p2-global-search",
     "07-22-p2-operation-tasks",
     "07-22-p2-student-bulk-operations",
-    "07-22-p2-attachment-management",
     "07-22-p2-core-business-metrics",
     "07-22-p2-management-comparisons",
     "07-22-p2-reporting"
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "notes": "2026-07-23 重排：附件、完整定时报表和生产等量性能门禁不再阻塞当前 P2；本地演示数据独立于产品完成度。",
+  "meta": {
+    "scopeAdjustedAt": "2026-07-23",
+    "currentStageRemaining": [
+      "教师与班级资源利用分析",
+      "多维经营对比页面",
+      "保存筛选与即时 CSV 导出"
+    ]
+  }
 }
