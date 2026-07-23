@@ -48,4 +48,56 @@ test("账龄在到期日当天仍属于未到期", () => {
 	const snapshot = new Date("2026-08-01T00:00:00.000Z");
 	assert.equal(getFinancialAgingBucket("2026-08-01", snapshot), "notDue");
 	assert.equal(getFinancialAgingBucket("2026-07-31", snapshot), "overdue1To30");
+	assert.equal(
+		getFinancialAgingBucket("2026-07-01", snapshot),
+		"overdue31To60",
+	);
+	assert.equal(
+		getFinancialAgingBucket("2026-06-01", snapshot),
+		"overdue61To90",
+	);
+	assert.equal(
+		getFinancialAgingBucket("2026-05-02", snapshot),
+		"overdueOver90",
+	);
+});
+
+test("财务 cohort 在 30 天边界保留覆盖与时间线异常", () => {
+	const result = calculateFinancialCohort({
+		asOf: new Date("2026-08-01T00:00:00.000Z"),
+		invoices: [
+			{
+				issuedAt: new Date("2026-07-02T00:00:00.000Z"),
+				amountInCents: 1000,
+				settledInWindowInCents: 1000,
+				financialFactsComplete: true,
+			},
+			{
+				issuedAt: new Date("2026-07-03T00:00:00.000Z"),
+				amountInCents: 1000,
+				settledInWindowInCents: 0,
+				financialFactsComplete: true,
+			},
+			{
+				issuedAt: new Date("2026-06-01T00:00:00.000Z"),
+				amountInCents: 1000,
+				settledInWindowInCents: -1,
+				financialFactsComplete: true,
+				chronologyAnomaly: true,
+			},
+			{
+				issuedAt: new Date("2026-06-01T00:00:00.000Z"),
+				amountInCents: 1000,
+				settledInWindowInCents: 0,
+				financialFactsComplete: false,
+			},
+		],
+	});
+	assert.equal(result.matureInvoiceCount, 3);
+	assert.equal(result.immatureInvoiceCount, 1);
+	assert.equal(result.minimumRemainingObservationDays, 1);
+	assert.equal(result.numeratorInCents, 1000);
+	assert.equal(result.denominatorInCents, 1000);
+	assert.equal(result.chronologyAnomalyCount, 1);
+	assert.equal(result.factCoverageMissingCount, 1);
 });

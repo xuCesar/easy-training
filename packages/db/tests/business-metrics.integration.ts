@@ -13,8 +13,8 @@ import {
 	businessMetricRenewalResultSchema,
 	businessMetricSalesResultSchema,
 } from "../../api/src/contracts/business-metrics";
-
 import {
+	businessMetricDefinitionRegistry,
 	getBusinessMetricAttendance,
 	getBusinessMetricConsumption,
 	getBusinessMetricDrilldown,
@@ -173,6 +173,15 @@ test("财务 summary 与事件下钻在空机构保持契约和权限稳定", as
 		getBusinessMetricFinancial({ ...scope, role: "consultant" }, input, now),
 		(error: unknown) =>
 			error instanceof Error && error.message.includes("财务经营指标"),
+	);
+	await assert.rejects(
+		getBusinessMetricFinancial({ ...scope, role: "teacher" }, input, now),
+		(error: unknown) =>
+			error instanceof Error && error.message.includes("财务经营指标"),
+	);
+	assert.equal(
+		businessMetricDefinitionRegistry.financial,
+		getBusinessMetricFinancial,
 	);
 });
 
@@ -771,6 +780,141 @@ test("固定 fixture 返回销售、教学、消课和续费金值", async () =>
 			{ kind: "overdue61To90", amountInCents: 0, invoiceCount: 0 },
 			{ kind: "overdueOver90", amountInCents: 0, invoiceCount: 0 },
 		]);
+	} finally {
+		await cleanupMetricFixture(ids);
+	}
+});
+
+test("财务角色、校区范围和下钻不会泄露其他校区或未归属规模", async () => {
+	const ids = createMetricFixtureIds();
+	try {
+		const { organizationA, campusA, campusA2 } = await seedMetricFixture(ids);
+		const otherCampusInvoiceId = randomUUID();
+		const unattributedInvoiceId = randomUUID();
+		await db.insert(invoice).values([
+			{
+				id: otherCampusInvoiceId,
+				organizationId: organizationA,
+				studentId: requiredAt(ids.students, 5),
+				source: "manual",
+				businessActivityType: "other",
+				amountInCents: 10_000,
+				dueDate: "2026-07-31",
+				issuedAt: new Date("2026-07-15T02:00:00.000Z"),
+			},
+			{
+				id: unattributedInvoiceId,
+				organizationId: organizationA,
+				studentId: requiredAt(ids.students, 6),
+				source: "manual",
+				businessActivityType: "other",
+				amountInCents: 9_000,
+				dueDate: "2026-07-31",
+				issuedAt: new Date("2026-07-16T02:00:00.000Z"),
+			},
+		]);
+		await db.insert(invoiceMetricFact).values({
+			invoiceId: otherCampusInvoiceId,
+			organizationId: organizationA,
+			campusId: campusA2,
+			campusAttributionKind: "linked",
+			campusNameSnapshot: "A2 校区",
+			courseAttributionKind: "not_applicable",
+			source: "manual",
+			provenance: "native",
+			occurredAt: new Date("2026-07-15T02:00:00.000Z"),
+		});
+		await db.insert(payment).values({
+			organizationId: organizationA,
+			invoiceId: otherCampusInvoiceId,
+			amountInCents: 10_000,
+			receivedAt: new Date("2026-07-20T02:00:00.000Z"),
+			method: "bank_transfer",
+			operatorUserId: ids.users.owner,
+			operatorName: "owner",
+			requestId: randomUUID(),
+		});
+
+		const range = {
+			preset: "custom" as const,
+			from: "2026-07-01",
+			to: "2026-08-01",
+		};
+		const fixtureNow = new Date("2026-08-20T04:00:00.000Z");
+		const selectedScope = {
+			organizationId: organizationA,
+			userId: ids.users.owner,
+			role: "finance" as const,
+			campusAccess: { kind: "selected" as const, campusIds: [campusA] },
+		};
+		const selected = await getBusinessMetricFinancial(
+			selectedScope,
+			{ range },
+			fixtureNow,
+		);
+		assert.equal(selected.data.netReceiptsInCents, 180_000);
+		assert.equal(selected.dataQuality.missingAttributionCount, 0);
+		assert.equal(selected.dataQuality.missingFinancialFactCount, 0);
+		assert.equal(selected.dataQuality.scopeCoverageIncomplete, true);
+
+		const selectedEvents = await getBusinessMetricFinancialDrilldown(
+			selectedScope,
+			{ range, limit: 50 },
+			fixtureNow,
+		);
+		assert.equal(
+			selectedEvents.items.some(
+				(item) => item.invoiceId === otherCampusInvoiceId,
+			),
+			false,
+		);
+		const selectedAging = await getBusinessMetricFinancialAgingDrilldown(
+			selectedScope,
+			{ range, limit: 50 },
+			fixtureNow,
+		);
+		assert.equal(
+			selectedAging.items.some(
+				(item) => item.invoiceId === otherCampusInvoiceId,
+			),
+			false,
+		);
+
+		for (const role of ["owner", "admin"] as const) {
+			const organizationWide = await getBusinessMetricFinancial(
+				{ ...selectedScope, role, campusAccess: { kind: "all" } },
+				{ range },
+				fixtureNow,
+			);
+			assert.equal(organizationWide.data.netReceiptsInCents, 190_000);
+			assert.equal(organizationWide.dataQuality.missingFinancialFactCount, 1);
+		}
+		const campusManager = await getBusinessMetricFinancial(
+			{ ...selectedScope, role: "campus_manager" },
+			{ range },
+			fixtureNow,
+		);
+		assert.equal(campusManager.data.netReceiptsInCents, 180_000);
+		for (const role of ["consultant", "teacher"] as const) {
+			await assert.rejects(
+				getBusinessMetricFinancial(
+					{ ...selectedScope, role },
+					{ range },
+					fixtureNow,
+				),
+				(error: unknown) =>
+					error instanceof Error && error.message.includes("财务经营指标"),
+			);
+			await assert.rejects(
+				getBusinessMetricFinancialDrilldown(
+					{ ...selectedScope, role },
+					{ range, limit: 1 },
+					fixtureNow,
+				),
+				(error: unknown) =>
+					error instanceof Error && error.message.includes("财务经营指标"),
+			);
+		}
 	} finally {
 		await cleanupMetricFixture(ids);
 	}

@@ -1,5 +1,11 @@
 # 实施计划
 
+## 当前进度（2026-07-23）
+
+- 财务 summary、事件/账龄下钻、统一 registry 与校区范围授权已实现；本轮补齐 owner/admin 全机构、campus_manager/finance 授权校区、consultant/teacher 拒绝，以及下钻不泄露未归属规模的 PostgreSQL 集成测试。
+- 本地质量门已通过：`pnpm test:integration`（79/79）、`pnpm check-types`、`pnpm check`、`pnpm build` 与 `git diff --check`。
+- 尚未完成的是部署环境的生产真实数据量 `EXPLAIN (ANALYZE, BUFFERS)`；这是开放 financial reader 前的上线门禁，不能以本地 fixture 代替。本任务保持 `in_progress`，待取得真实计划后决定是否补索引并完成验收。
+
 ## 1. 契约与历史重放内核
 
 - [ ] 提取/复用 T5 envelope、ratio、范围解析和 registry 边界，定义 financial summary、signed trend、aging bucket、data quality 与 drilldown Zod 契约。

@@ -15,7 +15,10 @@ import {
 } from "@easy-training/db/repositories/financial-metrics";
 import { ORPCError } from "@orpc/server";
 
-import type { OrganizationRole } from "../authorization/training";
+import {
+	financeManagementRoles,
+	type OrganizationRole,
+} from "../authorization/training";
 import {
 	BUSINESS_METRIC_CONTRACT_VERSION,
 	BUSINESS_METRIC_DEFINITION_VERSION,
@@ -140,12 +143,7 @@ function assertRenewalAccess(role: OrganizationRole): void {
 }
 
 function assertFinancialAccess(role: OrganizationRole): void {
-	if (
-		role !== "owner" &&
-		role !== "admin" &&
-		role !== "campus_manager" &&
-		role !== "finance"
-	) {
+	if (!financeManagementRoles.has(role)) {
 		throw new ORPCError("FORBIDDEN", {
 			message: "当前角色无权读取财务经营指标。",
 		});
@@ -585,6 +583,7 @@ export const businessMetricDefinitionRegistry = {
 	attendance: getBusinessMetricAttendance,
 	consumption: getBusinessMetricConsumption,
 	renewal: getBusinessMetricRenewal,
+	financial: getBusinessMetricFinancial,
 	drilldown: getBusinessMetricDrilldown,
 } as const;
 
