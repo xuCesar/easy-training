@@ -934,3 +934,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: 完成 P2 财务经营分析
+
+**Date**: 2026-07-23
+**Task**: 完成 P2 财务经营分析
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+完成财务经营分析的权限与边界补齐：统一财务角色校验并纳入指标 registry；新增 PostgreSQL 集成测试覆盖全机构与授权校区、无权角色、下钻隔离和覆盖信息不泄露；补充 cohort 与账龄边界测试。pnpm test:integration 79/79、check-types、check、build 与 diff check 均通过。生产真实数据量 EXPLAIN 已拆分为独立后续任务。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `90e16c8` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
