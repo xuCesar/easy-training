@@ -132,3 +132,53 @@ const campusId = invoiceMetricFact.campusId;
 ```
 
 历史金额、校区和课程均从不可变事实及查询时点重放，异常通过数据质量字段暴露。
+
+## Scenario: 教师与班级资源利用
+
+### 1. Scope / Trigger
+
+- 适用于 `training.analytics.resource`、`getResourceUtilizationRecord` 与教师、班级容量历史写入。
+
+### 2. Signatures
+
+- 教师/班级维护输入可选 `capacityEffectiveFrom: YYYY-MM-DD`；DB 读取入口为 `getResourceUtilizationRecord({ scope, from, to, asOf })`。
+
+### 3. Contracts
+
+- 容量历史按上海业务日生效；同一资源和日期幂等更新。
+- `teacher.weeklyCapacityHours`、`classGroup.capacity` 是“今天已生效的最新版本”投影。补录过去版本或未来版本不得覆盖该投影。
+- 课次上座率分子仅计 `present`、`late`；缺勤和请假不属于实际到场。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 当前投影容量低于 active 学员数 | `CLASS_CAPACITY_TOO_LOW` |
+| 仅补录过去的较低容量、当前投影仍足够 | 允许保存历史版本 |
+| 容量历史缺失 | 返回 `notApplicable` 与数据质量计数 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：补录一年前的容量 10，今天生效的容量仍为 20，班级当前容量不变化。
+- Base：同日再次保存容量，更新同一历史版本。
+- Bad：以过去的输入容量直接覆盖当前班级容量，导致报名校验和经营面板同时失真。
+
+### 6. Tests Required
+
+- PostgreSQL 集成测试覆盖教师与班级的历史补录不覆盖当前投影，且班级已有 active 学员时仍可补录过去容量。
+- 使用独立 mock 机构运行两年 `EXPLAIN (ANALYZE, BUFFERS)`；全机构和单校区均需记录执行时间与索引命中情况。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await tx.update(classGroup).set({ capacity: input.capacity });
+```
+
+#### Correct
+
+```ts
+const projectedCapacity = await currentClassGroupCapacity(tx, organizationId, classGroupId);
+await tx.update(classGroup).set({ capacity: projectedCapacity ?? input.capacity });
+```

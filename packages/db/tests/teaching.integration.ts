@@ -52,6 +52,7 @@ import {
 	TeachingRepositoryError,
 	updateClassGroupRecord,
 	updateCourseRecord,
+	updateTeacherRecord,
 } from "../src/repositories/teaching";
 import {
 	attendance,
@@ -1223,6 +1224,61 @@ test("班级状态遵循受控迁移，结课前必须处理已排课次", async
 			}),
 			"CLASS_STATUS_TRANSITION_INVALID",
 		);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("补录过去的班级容量不会覆盖今天生效的容量快照", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const { course, group } = await createClassFixture(ids);
+		assert.ok(course);
+		await createEnrollmentFixture({
+			ids,
+			courseId: course.id,
+			classGroupId: group.id,
+		});
+		const updated = await updateClassGroupRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: group.id,
+			...classUpdateData(group, "recruiting"),
+			capacity: 10,
+			capacityEffectiveFrom: "2026-01-01",
+		});
+		assert.equal(updated.capacity, group.capacity);
+	} finally {
+		await cleanup(ids);
+	}
+});
+
+test("补录过去的教师容量不会覆盖今天生效的容量快照", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const created = await createTeacherRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			name: "容量历史教师",
+			phone: null,
+			subjects: ["英语"],
+			weeklyCapacityHours: 20,
+			campusIds: [ids.campusA],
+		});
+		const updated = await updateTeacherRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			id: created.id,
+			name: created.name,
+			phone: created.phone,
+			subjects: created.subjects,
+			weeklyCapacityHours: 10,
+			capacityEffectiveFrom: "2026-01-01",
+			campusIds: created.campusIds,
+		});
+		assert.equal(updated.weeklyCapacityHours, 20);
 	} finally {
 		await cleanup(ids);
 	}

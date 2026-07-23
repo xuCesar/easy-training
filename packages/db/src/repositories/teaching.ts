@@ -248,6 +248,48 @@ async function recordClassGroupCapacityHistory(
 			},
 		});
 }
+
+async function currentTeacherCapacityHours(
+	tx: Transaction,
+	organizationId: string,
+	teacherId: string,
+	now = new Date(),
+): Promise<number | null> {
+	const [record] = await tx
+		.select({ minutes: teacherCapacityHistory.weeklyCapacityMinutes })
+		.from(teacherCapacityHistory)
+		.where(
+			and(
+				eq(teacherCapacityHistory.organizationId, organizationId),
+				eq(teacherCapacityHistory.teacherId, teacherId),
+				lte(teacherCapacityHistory.effectiveFrom, getShanghaiDate(now)),
+			),
+		)
+		.orderBy(desc(teacherCapacityHistory.effectiveFrom))
+		.limit(1);
+	return record ? record.minutes / 60 : null;
+}
+
+async function currentClassGroupCapacity(
+	tx: Transaction,
+	organizationId: string,
+	classGroupId: string,
+	now = new Date(),
+): Promise<number | null> {
+	const [record] = await tx
+		.select({ capacity: classGroupCapacityHistory.capacity })
+		.from(classGroupCapacityHistory)
+		.where(
+			and(
+				eq(classGroupCapacityHistory.organizationId, organizationId),
+				eq(classGroupCapacityHistory.classGroupId, classGroupId),
+				lte(classGroupCapacityHistory.effectiveFrom, getShanghaiDate(now)),
+			),
+		)
+		.orderBy(desc(classGroupCapacityHistory.effectiveFrom))
+		.limit(1);
+	return record?.capacity ?? null;
+}
 type ClassStatus = (typeof classGroup.$inferSelect)["status"];
 
 const courseWriteRoles = new Set<MemberRole>(["owner", "admin"]);
@@ -977,6 +1019,21 @@ export async function updateTeacherRecord(input: {
 					effectiveFrom: input.capacityEffectiveFrom,
 				});
 			}
+			const currentCapacityHours = await currentTeacherCapacityHours(
+				tx,
+				input.organizationId,
+				updated.id,
+			);
+			if (
+				currentCapacityHours !== null &&
+				currentCapacityHours !== updated.weeklyCapacityHours
+			) {
+				await tx
+					.update(teacher)
+					.set({ weeklyCapacityHours: currentCapacityHours })
+					.where(eq(teacher.id, updated.id));
+				updated.weeklyCapacityHours = currentCapacityHours;
+			}
 			await tx
 				.delete(teacherCampus)
 				.where(eq(teacherCampus.teacherId, updated.id));
@@ -1231,8 +1288,6 @@ export async function updateClassGroupRecord(input: {
 					eq(enrollment.status, "active"),
 				),
 			);
-		if (input.capacity < (occupancy?.value ?? 0))
-			throw new TeachingRepositoryError("CLASS_CAPACITY_TOO_LOW");
 		const [dependentLesson] = await tx
 			.select({ id: lesson.id })
 			.from(lesson)
@@ -1272,6 +1327,14 @@ export async function updateClassGroupRecord(input: {
 				effectiveFrom: input.capacityEffectiveFrom,
 			});
 		}
+		const currentCapacity = await currentClassGroupCapacity(
+			tx,
+			input.organizationId,
+			existing.id,
+		);
+		const projectedCapacity = currentCapacity ?? input.capacity;
+		if (projectedCapacity < (occupancy?.value ?? 0))
+			throw new TeachingRepositoryError("CLASS_CAPACITY_TOO_LOW");
 		await tx
 			.update(classGroup)
 			.set({
@@ -1279,7 +1342,7 @@ export async function updateClassGroupRecord(input: {
 				campusId: input.campusId,
 				courseId: input.courseId,
 				teacherId: input.teacherId,
-				capacity: input.capacity,
+				capacity: projectedCapacity,
 				status: input.status,
 				startDate: input.startDate,
 				updatedAt: new Date(),

@@ -20,6 +20,12 @@ pnpm check
 pnpm build
 ```
 
+### 本地 mock 性能证据（2026-07-24）
+
+- `packages/db/scripts/seed-resource-utilization-mock.sql` 使用独立机构生成 80 名教师、80 个班级、160 条容量版本和 58,400 条两年课次。
+- 课次聚合 `EXPLAIN (ANALYZE, BUFFERS)`：全机构 45.5ms（覆盖绝大多数课次，顺序扫描合理）；单校区 10.8ms，命中现有 `lesson_campus_starts_idx`。
+- 本轮未新增索引；后续生产量级验收仍需在上线前复测。
+
 ## Risk and Rollback
 
 - 容量历史的生效日必须由服务端确定，避免客户端写入覆盖过去；同一日重试只能更新同一版本。
