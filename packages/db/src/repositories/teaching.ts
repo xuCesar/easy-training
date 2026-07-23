@@ -124,6 +124,7 @@ export async function markMakeupLessonsNeedsReschedule(
 	input: {
 		organizationId: string;
 		actorUserId: string;
+		effectiveFrom?: string;
 		campusId: string;
 		targetLessonIds: string[];
 		reason: MakeupRescheduleReason;
@@ -185,6 +186,7 @@ async function recordTeacherCapacityHistory(
 		teacherId: string;
 		weeklyCapacityHours: number;
 		actorUserId: string;
+		effectiveFrom?: string;
 		now?: Date;
 	},
 ) {
@@ -195,7 +197,7 @@ async function recordTeacherCapacityHistory(
 			organizationId: input.organizationId,
 			teacherId: input.teacherId,
 			weeklyCapacityMinutes: input.weeklyCapacityHours * 60,
-			effectiveFrom: getShanghaiDate(now),
+			effectiveFrom: input.effectiveFrom ?? getShanghaiDate(now),
 			createdByUserId: input.actorUserId,
 			createdAt: now,
 		})
@@ -219,6 +221,7 @@ async function recordClassGroupCapacityHistory(
 		classGroupId: string;
 		capacity: number;
 		actorUserId: string;
+		effectiveFrom?: string;
 		now?: Date;
 	},
 ) {
@@ -229,7 +232,7 @@ async function recordClassGroupCapacityHistory(
 			organizationId: input.organizationId,
 			classGroupId: input.classGroupId,
 			capacity: input.capacity,
-			effectiveFrom: getShanghaiDate(now),
+			effectiveFrom: input.effectiveFrom ?? getShanghaiDate(now),
 			createdByUserId: input.actorUserId,
 			createdAt: now,
 		})
@@ -824,6 +827,7 @@ export async function createTeacherRecord(input: {
 	phone: string | null;
 	subjects: string[];
 	weeklyCapacityHours: number;
+	capacityEffectiveFrom?: string;
 	campusIds: string[];
 }): Promise<TeacherRecord> {
 	ensurePositive(input.weeklyCapacityHours);
@@ -866,6 +870,7 @@ export async function createTeacherRecord(input: {
 				teacherId: created.id,
 				weeklyCapacityHours: created.weeklyCapacityHours,
 				actorUserId: input.userId,
+				effectiveFrom: input.capacityEffectiveFrom,
 			});
 			await tx.insert(teacherCampus).values(
 				input.campusIds.map((campusId) => ({
@@ -901,6 +906,7 @@ export async function updateTeacherRecord(input: {
 	phone: string | null;
 	subjects: string[];
 	weeklyCapacityHours: number;
+	capacityEffectiveFrom?: string;
 	campusIds: string[];
 }): Promise<TeacherRecord> {
 	ensurePositive(input.weeklyCapacityHours);
@@ -959,12 +965,16 @@ export async function updateTeacherRecord(input: {
 				)
 				.returning();
 			if (!updated) throw new TeachingRepositoryError("TEACHER_NOT_FOUND");
-			if (existing.weeklyCapacityHours !== updated.weeklyCapacityHours) {
+			if (
+				existing.weeklyCapacityHours !== updated.weeklyCapacityHours ||
+				input.capacityEffectiveFrom
+			) {
 				await recordTeacherCapacityHistory(tx, {
 					organizationId: input.organizationId,
 					teacherId: updated.id,
 					weeklyCapacityHours: updated.weeklyCapacityHours,
 					actorUserId: input.userId,
+					effectiveFrom: input.capacityEffectiveFrom,
 				});
 			}
 			await tx
@@ -1003,6 +1013,7 @@ export type ClassGroupRecord = {
 	name: string;
 	status: (typeof classGroup.$inferSelect)["status"];
 	capacity: number;
+	capacityEffectiveFrom?: string;
 	startDate: string;
 	scheduleText: string;
 	campusId: string;
@@ -1120,6 +1131,7 @@ export async function createClassGroupRecord(input: {
 	courseId: string;
 	teacherId: string;
 	capacity: number;
+	capacityEffectiveFrom?: string;
 	startDate: string;
 }): Promise<ClassGroupRecord> {
 	ensurePositive(input.capacity);
@@ -1151,6 +1163,7 @@ export async function createClassGroupRecord(input: {
 			classGroupId: created.id,
 			capacity: input.capacity,
 			actorUserId: input.userId,
+			effectiveFrom: input.capacityEffectiveFrom,
 		});
 		return created.id;
 	});
@@ -1173,6 +1186,7 @@ export async function updateClassGroupRecord(input: {
 	courseId: string;
 	teacherId: string;
 	capacity: number;
+	capacityEffectiveFrom?: string;
 	status: ClassStatus;
 	startDate: string;
 }): Promise<ClassGroupRecord> {
@@ -1249,12 +1263,13 @@ export async function updateClassGroupRecord(input: {
 			}
 		}
 		await assertClassDependencies(tx, { ...input, campusAccess: access });
-		if (existing.capacity !== input.capacity) {
+		if (existing.capacity !== input.capacity || input.capacityEffectiveFrom) {
 			await recordClassGroupCapacityHistory(tx, {
 				organizationId: input.organizationId,
 				classGroupId: existing.id,
 				capacity: input.capacity,
 				actorUserId: input.userId,
+				effectiveFrom: input.capacityEffectiveFrom,
 			});
 		}
 		await tx

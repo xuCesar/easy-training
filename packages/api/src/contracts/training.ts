@@ -2236,6 +2236,7 @@ const teacherDataSchema = z.object({
 	phone: z.string().trim().min(1).max(40).nullable().default(null),
 	subjects: z.array(z.string().trim().min(1).max(40)).min(1).max(20),
 	weeklyCapacityHours: z.number().int().min(1).max(168),
+	capacityEffectiveFrom: z.iso.date().optional(),
 	campusIds: z.array(z.uuid()).min(1).max(100),
 });
 const teacherSchema = teacherDataSchema.extend({
@@ -2275,6 +2276,7 @@ const classGroupDataSchema = z.object({
 	courseId: z.uuid(),
 	teacherId: z.uuid(),
 	capacity: z.number().int().min(1).max(10_000),
+	capacityEffectiveFrom: z.iso.date().optional(),
 	status: classStatusSchema.default("recruiting"),
 	startDate: z.iso.date(),
 });

@@ -38,6 +38,7 @@ import {
 	attendance,
 	campus,
 	classGroup,
+	classGroupCapacityHistory,
 	course,
 	enrollment,
 	enrollmentLifecycleEvent,
@@ -59,6 +60,8 @@ import {
 	renewalOpportunityConversion,
 	student,
 	teacher,
+	teacherCampus,
+	teacherCapacityHistory,
 	user,
 } from "../src/schema";
 
@@ -320,6 +323,10 @@ async function seedMetricFixture(ids: MetricFixtureIds) {
 		userId: ids.users.teacher,
 		name: "经营指标教师",
 		subjects: ["英语"],
+	});
+	await db.insert(teacherCampus).values({
+		teacherId: ids.teacher,
+		campusId: campusA,
 	});
 	await db.insert(classGroup).values({
 		id: ids.classGroup,
@@ -815,6 +822,83 @@ test("固定 fixture 返回销售、教学、消课和续费金值", async () =>
 			{ kind: "overdue61To90", amountInCents: 0, invoiceCount: 0 },
 			{ kind: "overdueOver90", amountInCents: 0, invoiceCount: 0 },
 		]);
+	} finally {
+		await cleanupMetricFixture(ids);
+	}
+});
+
+test("资源利用按容量历史、实际到场和教师本人范围计算", async () => {
+	const ids = createMetricFixtureIds();
+	try {
+		const { organizationA, campusA } = await seedMetricFixture(ids);
+		await db.insert(teacherCapacityHistory).values({
+			organizationId: organizationA,
+			teacherId: ids.teacher,
+			weeklyCapacityMinutes: 420,
+			effectiveFrom: "2026-07-01",
+			createdByUserId: ids.users.owner,
+		});
+		await db.insert(classGroupCapacityHistory).values([
+			{
+				organizationId: organizationA,
+				classGroupId: ids.classGroup,
+				capacity: 10,
+				effectiveFrom: "2026-07-01",
+				createdByUserId: ids.users.owner,
+			},
+			{
+				organizationId: organizationA,
+				classGroupId: ids.classGroup,
+				capacity: 20,
+				effectiveFrom: "2026-07-15",
+				createdByUserId: ids.users.owner,
+			},
+		]);
+		const range = {
+			preset: "custom" as const,
+			from: "2026-07-01",
+			to: "2026-08-01",
+		};
+		const result = businessMetricResourceResultSchema.parse(
+			await getBusinessMetricResource(
+				{
+					organizationId: organizationA,
+					userId: ids.users.teacher,
+					role: "teacher",
+					campusAccess: {
+						kind: "selected",
+						campusIds: [campusA],
+					},
+				},
+				{ range },
+				new Date("2026-08-20T04:00:00.000Z"),
+			),
+		);
+
+		assert.equal(result.data.completedMinutes, 180);
+		assert.equal(result.data.plannedMinutes, 300);
+		assert.equal(result.data.actualCapacityMinutes, 1_860);
+		assert.equal(result.data.plannedCapacityMinutes, 1_860);
+		assert.deepEqual(result.data.actualUtilizationRate, {
+			status: "available",
+			value: 180 / 1_860,
+			numerator: 180,
+			denominator: 1_860,
+		});
+		assert.equal(result.data.activeSeatCount, 8);
+		assert.equal(result.data.classCapacity, 20);
+		assert.equal(result.data.nearFullClassCount, 0);
+		assert.deepEqual(result.data.lessonOccupancyRate, {
+			status: "available",
+			value: 3 / 30,
+			numerator: 3,
+			denominator: 30,
+		});
+		assert.deepEqual(result.dataQuality, {
+			missingTeacherCapacityCount: 0,
+			partialTeacherCapacityCount: 0,
+			missingLessonCapacityCount: 0,
+		});
 	} finally {
 		await cleanupMetricFixture(ids);
 	}

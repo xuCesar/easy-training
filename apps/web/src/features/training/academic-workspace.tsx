@@ -1365,6 +1365,7 @@ function TeacherEditor({
 				.map((item) => item.trim())
 				.filter(Boolean),
 			weeklyCapacityHours: number(data, "weeklyCapacityHours"),
+			capacityEffectiveFrom: text(data, "capacityEffectiveFrom") || undefined,
 			campusIds,
 			boundUserId: boundUserId === "unbound" ? null : boundUserId,
 		};
@@ -1427,6 +1428,13 @@ function TeacherEditor({
 					name="weeklyCapacityHours"
 					type="number"
 					defaultValue={value?.weeklyCapacityHours ?? 20}
+					required
+				/>
+				<TextField
+					label="容量生效日期"
+					name="capacityEffectiveFrom"
+					type="date"
+					defaultValue={new Date().toISOString().slice(0, 10)}
 					required
 				/>
 				<fieldset className="sm:col-span-2">
@@ -1501,6 +1509,7 @@ function ClassEditor({
 			courseId: text(data, "courseId"),
 			teacherId: text(data, "teacherId"),
 			capacity: number(data, "capacity"),
+			capacityEffectiveFrom: text(data, "capacityEffectiveFrom") || undefined,
 			startDate: text(data, "startDate"),
 		};
 		const request = value
@@ -1583,6 +1592,13 @@ function ClassEditor({
 					name="capacity"
 					type="number"
 					defaultValue={value?.capacity ?? 20}
+					required
+				/>
+				<TextField
+					label="容量生效日期"
+					name="capacityEffectiveFrom"
+					type="date"
+					defaultValue={new Date().toISOString().slice(0, 10)}
 					required
 				/>
 				<TextField

@@ -135,7 +135,13 @@ export async function getResourceUtilizationRecord(input: {
 			})
 			.from(lesson)
 			.innerJoin(teacher, eq(teacher.id, lesson.teacherId))
-			.leftJoin(attendance, eq(attendance.lessonId, lesson.id))
+			.leftJoin(
+				attendance,
+				and(
+					eq(attendance.lessonId, lesson.id),
+					inArray(attendance.status, ["present", "late"]),
+				),
+			)
 			.where(
 				and(
 					eq(lesson.organizationId, input.scope.organizationId),
