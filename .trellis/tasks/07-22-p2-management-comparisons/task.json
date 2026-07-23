@@ -21,7 +21,8 @@
   "children": [
     "07-23-p2-resource-utilization",
     "07-23-p2-management-comparison-ui",
-    "07-23-p2-financial-analytics"
+    "07-23-p2-financial-analytics",
+    "07-23-financial-analytics-production-performance"
   ],
   "parent": "07-22-p2-operations-analytics",
   "relatedFiles": [],

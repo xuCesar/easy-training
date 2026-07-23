@@ -1,0 +1,1 @@
+CREATE INDEX "payment_org_received_id_invoice_idx" ON "payment" USING btree ("organization_id","received_at","id","invoice_id");

@@ -2245,6 +2245,13 @@ export const payment = pgTable(
 			table.invoiceId,
 			table.receivedAt,
 		),
+		// 财务事件下钻按发生时间稳定分页，避免先扫描整机构收款再排序。
+		index("payment_org_received_id_invoice_idx").on(
+			table.organizationId,
+			table.receivedAt,
+			table.id,
+			table.invoiceId,
+		),
 	],
 );
 

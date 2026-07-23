@@ -253,6 +253,13 @@
       "when": 1784739979648,
       "tag": "0035_majestic_genesis",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1784796967462,
+      "tag": "0036_clumsy_jocasta",
+      "breakpoints": true
     }
   ]
 }
