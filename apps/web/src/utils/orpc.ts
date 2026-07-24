@@ -9,11 +9,18 @@ import { toast } from "sonner";
 
 export function createQueryClient() {
 	return new QueryClient({
+		defaultOptions: {
+			queries: {
+				staleTime: 60_000,
+				gcTime: 10 * 60_000,
+				refetchOnWindowFocus: false,
+			},
+		},
 		queryCache: new QueryCache({
 			onError: (error, query) => {
-				toast.error(`Error: ${error.message}`, {
+				toast.error(`请求失败：${error.message}`, {
 					action: {
-						label: "retry",
+						label: "重试",
 						onClick: () => {
 							query.invalidate();
 						},
