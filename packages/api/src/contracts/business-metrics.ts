@@ -51,6 +51,60 @@ export const businessMetricComparisonInputSchema =
 		sortDirection: z.enum(["asc", "desc"]).default("desc"),
 	});
 
+export const analyticsReportKindSchema = z.enum([
+	"overview",
+	"comparison",
+	"resourceFinance",
+]);
+
+const analyticsReportBaseConfigSchema = z.object({
+	reportKind: analyticsReportKindSchema,
+	range: businessMetricRangeInputSchema,
+});
+
+export const analyticsReportConfigSchema = z.discriminatedUnion("reportKind", [
+	analyticsReportBaseConfigSchema.extend({ reportKind: z.literal("overview") }),
+	analyticsReportBaseConfigSchema.extend({
+		reportKind: z.literal("comparison"),
+		dimension: businessMetricComparisonDimensionSchema,
+		sortBy: businessMetricComparisonSortSchema,
+		sortDirection: z.enum(["asc", "desc"]),
+	}),
+	analyticsReportBaseConfigSchema.extend({
+		reportKind: z.literal("resourceFinance"),
+	}),
+]);
+
+export const analyticsSavedFilterSchema = z.object({
+	id: z.uuid(),
+	name: z.string().min(1).max(60),
+	config: analyticsReportConfigSchema,
+	createdAt: z.iso.datetime({ offset: true }),
+	updatedAt: z.iso.datetime({ offset: true }),
+});
+
+export const analyticsSavedFilterCreateInputSchema = z.object({
+	name: z.string().trim().min(1).max(60),
+	config: analyticsReportConfigSchema,
+});
+
+export const analyticsSavedFilterUpdateInputSchema =
+	analyticsSavedFilterCreateInputSchema.extend({ id: z.uuid() });
+
+export const analyticsSavedFilterDeleteInputSchema = z.object({ id: z.uuid() });
+export const analyticsSavedFilterListResultSchema = z.object({
+	items: z.array(analyticsSavedFilterSchema),
+});
+
+export const analyticsExportInputSchema = z.object({
+	config: analyticsReportConfigSchema,
+});
+export const analyticsExportResultSchema = z.object({
+	fileName: z.string(),
+	csv: z.string(),
+	rowCount: z.number().int().nonnegative(),
+});
+
 export const businessMetricDrilldownKindSchema = z.enum([
 	"salesCycles",
 	"attendanceLessons",
@@ -474,6 +528,13 @@ export type BusinessMetricRangeInput = z.infer<
 >;
 export type BusinessMetricQueryInput = z.infer<
 	typeof businessMetricQueryInputSchema
+>;
+export type AnalyticsReportConfig = z.infer<typeof analyticsReportConfigSchema>;
+export type AnalyticsSavedFilterCreateInput = z.infer<
+	typeof analyticsSavedFilterCreateInputSchema
+>;
+export type AnalyticsSavedFilterUpdateInput = z.infer<
+	typeof analyticsSavedFilterUpdateInputSchema
 >;
 export type BusinessMetricComparisonInput = z.infer<
 	typeof businessMetricComparisonInputSchema

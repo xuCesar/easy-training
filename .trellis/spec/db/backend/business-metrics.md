@@ -182,3 +182,56 @@ await tx.update(classGroup).set({ capacity: input.capacity });
 const projectedCapacity = await currentClassGroupCapacity(tx, organizationId, classGroupId);
 await tx.update(classGroup).set({ capacity: projectedCapacity ?? input.capacity });
 ```
+
+## Scenario: 个人保存筛选与受控即时 CSV
+
+### 1. Scope / Trigger
+
+- 适用于 `training.analytics.savedFilters.*` 与 `training.analytics.export`，以及 `analytics_saved_filter` 的持久化。
+
+### 2. Signatures
+
+- DB：`list/create/update/deleteAnalyticsSavedFilter` 与 `recordAnalyticsExport`；所有操作传入服务端解析的 `organizationId`、`userId`。
+- API：配置固定为 `overview | comparison | resourceFinance`；comparison 额外包含受限维度与排序。
+
+### 3. Contracts
+
+- 保存记录仅存经 Zod 校验的配置，不存 SQL、结果、权限快照或对象范围；列表与变更必须同时按机构和成员过滤。
+- 导出每次重新按当前角色和校区范围执行指标过程；CSV 为 UTF-8 BOM，所有单元格使用 `quoteCsv`，不输出当前角色不可见的金额列。
+- 同步导出自定义范围最长 366 天、对比最多 1,000 行、响应最大 1 MiB；成功审计仅记录 `reportKind` 与 `rowCount`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 跨成员或跨机构读取、更新、删除保存记录 | `NOT_FOUND`，不推断记录存在 |
+| 同成员同标签筛选重名 | `CONFLICT` |
+| 当前角色不再可访问标签或维度 | `FORBIDDEN` |
+| 自定义导出范围超 366 天、行数或响应超限 | `BAD_REQUEST`，不生成空文件或后台任务 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：成员保存校区对比，导出时按其当前校区范围重新查询，导出的排序与页面一致。
+- Base：教师导出资源摘要时财务列为“不适用”；财务人员仅导出资源与财务可见摘要。
+- Bad：将 React 缓存的行、完整筛选 JSON 或 CSV 内容写入审计，或以保存筛选恢复已撤销的权限。
+
+### 6. Tests Required
+
+- PostgreSQL 集成测试覆盖成员/机构隔离、重名冲突、CSV BOM 与公式转义、角色列裁剪、366 天限制及最小导出审计。
+- 页面验证保存、应用、重命名更新、删除、导出，以及桌面和 390px 的加载/错误/无权状态。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+return { csv: buildCsvFromReactCache(savedFilter.rows) };
+```
+
+#### Correct
+
+```ts
+const result = await getBusinessMetricComparison(currentScope, config);
+const csv = toProtectedCsv(result.rows);
+await recordAnalyticsExport({ organizationId, userId, reportKind, rowCount: result.rows.length });
+```

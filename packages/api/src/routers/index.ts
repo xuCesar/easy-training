@@ -1,6 +1,13 @@
 import type { RouterClient } from "@orpc/server";
 
 import {
+	analyticsExportInputSchema,
+	analyticsExportResultSchema,
+	analyticsSavedFilterCreateInputSchema,
+	analyticsSavedFilterDeleteInputSchema,
+	analyticsSavedFilterListResultSchema,
+	analyticsSavedFilterSchema,
+	analyticsSavedFilterUpdateInputSchema,
 	businessMetricAttendanceResultSchema,
 	businessMetricComparisonInputSchema,
 	businessMetricComparisonResultSchema,
@@ -242,6 +249,9 @@ import {
 	teacherWorkspaceProcedure,
 } from "../index";
 import {
+	createBusinessMetricSavedFilter,
+	deleteBusinessMetricSavedFilter,
+	exportBusinessMetrics,
 	getBusinessMetricAttendance,
 	getBusinessMetricComparison,
 	getBusinessMetricConsumption,
@@ -253,6 +263,8 @@ import {
 	getBusinessMetricRenewal,
 	getBusinessMetricResource,
 	getBusinessMetricSales,
+	listBusinessMetricSavedFilters,
+	updateBusinessMetricSavedFilter,
 } from "../repositories/business-metrics";
 import {
 	createClassroom,
@@ -2160,6 +2172,74 @@ export const appRouter = {
 			},
 		},
 		analytics: {
+			export: organizationProcedure
+				.input(analyticsExportInputSchema)
+				.output(analyticsExportResultSchema)
+				.handler(({ context, input }) =>
+					exportBusinessMetrics(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						},
+						input.config,
+					),
+				),
+			savedFilters: {
+				list: organizationProcedure
+					.output(analyticsSavedFilterListResultSchema)
+					.handler(({ context }) =>
+						listBusinessMetricSavedFilters({
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						}),
+					),
+				create: organizationProcedure
+					.input(analyticsSavedFilterCreateInputSchema)
+					.output(analyticsSavedFilterSchema)
+					.handler(({ context, input }) =>
+						createBusinessMetricSavedFilter(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				update: organizationProcedure
+					.input(analyticsSavedFilterUpdateInputSchema)
+					.output(analyticsSavedFilterSchema)
+					.handler(({ context, input }) =>
+						updateBusinessMetricSavedFilter(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
+							},
+							input,
+						),
+					),
+				delete: organizationProcedure
+					.input(analyticsSavedFilterDeleteInputSchema)
+					.output(analyticsSavedFilterDeleteInputSchema)
+					.handler(({ context, input }) =>
+						deleteBusinessMetricSavedFilter(
+							{
+								organizationId: context.organization.id,
+								userId: context.session.user.id,
+								role: context.role,
+								campusAccess: context.campusAccess,
+							},
+							input.id,
+						),
+					),
+			},
 			comparison: organizationProcedure
 				.input(businessMetricComparisonInputSchema)
 				.output(businessMetricComparisonResultSchema)

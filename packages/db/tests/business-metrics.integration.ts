@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import {
 	businessMetricAttendanceResultSchema,
@@ -17,6 +17,9 @@ import {
 } from "../../api/src/contracts/business-metrics";
 import {
 	businessMetricDefinitionRegistry,
+	createBusinessMetricSavedFilter,
+	deleteBusinessMetricSavedFilter,
+	exportBusinessMetrics,
 	getBusinessMetricAttendance,
 	getBusinessMetricComparison,
 	getBusinessMetricConsumption,
@@ -27,6 +30,8 @@ import {
 	getBusinessMetricRenewal,
 	getBusinessMetricResource,
 	getBusinessMetricSales,
+	listBusinessMetricSavedFilters,
+	updateBusinessMetricSavedFilter,
 } from "../../api/src/repositories/business-metrics";
 import { db } from "../src";
 import {
@@ -55,6 +60,7 @@ import {
 	lessonConsumption,
 	makeupLesson,
 	organization,
+	organizationAuditEvent,
 	payment,
 	paymentReversal,
 	refund,
@@ -1258,6 +1264,112 @@ test("经营指标下钻重新执行角色范围并使用稳定游标", async ()
 			),
 			(error: unknown) =>
 				error instanceof Error && error.message.includes("续费经营指标"),
+		);
+	} finally {
+		await cleanupMetricFixture(ids);
+	}
+});
+
+test("经营分析保存筛选按成员隔离，导出复用当前范围并记录最小审计", async () => {
+	const ids = createMetricFixtureIds();
+	try {
+		const { organizationA, campusA } = await seedMetricFixture(ids);
+		const ownerScope = {
+			organizationId: organizationA,
+			userId: ids.users.owner,
+			role: "owner" as const,
+			campusAccess: { kind: "selected" as const, campusIds: [campusA] },
+		};
+		const consultantScope = {
+			...ownerScope,
+			userId: ids.users.consultantA,
+			role: "consultant" as const,
+		};
+		const config = {
+			reportKind: "comparison" as const,
+			range: {
+				preset: "custom" as const,
+				from: "2026-07-01",
+				to: "2026-08-01",
+			},
+			dimension: "campus" as const,
+			sortBy: "enrollmentCount" as const,
+			sortDirection: "desc" as const,
+		};
+		const saved = await createBusinessMetricSavedFilter(ownerScope, {
+			name: "七月校区对比",
+			config,
+		});
+		assert.equal(
+			(await listBusinessMetricSavedFilters(ownerScope)).items.length,
+			1,
+		);
+		assert.equal(
+			(await listBusinessMetricSavedFilters(consultantScope)).items.length,
+			0,
+		);
+		await assert.rejects(
+			updateBusinessMetricSavedFilter(consultantScope, {
+				id: saved.id,
+				name: "越权更新",
+				config,
+			}),
+			(error: unknown) =>
+				error instanceof Error && error.message.includes("不存在或已无权访问"),
+		);
+		await assert.rejects(
+			createBusinessMetricSavedFilter(ownerScope, {
+				name: "七月校区对比",
+				config,
+			}),
+			(error: unknown) =>
+				error instanceof Error && error.message.includes("已存在"),
+		);
+		const updated = await updateBusinessMetricSavedFilter(ownerScope, {
+			id: saved.id,
+			name: "七月校区对比（更新）",
+			config: { ...config, sortBy: "lessonCount" },
+		});
+		assert.equal(updated.name, "七月校区对比（更新）");
+		assert.equal(updated.config.reportKind, "comparison");
+		assert.equal(updated.config.sortBy, "lessonCount");
+		await db
+			.update(campus)
+			.set({ name: "=公式安全校区" })
+			.where(eq(campus.id, campusA));
+		const exported = await exportBusinessMetrics(ownerScope, config);
+		assert.ok(exported.csv.startsWith("\uFEFF"));
+		assert.match(exported.csv, /"'=公式安全校区"/u);
+		assert.match(exported.csv, /"净回款"/u);
+		assert.match(exported.csv, /2026-06-30T16:00:00\.000Z/u);
+		await assert.rejects(
+			exportBusinessMetrics({ ...consultantScope, role: "finance" }, config),
+			(error: unknown) =>
+				error instanceof Error && error.message.includes("无权查看该维度对比"),
+		);
+		await assert.rejects(
+			exportBusinessMetrics(ownerScope, {
+				...config,
+				range: { preset: "custom", from: "2025-01-01", to: "2026-01-03" },
+			}),
+			(error: unknown) =>
+				error instanceof Error && error.message.includes("366 天"),
+		);
+		const exportAudits = await db
+			.select()
+			.from(organizationAuditEvent)
+			.where(eq(organizationAuditEvent.action, "analytics_exported"));
+		const audit = exportAudits.find(
+			(item) => item.organizationId === organizationA,
+		);
+		assert.deepEqual(audit?.after, {
+			reportKind: "comparison",
+			rowCount: exported.rowCount,
+		});
+		await deleteBusinessMetricSavedFilter(ownerScope, saved.id);
+		assert.equal(
+			(await listBusinessMetricSavedFilters(ownerScope)).items.length,
+			0,
 		);
 	} finally {
 		await cleanupMetricFixture(ids);

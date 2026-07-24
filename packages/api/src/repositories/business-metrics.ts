@@ -1,4 +1,11 @@
 import {
+	createAnalyticsSavedFilter,
+	deleteAnalyticsSavedFilter,
+	listAnalyticsSavedFilters,
+	recordAnalyticsExport,
+	updateAnalyticsSavedFilter,
+} from "@easy-training/db/repositories/analytics-saved-filters";
+import {
 	type BusinessComparisonDimension,
 	type BusinessComparisonResult,
 	getBusinessComparisonRecords,
@@ -20,12 +27,14 @@ import {
 } from "@easy-training/db/repositories/financial-metrics";
 import { getResourceUtilizationRecord } from "@easy-training/db/repositories/resource-metrics";
 import { ORPCError } from "@orpc/server";
-
 import {
 	financeManagementRoles,
 	type OrganizationRole,
 } from "../authorization/training";
 import {
+	type AnalyticsReportConfig,
+	type AnalyticsSavedFilterCreateInput,
+	type AnalyticsSavedFilterUpdateInput,
 	BUSINESS_METRIC_CONTRACT_VERSION,
 	BUSINESS_METRIC_DEFINITION_VERSION,
 	BUSINESS_METRIC_TIMEZONE,
@@ -53,6 +62,7 @@ import {
 	BusinessMetricRangeError,
 	resolveBusinessMetricWindow,
 } from "./business-metrics-time";
+import { quoteCsv } from "./csv";
 
 type BusinessMetricScope = {
 	organizationId: string;
@@ -62,6 +72,292 @@ type BusinessMetricScope = {
 		typeof getBusinessMetricSalesRecord
 	>[0]["scope"]["campusAccess"];
 };
+
+function toSavedFilter(
+	item: Awaited<ReturnType<typeof listAnalyticsSavedFilters>>[number],
+) {
+	return {
+		id: item.id,
+		name: item.name,
+		config: item.config as AnalyticsSavedFilterCreateInput["config"],
+		createdAt: item.createdAt.toISOString(),
+		updatedAt: item.updatedAt.toISOString(),
+	};
+}
+
+function isUniqueViolation(error: unknown): boolean {
+	if (typeof error !== "object" || error === null) return false;
+	if ("code" in error && error.code === "23505") return true;
+	return "cause" in error && isUniqueViolation(error.cause);
+}
+
+export async function listBusinessMetricSavedFilters(
+	scope: BusinessMetricScope,
+) {
+	const items = await listAnalyticsSavedFilters({
+		organizationId: scope.organizationId,
+		userId: scope.userId,
+	});
+	return { items: items.map(toSavedFilter) };
+}
+
+export async function createBusinessMetricSavedFilter(
+	scope: BusinessMetricScope,
+	input: AnalyticsSavedFilterCreateInput,
+) {
+	assertReportConfigAccess(scope.role, input.config);
+	try {
+		return toSavedFilter(
+			await createAnalyticsSavedFilter({
+				...input,
+				organizationId: scope.organizationId,
+				userId: scope.userId,
+			}),
+		);
+	} catch (error) {
+		if (isUniqueViolation(error)) {
+			throw new ORPCError("CONFLICT", {
+				message: "同一分析视图下已存在该筛选名称。",
+				cause: error,
+			});
+		}
+		throw error;
+	}
+}
+
+export async function updateBusinessMetricSavedFilter(
+	scope: BusinessMetricScope,
+	input: AnalyticsSavedFilterUpdateInput,
+) {
+	assertReportConfigAccess(scope.role, input.config);
+	const updated = await updateAnalyticsSavedFilter({
+		...input,
+		organizationId: scope.organizationId,
+		userId: scope.userId,
+	});
+	if (!updated)
+		throw new ORPCError("NOT_FOUND", {
+			message: "保存的筛选不存在或已无权访问。",
+		});
+	return toSavedFilter(updated);
+}
+
+export async function deleteBusinessMetricSavedFilter(
+	scope: BusinessMetricScope,
+	id: string,
+) {
+	const deleted = await deleteAnalyticsSavedFilter({
+		id,
+		organizationId: scope.organizationId,
+		userId: scope.userId,
+	});
+	if (!deleted)
+		throw new ORPCError("NOT_FOUND", {
+			message: "保存的筛选不存在或已无权访问。",
+		});
+	return { id: deleted.id };
+}
+
+export async function exportBusinessMetrics(
+	scope: BusinessMetricScope,
+	config: AnalyticsReportConfig,
+) {
+	assertReportConfigAccess(scope.role, config);
+	if (config.range.preset === "custom") {
+		const durationInDays =
+			(Date.parse(`${config.range.to}T00:00:00.000Z`) -
+				Date.parse(`${config.range.from}T00:00:00.000Z`)) /
+			(24 * 60 * 60 * 1000);
+		if (durationInDays > 366) {
+			throw new ORPCError("BAD_REQUEST", {
+				message: "即时导出的自定义时间范围不能超过 366 天。",
+			});
+		}
+	}
+	const input = { range: config.range };
+	const createCsv = (
+		metadata: string[][],
+		header: string[],
+		row: Array<string | number | null>,
+	) =>
+		`\uFEFF${[...metadata, header, row].map((values) => values.map(quoteCsv).join(",")).join("\n")}`;
+	const assertWithinLimit = (csv: string) => {
+		if (Buffer.byteLength(csv, "utf8") > 1024 * 1024) {
+			throw new ORPCError("BAD_REQUEST", {
+				message: "导出结果超过同步限制，请缩小筛选范围。",
+			});
+		}
+	};
+	const metadataFor = (result: {
+		asOf: string;
+		timezone: string;
+		definitionVersion: string;
+		range: { from: string; to: string };
+	}) => [
+		["生成时间", result.asOf],
+		["时区", result.timezone],
+		["指标版本", result.definitionVersion],
+		["报告类型", config.reportKind],
+		["查询开始", result.range.from],
+		["查询结束（不含）", result.range.to],
+	];
+	const ratioValue = (value: BusinessMetricRatio) =>
+		value.status === "available" ? value.value : "不适用";
+	const recordExport = async (rowCount: number) => {
+		await recordAnalyticsExport({
+			organizationId: scope.organizationId,
+			userId: scope.userId,
+			reportKind: config.reportKind,
+			rowCount,
+		});
+	};
+	if (config.reportKind === "comparison") {
+		const result = await getBusinessMetricComparison(scope, {
+			...input,
+			dimension: config.dimension,
+			sortBy: config.sortBy,
+			sortDirection: config.sortDirection,
+		});
+		const header = [
+			"名称",
+			"报名数",
+			"课次数",
+			"消课数",
+			"到课率",
+			"教师利用率",
+			"课次上座率",
+			"净回款",
+		];
+		const includeFinancial = financeManagementRoles.has(scope.role);
+		const lines = [
+			...metadataFor(result).map((row) => row.map(quoteCsv).join(",")),
+			header
+				.slice(0, includeFinancial ? undefined : -1)
+				.map(quoteCsv)
+				.join(","),
+			...result.rows.map((row) =>
+				[
+					quoteCsv(row.label),
+					quoteCsv(row.current.enrollmentCount),
+					quoteCsv(row.current.lessonCount),
+					quoteCsv(row.current.consumedLessonCount),
+					quoteCsv(row.current.attendanceRate.value),
+					quoteCsv(row.current.utilizationRate.value),
+					quoteCsv(row.current.occupancyRate.value),
+					...(includeFinancial
+						? [quoteCsv(row.current.netReceiptsInCents)]
+						: []),
+				].join(","),
+			),
+		];
+		const csv = `\uFEFF${lines.join("\n")}`;
+		if (
+			result.rows.length > 1000 ||
+			Buffer.byteLength(csv, "utf8") > 1024 * 1024
+		)
+			throw new ORPCError("BAD_REQUEST", {
+				message: "导出结果超过同步限制，请缩小筛选范围。",
+			});
+		await recordExport(result.rows.length);
+		return { fileName: "经营对比.csv", csv, rowCount: result.rows.length };
+	}
+	if (config.reportKind === "overview") {
+		if (scope.role === "finance")
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前角色无权导出经营概览。",
+			});
+		const [sales, attendance, consumption, renewal] = await Promise.all([
+			scope.role === "teacher" ? null : getBusinessMetricSales(scope, input),
+			scope.role === "consultant"
+				? null
+				: getBusinessMetricAttendance(scope, input),
+			scope.role === "consultant"
+				? null
+				: getBusinessMetricConsumption(scope, input),
+			["owner", "admin", "campus_manager"].includes(scope.role)
+				? getBusinessMetricRenewal(scope, input)
+				: null,
+		]);
+		const base = sales ?? attendance ?? consumption ?? renewal;
+		if (!base)
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前角色无权导出经营概览。",
+			});
+		const csv = createCsv(
+			metadataFor(base),
+			["转化率", "已结案线索", "到课率", "消课课次", "续费率", "续费机会数"],
+			[
+				sales ? ratioValue(sales.data.conversionRate) : "不适用",
+				sales?.data.closedCycleCount ?? "不适用",
+				attendance ? ratioValue(attendance.data.attendanceRate) : "不适用",
+				consumption?.data.consumedLessonCount ?? "不适用",
+				renewal ? ratioValue(renewal.data.renewalRate) : "不适用",
+				renewal?.data.opportunityCount ?? "不适用",
+			],
+		);
+		assertWithinLimit(csv);
+		await recordExport(1);
+		return { fileName: "经营概览.csv", csv, rowCount: 1 };
+	}
+	if (scope.role === "consultant")
+		throw new ORPCError("FORBIDDEN", {
+			message: "当前角色无权导出资源与财务分析。",
+		});
+	const [resource, financial] = await Promise.all([
+		scope.role === "finance" ? null : getBusinessMetricResource(scope, input),
+		scope.role === "teacher" ? null : getBusinessMetricFinancial(scope, input),
+	]);
+	const base = resource ?? financial;
+	if (!base)
+		throw new ORPCError("FORBIDDEN", {
+			message: "当前角色无权导出资源与财务分析。",
+		});
+	const csv = createCsv(
+		metadataFor(base),
+		[
+			"实际教师利用率",
+			"课次上座率",
+			"已完成分钟",
+			"净回款（分）",
+			"回款率",
+			"账龄应收（分）",
+		],
+		[
+			resource ? ratioValue(resource.data.actualUtilizationRate) : "不适用",
+			resource ? ratioValue(resource.data.lessonOccupancyRate) : "不适用",
+			resource?.data.completedMinutes ?? "不适用",
+			financial?.data.netReceiptsInCents ?? "不适用",
+			financial ? ratioValue(financial.data.cohortCollectionRate) : "不适用",
+			financial?.data.agingTotalInCents ?? "不适用",
+		],
+	);
+	assertWithinLimit(csv);
+	await recordExport(1);
+	return { fileName: "资源与财务.csv", csv, rowCount: 1 };
+}
+
+function assertReportConfigAccess(
+	role: OrganizationRole,
+	config: AnalyticsReportConfig,
+): void {
+	if (config.reportKind === "overview") {
+		if (role === "finance") {
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前角色无权访问经营概览。",
+			});
+		}
+		return;
+	}
+	if (config.reportKind === "comparison") {
+		assertComparisonAccess(role, config.dimension);
+		return;
+	}
+	if (role === "consultant") {
+		throw new ORPCError("FORBIDDEN", {
+			message: "当前角色无权访问资源与财务分析。",
+		});
+	}
+}
 
 const emptyDataQuality = (): BusinessMetricDataQuality => ({
 	missingAttributionCount: 0,

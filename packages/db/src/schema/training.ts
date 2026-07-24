@@ -94,6 +94,10 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"student_imported",
 	"student_exported",
 	"students_bulk_updated",
+	"analytics_filter_saved",
+	"analytics_filter_updated",
+	"analytics_filter_deleted",
+	"analytics_exported",
 ]);
 export const organizationNotificationType = pgEnum(
 	"organization_notification_type",
@@ -525,6 +529,43 @@ export const organizationAuditEvent = pgTable(
 			table.organizationId,
 			table.campusId,
 			table.createdAt,
+			table.id,
+		),
+	],
+);
+
+export const analyticsSavedFilter = pgTable(
+	"analytics_saved_filter",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organization.id, { onDelete: "cascade" }),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		name: text("name").notNull(),
+		reportKind: text("report_kind").notNull(),
+		config: jsonb("config").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("analytics_saved_filter_org_user_kind_name_uidx").on(
+			table.organizationId,
+			table.userId,
+			table.reportKind,
+			table.name,
+		),
+		index("analytics_saved_filter_org_user_updated_idx").on(
+			table.organizationId,
+			table.userId,
+			table.updatedAt,
 			table.id,
 		),
 	],

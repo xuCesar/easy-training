@@ -537,6 +537,10 @@ const auditActionSchema = z.enum([
 	"student_imported",
 	"student_exported",
 	"students_bulk_updated",
+	"analytics_filter_saved",
+	"analytics_filter_updated",
+	"analytics_filter_deleted",
+	"analytics_exported",
 ]);
 
 export const auditEventListInputSchema = z.object({

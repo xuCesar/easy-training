@@ -1,4 +1,5 @@
 import type {
+	AnalyticsReportConfig,
 	BusinessMetricAttendanceResult,
 	BusinessMetricComparisonDimension,
 	BusinessMetricComparisonInput,
@@ -16,7 +17,7 @@ import type {
 } from "@easy-training/api/contracts/business-metrics";
 import { Button } from "@easy-training/ui/components/button";
 import { Skeleton } from "@easy-training/ui/components/skeleton";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { orpc } from "@/utils/orpc";
@@ -44,6 +45,9 @@ const defaultCustomTo = new Date(shanghaiNow.getTime() + 24 * 60 * 60 * 1000)
 
 export function BusinessAnalytics() {
 	const { organization } = useOrganization();
+	const queryClient = useQueryClient();
+	const [filterName, setFilterName] = useState("");
+	const [selectedFilterId, setSelectedFilterId] = useState("");
 	const [rangeMode, setRangeMode] = useState<RangeMode>("month");
 	const [activeTab, setActiveTab] = useState<AnalyticsTab>(
 		organization.role === "finance" ? "resource-finance" : "overview",
@@ -125,6 +129,80 @@ export function BusinessAnalytics() {
 		sortBy: comparisonSortBy,
 		sortDirection: "desc",
 	};
+	const reportConfig: AnalyticsReportConfig =
+		activeTab === "comparison"
+			? {
+					reportKind: "comparison",
+					range: input.range,
+					dimension: effectiveComparisonDimension,
+					sortBy: comparisonSortBy,
+					sortDirection: "desc",
+				}
+			: {
+					reportKind: activeTab === "overview" ? "overview" : "resourceFinance",
+					range: input.range,
+				};
+	const savedFilters = useQuery({
+		...orpc.training.analytics.savedFilters.list.queryOptions(),
+	});
+	const invalidateSavedFilters = () =>
+		void queryClient.invalidateQueries({
+			queryKey: orpc.training.analytics.savedFilters.list.queryKey(),
+		});
+	const saveFilter = useMutation({
+		...orpc.training.analytics.savedFilters.create.mutationOptions(),
+		onSuccess: () => {
+			setFilterName("");
+			invalidateSavedFilters();
+		},
+	});
+	const deleteFilter = useMutation({
+		...orpc.training.analytics.savedFilters.delete.mutationOptions(),
+		onSuccess: () => {
+			setSelectedFilterId("");
+			invalidateSavedFilters();
+		},
+	});
+	const renameFilter = useMutation({
+		...orpc.training.analytics.savedFilters.update.mutationOptions(),
+		onSuccess: () => {
+			setFilterName("");
+			invalidateSavedFilters();
+		},
+	});
+	const exportCsv = useMutation({
+		...orpc.training.analytics.export.mutationOptions(),
+		onSuccess: ({ csv, fileName }) => {
+			const url = URL.createObjectURL(
+				new Blob([csv], { type: "text/csv;charset=utf-8" }),
+			);
+			const anchor = document.createElement("a");
+			anchor.href = url;
+			anchor.download = fileName;
+			anchor.click();
+			URL.revokeObjectURL(url);
+		},
+	});
+	function applySavedFilter(id: string) {
+		const saved = savedFilters.data?.items.find((item) => item.id === id);
+		if (!saved) return;
+		setSelectedFilterId(id);
+		if (saved.config.reportKind === "comparison") {
+			setActiveTab("comparison");
+			setComparisonDimension(saved.config.dimension);
+			setComparisonSortBy(saved.config.sortBy);
+		} else
+			setActiveTab(
+				saved.config.reportKind === "overview"
+					? "overview"
+					: "resource-finance",
+			);
+		if (saved.config.range.preset === "custom") {
+			setRangeMode("custom");
+			setCustomFrom(saved.config.range.from);
+			setCustomTo(saved.config.range.to);
+		} else setRangeMode(saved.config.range.preset);
+	}
 	const sales = useQuery({
 		...orpc.training.analytics.sales.queryOptions({ input }),
 		enabled: canViewSales && activeTab === "overview" && rangeEnabled,
@@ -237,7 +315,77 @@ export function BusinessAnalytics() {
 						</>
 					) : null}
 				</div>
+				<div className="flex flex-wrap items-end gap-2">
+					<label className="grid gap-1 text-sm">
+						<span className="text-muted-foreground">保存筛选</span>
+						<input
+							className="h-9 border bg-background px-2"
+							value={filterName}
+							onChange={(event) => setFilterName(event.target.value)}
+							placeholder="筛选名称"
+						/>
+					</label>
+					<Button
+						disabled={!filterName.trim() || saveFilter.isPending}
+						onClick={() =>
+							saveFilter.mutate({ name: filterName, config: reportConfig })
+						}
+					>
+						保存
+					</Button>
+					<Button
+						variant="outline"
+						disabled={exportCsv.isPending || !rangeEnabled}
+						onClick={() => exportCsv.mutate({ config: reportConfig })}
+					>
+						导出 CSV
+					</Button>
+				</div>
 			</header>
+			<div className="flex flex-wrap items-center gap-2 border p-3 text-sm">
+				<select
+					className="h-9 min-w-48 border bg-background px-2"
+					value={selectedFilterId}
+					onChange={(event) => applySavedFilter(event.target.value)}
+				>
+					<option value="">应用已保存筛选</option>
+					{savedFilters.data?.items.map((item) => (
+						<option key={item.id} value={item.id}>
+							{item.name}
+						</option>
+					))}
+				</select>
+				<Button
+					variant="outline"
+					disabled={!selectedFilterId || deleteFilter.isPending}
+					onClick={() => deleteFilter.mutate({ id: selectedFilterId })}
+				>
+					删除
+				</Button>
+				<Button
+					variant="outline"
+					disabled={
+						!selectedFilterId || !filterName.trim() || renameFilter.isPending
+					}
+					onClick={() =>
+						renameFilter.mutate({
+							id: selectedFilterId,
+							name: filterName,
+							config: reportConfig,
+						})
+					}
+				>
+					重命名并更新
+				</Button>
+				{saveFilter.isError ||
+				deleteFilter.isError ||
+				renameFilter.isError ||
+				exportCsv.isError ? (
+					<span className="text-destructive">
+						操作失败，请检查当前权限或缩小范围后重试。
+					</span>
+				) : null}
+			</div>
 			<nav
 				className="flex min-w-0 flex-wrap gap-2 border-b pb-2"
 				aria-label="经营分析视图"

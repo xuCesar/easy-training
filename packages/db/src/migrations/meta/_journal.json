@@ -267,6 +267,13 @@
       "when": 1784818875330,
       "tag": "0037_jazzy_lizard",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1784854096577,
+      "tag": "0038_fair_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }
