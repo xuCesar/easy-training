@@ -1,4 +1,6 @@
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { Buffer } from "node:buffer";
+
+import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
 
 import { db } from "../index";
 import {
@@ -35,6 +37,42 @@ export class ArrearsWorkflowError extends Error {
 	constructor(public readonly code: ArrearsWorkflowErrorCode) {
 		super(code);
 		this.name = "ArrearsWorkflowError";
+	}
+}
+
+type ArrearsListCursor = {
+	dueDate: string;
+	studentName: string;
+	invoiceId: string;
+};
+
+function encodeArrearsListCursor(cursor: ArrearsListCursor): string {
+	return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeArrearsListCursor(
+	cursor: string | undefined,
+): ArrearsListCursor | null {
+	if (!cursor) return null;
+	try {
+		const parsed = JSON.parse(
+			Buffer.from(cursor, "base64url").toString("utf8"),
+		);
+		if (
+			typeof parsed !== "object" ||
+			parsed === null ||
+			!("dueDate" in parsed) ||
+			!("studentName" in parsed) ||
+			!("invoiceId" in parsed) ||
+			typeof parsed.dueDate !== "string" ||
+			typeof parsed.studentName !== "string" ||
+			typeof parsed.invoiceId !== "string"
+		) {
+			throw new Error("Invalid arrears list cursor.");
+		}
+		return parsed;
+	} catch {
+		throw new ArrearsWorkflowError("INVALID_ARREARS_INPUT");
 	}
 }
 
@@ -427,8 +465,33 @@ export async function listArrearsWorkflowRecords(input: {
 	today: string;
 	status?: Exclude<ArrearsStatus, "resolved">;
 	pausedWithoutResumeOnly?: boolean;
-}): Promise<ArrearsWorkflowRecord[]> {
-	if (input.campusAccess.kind === "none") return [];
+	cursor?: string;
+	pageSize: number;
+}): Promise<{ items: ArrearsWorkflowRecord[]; nextCursor: string | null }> {
+	if (input.campusAccess.kind === "none")
+		return { items: [], nextCursor: null };
+	const cursor = decodeArrearsListCursor(input.cursor);
+	const filters = [
+		eq(invoice.organizationId, input.organizationId),
+		ne(invoice.status, "refunded"),
+		sql`${invoice.amountInCents} > ${invoice.paidAmountInCents}`,
+		campusAccessCondition(input.campusAccess),
+	];
+	if (cursor) {
+		const cursorFilter = or(
+			gt(invoice.dueDate, cursor.dueDate),
+			and(
+				eq(invoice.dueDate, cursor.dueDate),
+				gt(student.name, cursor.studentName),
+			),
+			and(
+				eq(invoice.dueDate, cursor.dueDate),
+				eq(student.name, cursor.studentName),
+				gt(invoice.id, cursor.invoiceId),
+			),
+		);
+		if (cursorFilter) filters.push(cursorFilter);
+	}
 	const invoices = await db
 		.select({
 			invoiceId: invoice.id,
@@ -462,16 +525,10 @@ export async function listArrearsWorkflowRecords(input: {
 				eq(course.organizationId, invoice.organizationId),
 			),
 		)
-		.where(
-			and(
-				eq(invoice.organizationId, input.organizationId),
-				ne(invoice.status, "refunded"),
-				sql`${invoice.amountInCents} > ${invoice.paidAmountInCents}`,
-				campusAccessCondition(input.campusAccess),
-			),
-		)
-		.orderBy(asc(invoice.dueDate), asc(student.name), asc(invoice.id));
-	if (invoices.length === 0) return [];
+		.where(and(...filters))
+		.orderBy(asc(invoice.dueDate), asc(student.name), asc(invoice.id))
+		.limit(input.pageSize + 1);
+	if (invoices.length === 0) return { items: [], nextCursor: null };
 	const cycles = await db
 		.select(cycleSelection)
 		.from(invoiceArrearsCycle)
@@ -503,7 +560,7 @@ export async function listArrearsWorkflowRecords(input: {
 	) {
 		throw new ArrearsWorkflowError("ARREARS_CYCLE_MISSING");
 	}
-	if (cycles.length === 0) return [];
+	if (cycles.length === 0) return { items: [], nextCursor: null };
 	const events = await db
 		.select(eventSelection)
 		.from(invoiceArrearsEvent)
@@ -521,7 +578,7 @@ export async function listArrearsWorkflowRecords(input: {
 	for (const event of events)
 		if (!latestByCycle.has(event.cycleId))
 			latestByCycle.set(event.cycleId, event);
-	return selectedInvoices.flatMap((item) => {
+	const items = selectedInvoices.slice(0, input.pageSize).flatMap((item) => {
 		const cycle = cyclesByInvoice.get(item.invoiceId);
 		if (!cycle) return [];
 		const latestEvent = latestByCycle.get(cycle.id);
@@ -548,6 +605,18 @@ export async function listArrearsWorkflowRecords(input: {
 			},
 		];
 	});
+	const last = items.at(-1);
+	return {
+		items,
+		nextCursor:
+			selectedInvoices.length > input.pageSize && last
+				? encodeArrearsListCursor({
+						dueDate: last.dueDate,
+						studentName: last.studentName,
+						invoiceId: last.invoiceId,
+					})
+				: null,
+	};
 }
 
 export async function getArrearsDetailRecord(input: {

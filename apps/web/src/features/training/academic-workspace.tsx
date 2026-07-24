@@ -35,7 +35,12 @@ import {
 	SelectValue,
 } from "@easy-training/ui/components/select";
 import { Skeleton } from "@easy-training/ui/components/skeleton";
-import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
 	CalendarClockIcon,
@@ -50,7 +55,7 @@ import {
 } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { orpc, queryClient } from "@/utils/orpc";
+import { client, orpc, queryClient } from "@/utils/orpc";
 import { BulkRescheduleDialog } from "./bulk-reschedule-dialog";
 import { ClassPauseDialog } from "./class-pause-dialog";
 import { formatCentsToCurrency, formatDateTime } from "./format";
@@ -143,8 +148,9 @@ export function AcademicWorkspace({
 	const classesOptions = orpc.training.teaching.classes.list.queryOptions({
 		input: classesInput,
 	});
+	const lessonsInput = { campusId, targetId: initialLessonId };
 	const lessonsOptions = orpc.training.teaching.lessons.list.queryOptions({
-		input: { campusId, targetId: initialLessonId },
+		input: lessonsInput,
 	});
 	const campusesQuery = useQuery({
 		...campusesOptions,
@@ -167,16 +173,34 @@ export function AcademicWorkspace({
 		queryKey: [...bindableTeacherMembersOptions.queryKey, context],
 		enabled: canManageCatalog,
 	});
-	const classesQuery = useQuery({
-		...classesOptions,
+	const classesQuery = useInfiniteQuery({
 		queryKey: [...classesOptions.queryKey, context, classesInput],
+		queryFn: ({ pageParam }) =>
+			client.training.teaching.classes.list({
+				...classesInput,
+				cursor: pageParam ?? undefined,
+				pageSize: 20,
+			}),
+		initialPageParam: null as string | null,
+		getNextPageParam: (page) => page.nextCursor ?? undefined,
 		placeholderData: keepPreviousData,
 	});
-	const lessonsQuery = useQuery({
-		...lessonsOptions,
-		queryKey: [...lessonsOptions.queryKey, context, { campusId }],
+	const lessonsQuery = useInfiniteQuery({
+		queryKey: [...lessonsOptions.queryKey, context, lessonsInput],
+		queryFn: ({ pageParam }) =>
+			client.training.teaching.lessons.list({
+				...lessonsInput,
+				cursor: pageParam ?? undefined,
+				pageSize: 20,
+			}),
+		initialPageParam: null as string | null,
+		getNextPageParam: (page) => page.nextCursor ?? undefined,
 		placeholderData: keepPreviousData,
 	});
+	const classItems =
+		classesQuery.data?.pages.flatMap((page) => page.items) ?? [];
+	const lessonItems =
+		lessonsQuery.data?.pages.flatMap((page) => page.items) ?? [];
 	const targetQuery =
 		initialTab === "courses" && initialCourseId
 			? coursesQuery
@@ -287,11 +311,13 @@ export function AcademicWorkspace({
 			{initialTab === "classes" ? (
 				<ClassesPanel
 					campuses={campusesQuery.data?.items ?? []}
-					classes={classesQuery.data?.items ?? []}
-					lessons={lessonsQuery.data?.items ?? []}
+					classes={classItems}
+					lessons={lessonItems}
 					isLessonsPending={lessonsQuery.isPending}
 					isPending={classesQuery.isPending && !classesQuery.data}
 					isError={classesQuery.isError}
+					hasNextPage={classesQuery.hasNextPage}
+					isFetchingNextPage={classesQuery.isFetchingNextPage}
 					campusId={campusId}
 					status={classStatus}
 					highlightedClassGroupId={initialClassGroupId}
@@ -304,6 +330,7 @@ export function AcademicWorkspace({
 						setClassStatusTarget({ classGroup, action })
 					}
 					onCreate={() => setEditor({ kind: "class", value: null })}
+					onLoadMore={() => void classesQuery.fetchNextPage()}
 					onRetry={() => void classesQuery.refetch()}
 				/>
 			) : null}
@@ -322,9 +349,11 @@ export function AcademicWorkspace({
 			{initialTab === "lessons" ? (
 				<LessonsPanel
 					campuses={campusesQuery.data?.items ?? []}
-					lessons={lessonsQuery.data?.items ?? []}
+					lessons={lessonItems}
 					isPending={lessonsQuery.isPending && !lessonsQuery.data}
 					isError={lessonsQuery.isError}
+					hasNextPage={lessonsQuery.hasNextPage}
+					isFetchingNextPage={lessonsQuery.isFetchingNextPage}
 					campusId={campusId}
 					highlightedLessonId={initialLessonId}
 					onCampusChange={setCampusId}
@@ -333,6 +362,7 @@ export function AcademicWorkspace({
 					onTakeAttendance={setAttendanceTarget}
 					onBulkReschedule={setBulkRescheduleTarget}
 					onArrangeMakeup={setMakeupSourceLesson}
+					onLoadMore={() => void lessonsQuery.fetchNextPage()}
 					onRetry={() => void lessonsQuery.refetch()}
 				/>
 			) : null}
@@ -394,7 +424,7 @@ export function AcademicWorkspace({
 			{editor?.kind === "lesson" ? (
 				<LessonEditor
 					defaultClass={editor.value}
-					classes={classesQuery.data?.items ?? []}
+					classes={classItems}
 					classrooms={classroomsQuery.data?.items ?? []}
 					onClose={() => setEditor(null)}
 					onSaved={refresh}
@@ -428,7 +458,7 @@ export function AcademicWorkspace({
 			{makeupSourceLesson ? (
 				<MakeupLessonDialog
 					sourceLesson={makeupSourceLesson}
-					lessons={lessonsQuery.data?.items ?? []}
+					lessons={lessonItems}
 					onClose={() => setMakeupSourceLesson(null)}
 					onSaved={refresh}
 				/>
@@ -498,6 +528,8 @@ function ClassesPanel({
 	isLessonsPending,
 	isPending,
 	isError,
+	hasNextPage,
+	isFetchingNextPage,
 	campusId,
 	status,
 	highlightedClassGroupId,
@@ -508,6 +540,7 @@ function ClassesPanel({
 	onManageMembers,
 	onChangeStatus,
 	onCreate,
+	onLoadMore,
 	onRetry,
 }: {
 	campuses: Array<{ id: string; name: string }>;
@@ -516,6 +549,8 @@ function ClassesPanel({
 	isLessonsPending: boolean;
 	isPending: boolean;
 	isError: boolean;
+	hasNextPage: boolean;
+	isFetchingNextPage: boolean;
 	campusId: string | undefined;
 	status: string;
 	highlightedClassGroupId?: string;
@@ -526,6 +561,7 @@ function ClassesPanel({
 	onManageMembers: (item: ClassGroup) => void;
 	onChangeStatus: (item: ClassGroup, action: "pause" | "resume") => void;
 	onCreate?: () => void;
+	onLoadMore: () => void;
 	onRetry: () => void;
 }) {
 	const [expandedClassId, setExpandedClassId] = useState<string | null>(null);
@@ -701,6 +737,19 @@ function ClassesPanel({
 							</article>
 						);
 					})}
+					{hasNextPage ? (
+						<Button
+							type="button"
+							variant="outline"
+							disabled={isFetchingNextPage}
+							onClick={onLoadMore}
+						>
+							{isFetchingNextPage ? (
+								<LoaderCircleIcon className="animate-spin" />
+							) : null}
+							加载更多班级
+						</Button>
+					) : null}
 				</div>
 			</PanelState>
 		</>
@@ -712,6 +761,8 @@ function LessonsPanel({
 	lessons,
 	isPending,
 	isError,
+	hasNextPage,
+	isFetchingNextPage,
 	campusId,
 	highlightedLessonId,
 	onCampusChange,
@@ -720,12 +771,15 @@ function LessonsPanel({
 	onTakeAttendance,
 	onBulkReschedule,
 	onArrangeMakeup,
+	onLoadMore,
 	onRetry,
 }: {
 	campuses: Array<{ id: string; name: string }>;
 	lessons: Lesson[];
 	isPending: boolean;
 	isError: boolean;
+	hasNextPage: boolean;
+	isFetchingNextPage: boolean;
 	campusId: string | undefined;
 	highlightedLessonId?: string;
 	onCampusChange: (value: string | undefined) => void;
@@ -734,6 +788,7 @@ function LessonsPanel({
 	onTakeAttendance: (item: Lesson) => void;
 	onBulkReschedule: (items: Lesson[]) => void;
 	onArrangeMakeup: (item: Lesson) => void;
+	onLoadMore: () => void;
 	onRetry: () => void;
 }) {
 	const scheduled = lessons.filter((item) => item.status === "scheduled");
@@ -866,6 +921,19 @@ function LessonsPanel({
 							</div>
 						</article>
 					))}
+					{hasNextPage ? (
+						<Button
+							type="button"
+							variant="outline"
+							disabled={isFetchingNextPage}
+							onClick={onLoadMore}
+						>
+							{isFetchingNextPage ? (
+								<LoaderCircleIcon className="animate-spin" />
+							) : null}
+							加载更多课次
+						</Button>
+					) : null}
 				</div>
 			</PanelState>
 		</>

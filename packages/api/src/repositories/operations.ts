@@ -57,6 +57,10 @@ function throwOperationsError(error: unknown): never {
 				throw new ORPCError("FORBIDDEN", {
 					message: "当前账号无权查看操作审计。",
 				});
+			case "INVALID_CURSOR":
+				throw new ORPCError("BAD_REQUEST", {
+					message: "分页位置无效，请重新加载审计列表。",
+				});
 		}
 	}
 	throw new ORPCError("INTERNAL_SERVER_ERROR", {
@@ -78,6 +82,7 @@ export async function listAuditEvents(
 				? new Date(input.createdAtFrom)
 				: undefined,
 			createdAtTo: input.createdAtTo ? new Date(input.createdAtTo) : undefined,
+			cursor: input.cursor,
 			pageSize: input.pageSize,
 		});
 		return {
@@ -85,6 +90,7 @@ export async function listAuditEvents(
 				...item,
 				createdAt: item.createdAt.toISOString(),
 			})),
+			nextCursor: result.nextCursor,
 		};
 	} catch (error) {
 		return throwOperationsError(error);

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import {
@@ -1082,6 +1083,38 @@ export type ClassGroupRecord = {
 	enrollmentCount: number;
 };
 
+type ClassGroupCursor = {
+	startDate: string;
+	name: string;
+	id: string;
+};
+
+function decodeClassGroupCursor(
+	cursor: string | undefined,
+): ClassGroupCursor | null {
+	if (!cursor) return null;
+	try {
+		const parsed = JSON.parse(
+			Buffer.from(cursor, "base64url").toString("utf8"),
+		);
+		if (
+			typeof parsed !== "object" ||
+			parsed === null ||
+			!("startDate" in parsed) ||
+			!("name" in parsed) ||
+			!("id" in parsed) ||
+			typeof parsed.startDate !== "string" ||
+			typeof parsed.name !== "string" ||
+			typeof parsed.id !== "string"
+		) {
+			throw new Error("Invalid class group cursor.");
+		}
+		return parsed;
+	} catch {
+		throw new TeachingRepositoryError("INVALID_INPUT");
+	}
+}
+
 export type ClassEnrollmentRecord = {
 	enrollmentId: string;
 	studentId: string;
@@ -1115,8 +1148,11 @@ export async function listClassGroupRecords(input: {
 	campusId?: string;
 	status?: (typeof classGroup.$inferSelect)["status"];
 	targetId?: string;
+	cursor?: string;
+	pageSize?: number;
 }): Promise<ClassGroupRecord[]> {
 	if (input.campusAccess.kind === "none") return [];
+	const cursor = decodeClassGroupCursor(input.cursor);
 	const filters = [
 		eq(classGroup.organizationId, input.organizationId),
 		campusAccessCondition(input.campusAccess),
@@ -1124,7 +1160,22 @@ export async function listClassGroupRecords(input: {
 	if (input.campusId) filters.push(eq(classGroup.campusId, input.campusId));
 	if (input.status) filters.push(eq(classGroup.status, input.status));
 	if (input.targetId) filters.push(eq(classGroup.id, input.targetId));
-	return db
+	if (cursor) {
+		const cursorFilter = or(
+			lt(classGroup.startDate, cursor.startDate),
+			and(
+				eq(classGroup.startDate, cursor.startDate),
+				gt(classGroup.name, cursor.name),
+			),
+			and(
+				eq(classGroup.startDate, cursor.startDate),
+				eq(classGroup.name, cursor.name),
+				gt(classGroup.id, cursor.id),
+			),
+		);
+		if (cursorFilter) filters.push(cursorFilter);
+	}
+	const query = db
 		.select(classSelection)
 		.from(classGroup)
 		.innerJoin(
@@ -1163,6 +1214,7 @@ export async function listClassGroupRecords(input: {
 			asc(classGroup.name),
 			asc(classGroup.id),
 		);
+	return input.pageSize ? query.limit(input.pageSize + 1) : query;
 }
 
 async function assertClassDependencies(
@@ -1955,6 +2007,34 @@ export type LessonRecord = {
 	completedByUserId: string | null;
 };
 
+type LessonCursor = {
+	startsAt: string;
+	id: string;
+};
+
+function decodeLessonCursor(cursor: string | undefined): LessonCursor | null {
+	if (!cursor) return null;
+	try {
+		const parsed = JSON.parse(
+			Buffer.from(cursor, "base64url").toString("utf8"),
+		);
+		if (
+			typeof parsed !== "object" ||
+			parsed === null ||
+			!("startsAt" in parsed) ||
+			!("id" in parsed) ||
+			typeof parsed.startsAt !== "string" ||
+			typeof parsed.id !== "string" ||
+			Number.isNaN(new Date(parsed.startsAt).getTime())
+		) {
+			throw new Error("Invalid lesson cursor.");
+		}
+		return parsed;
+	} catch {
+		throw new TeachingRepositoryError("INVALID_INPUT");
+	}
+}
+
 export async function listLessonRecords(input: {
 	organizationId: string;
 	campusAccess: CampusAccess;
@@ -1964,8 +2044,11 @@ export async function listLessonRecords(input: {
 	from?: Date;
 	to?: Date;
 	targetId?: string;
+	cursor?: string;
+	pageSize?: number;
 }): Promise<LessonRecord[]> {
 	if (input.campusAccess.kind === "none") return [];
+	const cursor = decodeLessonCursor(input.cursor);
 	const filters = [eq(lesson.organizationId, input.organizationId)];
 	if (input.campusAccess.kind === "selected")
 		filters.push(inArray(lesson.campusId, input.campusAccess.campusIds));
@@ -1976,8 +2059,16 @@ export async function listLessonRecords(input: {
 	if (input.from) filters.push(gte(lesson.startsAt, input.from));
 	if (input.to) filters.push(lte(lesson.startsAt, input.to));
 	if (input.targetId) filters.push(eq(lesson.id, input.targetId));
+	if (cursor) {
+		const startsAt = new Date(cursor.startsAt);
+		const cursorFilter = or(
+			gt(lesson.startsAt, startsAt),
+			and(eq(lesson.startsAt, startsAt), gt(lesson.id, cursor.id)),
+		);
+		if (cursorFilter) filters.push(cursorFilter);
+	}
 	const now = new Date();
-	const records = await db
+	const query = db
 		.select({
 			id: lesson.id,
 			classGroupId: lesson.classGroupId,
@@ -2037,6 +2128,9 @@ export async function listLessonRecords(input: {
 		)
 		.where(and(...filters))
 		.orderBy(asc(lesson.startsAt), asc(lesson.id));
+	const records = await (input.pageSize
+		? query.limit(input.pageSize + 1)
+		: query);
 	return records.map((record) => ({
 		...record,
 		pausedOverdue:

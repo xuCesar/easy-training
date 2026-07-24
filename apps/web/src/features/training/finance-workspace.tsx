@@ -46,7 +46,7 @@ import {
 	TableRow,
 } from "@easy-training/ui/components/table";
 import { Textarea } from "@easy-training/ui/components/textarea";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import {
 	CircleDollarSignIcon,
 	ClockAlertIcon,
@@ -61,7 +61,7 @@ import {
 import { type FormEvent, useDeferredValue, useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { orpc } from "@/utils/orpc";
+import { client, orpc } from "@/utils/orpc";
 import { FinanceAdjustments } from "./finance-adjustments";
 import {
 	formatCentsAsYuan,
@@ -142,13 +142,30 @@ export function FinanceWorkspace({
 		setSelectedInvoiceId(initialInvoiceId ?? null);
 	}, [initialInvoiceId]);
 	const deferredSearch = useDeferredValue(search.trim());
-	const listOptions = orpc.training.finance.invoices.list.queryOptions({
-		input: { query: deferredSearch || undefined, status },
+	const invoiceFilters = { query: deferredSearch || undefined, status };
+	const listQuery = useInfiniteQuery({
+		queryKey: [
+			...orpc.training.finance.invoices.list.key(),
+			{ organizationId, sessionUserId, invoiceFilters },
+		],
+		queryFn: ({ pageParam }) =>
+			client.training.finance.invoices.list({
+				...invoiceFilters,
+				cursor: pageParam ?? undefined,
+				pageSize: 20,
+			}),
+		initialPageParam: null as string | null,
+		getNextPageParam: (page) => page.nextCursor ?? undefined,
 	});
-	const listQuery = useQuery({
-		...listOptions,
-		queryKey: [...listOptions.queryKey, { organizationId, sessionUserId }],
-	});
+	const invoicePages = listQuery.data?.pages ?? [];
+	const invoiceItems = invoicePages.flatMap((page) => page.items);
+	const invoiceData: InvoiceListResult | undefined = listQuery.data
+		? {
+				items: invoiceItems,
+				total: invoicePages[0]?.total ?? 0,
+				nextCursor: invoicePages.at(-1)?.nextCursor ?? null,
+			}
+		: undefined;
 
 	return (
 		<div className="flex min-w-0 flex-col gap-5">
@@ -156,12 +173,12 @@ export function FinanceWorkspace({
 				<div className="min-w-0">
 					<p className="text-muted-foreground text-sm">财务管理</p>
 					<h1 className="mt-1 font-semibold text-2xl">应收账单</h1>
-					{listQuery.data ? (
+					{invoiceData ? (
 						<p
 							className="mt-1 text-muted-foreground text-xs"
 							aria-live="polite"
 						>
-							共 {listQuery.data.total} 笔
+							已加载 {invoiceData.items.length} / {invoiceData.total} 笔
 						</p>
 					) : null}
 				</div>
@@ -204,17 +221,34 @@ export function FinanceWorkspace({
 			<FinanceAdjustments organizationId={organizationId} />
 
 			<InvoiceResults
-				data={listQuery.data}
+				data={invoiceData}
 				isPending={listQuery.isPending}
 				isError={listQuery.isError}
 				errorMessage={listQuery.error?.message}
 				isFiltered={Boolean(deferredSearch || status !== "open")}
-				onRetry={() => listQuery.refetch()}
+				onRetry={() => void listQuery.refetch()}
 				onSelect={(invoiceId) => {
 					setSelectedInvoiceId(invoiceId);
 					onInvoiceIdChange?.(invoiceId);
 				}}
 			/>
+			{listQuery.hasNextPage ? (
+				<div className="flex justify-center">
+					<Button
+						variant="outline"
+						disabled={listQuery.isFetchingNextPage}
+						onClick={() => void listQuery.fetchNextPage()}
+					>
+						{listQuery.isFetchingNextPage ? (
+							<LoaderCircleIcon
+								className="animate-spin"
+								data-icon="inline-start"
+							/>
+						) : null}
+						{listQuery.isFetchingNextPage ? "正在加载更多" : "加载更多"}
+					</Button>
+				</div>
+			) : null}
 
 			{selectedInvoiceId ? (
 				<InvoiceDetailSheet

@@ -817,6 +817,31 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 			});
 			assert.equal(result.total, 4);
 		}
+		const pagedClient = createSessionClient(
+			ids.finance,
+			"finance",
+			ids.organizationA,
+		);
+		const firstInvoicePage = await pagedClient.training.finance.invoices.list({
+			status: "open",
+			pageSize: 2,
+		});
+		assert.equal(firstInvoicePage.items.length, 2);
+		assert.ok(firstInvoicePage.nextCursor);
+		const secondInvoicePage = await pagedClient.training.finance.invoices.list({
+			status: "open",
+			pageSize: 2,
+			cursor: firstInvoicePage.nextCursor ?? undefined,
+		});
+		assert.equal(secondInvoicePage.items.length, 2);
+		assert.equal(secondInvoicePage.nextCursor, null);
+		assert.equal(
+			new Set([
+				...firstInvoicePage.items.map((item) => item.id),
+				...secondInvoicePage.items.map((item) => item.id),
+			]).size,
+			4,
+		);
 
 		for (const [userId, name] of [
 			[ids.consultant, "consultant"],

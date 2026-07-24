@@ -203,14 +203,14 @@ export async function listArrears(
 	input: ArrearsListInput,
 ): Promise<ArrearsListResult> {
 	try {
-		const records = await listArrearsWorkflowRecords({
+		const result = await listArrearsWorkflowRecords({
 			organizationId: scope.organizationId,
 			campusAccess: scope.campusAccess,
 			today: getShanghaiDate(),
 			...input,
 		});
 		return {
-			items: records.map((record) => ({
+			items: result.items.map((record) => ({
 				...record,
 				latestEvent: record.latestEvent
 					? {
@@ -219,6 +219,7 @@ export async function listArrears(
 						}
 					: null,
 			})),
+			nextCursor: result.nextCursor,
 		};
 	} catch (error) {
 		return throwArrearsError(error);

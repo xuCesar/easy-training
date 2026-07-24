@@ -548,6 +548,7 @@ export const auditEventListInputSchema = z.object({
 	actorUserId: z.string().optional(),
 	createdAtFrom: z.iso.datetime({ offset: true }).optional(),
 	createdAtTo: z.iso.datetime({ offset: true }).optional(),
+	cursor: z.string().min(1).max(256).optional(),
 	pageSize: z.number().int().min(1).max(100).default(50),
 });
 export const auditEventListResultSchema = z.object({
@@ -563,6 +564,7 @@ export const auditEventListResultSchema = z.object({
 			createdAt: z.iso.datetime({ offset: true }),
 		}),
 	),
+	nextCursor: z.string().nullable(),
 });
 
 const notificationSchema = z.object({
@@ -930,6 +932,8 @@ export const invoiceListInputSchema = z.object({
 	status: z
 		.enum(["all", "open", "pending", "partial", "paid", "refunded"])
 		.default("open"),
+	cursor: z.string().min(1).max(256).optional(),
+	pageSize: z.number().int().min(1).max(50).default(20),
 });
 
 const invoiceSummarySchema = z.object({
@@ -1069,6 +1073,7 @@ const refundRecordSchema = z.object({
 export const invoiceListResultSchema = z.object({
 	items: z.array(invoiceSummarySchema),
 	total: z.number().int().nonnegative(),
+	nextCursor: z.string().nullable(),
 });
 
 export const invoiceDetailInputSchema = z.object({ id: z.uuid() });
@@ -1431,10 +1436,13 @@ const arrearsRecordSchema = z.object({
 export const arrearsListInputSchema = z.object({
 	status: arrearsStatusSchema.exclude(["resolved"]).optional(),
 	pausedWithoutResumeOnly: z.boolean().optional(),
+	cursor: z.string().min(1).max(256).optional(),
+	pageSize: z.number().int().min(1).max(50).default(20),
 });
 
 export const arrearsListResultSchema = z.object({
 	items: z.array(arrearsRecordSchema),
+	nextCursor: z.string().nullable(),
 });
 
 export const arrearsDetailInputSchema = z.object({
@@ -2296,9 +2304,12 @@ export const classGroupListInputSchema = z.object({
 	campusId: z.uuid().optional(),
 	status: classStatusSchema.optional(),
 	targetId: z.uuid().optional(),
+	cursor: z.string().min(1).max(256).optional(),
+	pageSize: z.number().int().min(1).max(50).default(20),
 });
 export const classGroupListResultSchema = z.object({
 	items: z.array(classGroupSchema),
+	nextCursor: z.string().nullable(),
 });
 export const createClassGroupInputSchema = classGroupDataSchema.omit({
 	status: true,
@@ -2420,9 +2431,12 @@ export const lessonListInputSchema = z.object({
 	from: z.iso.datetime({ offset: true }).optional(),
 	to: z.iso.datetime({ offset: true }).optional(),
 	targetId: z.uuid().optional(),
+	cursor: z.string().min(1).max(256).optional(),
+	pageSize: z.number().int().min(1).max(50).default(20),
 });
 export const lessonListResultSchema = z.object({
 	items: z.array(lessonSchema),
+	nextCursor: z.string().nullable(),
 });
 export const createLessonInputSchema = z.object({
 	classGroupId: z.uuid(),

@@ -10,6 +10,7 @@ import {
 	gt,
 	ilike,
 	inArray,
+	lt,
 	ne,
 	or,
 	sql,
@@ -90,6 +91,41 @@ export type InvoiceRecord = {
 	createdByName: string | null;
 	version: number;
 };
+
+type InvoiceCursor = {
+	dueDate: string;
+	issuedAt: string;
+	id: string;
+};
+
+function encodeInvoiceCursor(cursor: InvoiceCursor): string {
+	return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeInvoiceCursor(cursor: string | undefined): InvoiceCursor | null {
+	if (!cursor) return null;
+	try {
+		const parsed = JSON.parse(
+			Buffer.from(cursor, "base64url").toString("utf8"),
+		);
+		if (
+			typeof parsed !== "object" ||
+			parsed === null ||
+			!("dueDate" in parsed) ||
+			!("issuedAt" in parsed) ||
+			!("id" in parsed) ||
+			typeof parsed.dueDate !== "string" ||
+			typeof parsed.issuedAt !== "string" ||
+			typeof parsed.id !== "string" ||
+			Number.isNaN(new Date(parsed.issuedAt).getTime())
+		) {
+			throw new Error("Invalid invoice cursor.");
+		}
+		return parsed;
+	} catch {
+		throw new FinanceError("INVALID_CURSOR");
+	}
+}
 
 export type InvoiceAdjustmentRecord = {
 	id: string;
@@ -209,7 +245,14 @@ export async function listInvoiceRecords(input: {
 	campusAccess: CampusAccess;
 	query?: string;
 	status: "all" | "open" | "pending" | "partial" | "paid" | "refunded";
-}): Promise<{ items: InvoiceRecord[]; total: number }> {
+	cursor?: string;
+	pageSize: number;
+}): Promise<{
+	items: InvoiceRecord[];
+	total: number;
+	nextCursor: string | null;
+}> {
+	const cursor = decodeInvoiceCursor(input.cursor);
 	const filters = [
 		eq(invoice.organizationId, input.organizationId),
 		campusAccessCondition(input.campusAccess),
@@ -262,6 +305,19 @@ export async function listInvoiceRecords(input: {
 			filters.push(search);
 		}
 	}
+	if (cursor) {
+		const issuedAt = new Date(cursor.issuedAt);
+		const cursorFilter = or(
+			gt(invoice.dueDate, cursor.dueDate),
+			and(eq(invoice.dueDate, cursor.dueDate), lt(invoice.issuedAt, issuedAt)),
+			and(
+				eq(invoice.dueDate, cursor.dueDate),
+				eq(invoice.issuedAt, issuedAt),
+				gt(invoice.id, cursor.id),
+			),
+		);
+		if (cursorFilter) filters.push(cursorFilter);
+	}
 
 	const where = and(...filters);
 	const [items, totalRows] = await Promise.all([
@@ -290,7 +346,8 @@ export async function listInvoiceRecords(input: {
 				),
 			)
 			.where(where)
-			.orderBy(asc(invoice.dueDate), desc(invoice.issuedAt), asc(invoice.id)),
+			.orderBy(asc(invoice.dueDate), desc(invoice.issuedAt), asc(invoice.id))
+			.limit(input.pageSize + 1),
 		db
 			.select({ value: count() })
 			.from(invoice)
@@ -317,8 +374,21 @@ export async function listInvoiceRecords(input: {
 			)
 			.where(where),
 	]);
+	const page = items.slice(0, input.pageSize);
+	const last = page.at(-1);
 
-	return { items, total: totalRows[0]?.value ?? 0 };
+	return {
+		items: page,
+		total: totalRows[0]?.value ?? 0,
+		nextCursor:
+			items.length > input.pageSize && last
+				? encodeInvoiceCursor({
+						dueDate: last.dueDate,
+						issuedAt: last.issuedAt.toISOString(),
+						id: last.id,
+					})
+				: null,
+	};
 }
 
 export async function getInvoiceDetailRecord(input: {

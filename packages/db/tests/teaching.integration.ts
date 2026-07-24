@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { and, eq, inArray } from "drizzle-orm";
@@ -44,6 +45,8 @@ import {
 	createTeacherRecord,
 	getLessonAttendanceRecord,
 	listClassEnrollmentRecords,
+	listClassGroupRecords,
+	listLessonRecords,
 	listMakeupLessonRecords,
 	normalizeRoom,
 	pauseClassGroupRecord,
@@ -470,6 +473,134 @@ async function createResourceScheduleRuleRecord(
 
 const createScheduleRuleRecord = createResourceScheduleRuleRecord;
 const createLessonRecord = createResourceLessonRecord;
+
+function encodeTestCursor(value: Record<string, string>) {
+	return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+test("教务班级和课次列表使用稳定游标分页", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seed(ids);
+		const trainingCourse = await createCourseRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			code: "PAGE-01",
+			name: "分页测试课程",
+			category: "language",
+			level: "L1",
+			durationMinutes: 60,
+			listPriceInCents: 12_800,
+			lessonsPerPackage: 12,
+			tags: [],
+		});
+		const instructor = await createTeacherRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			name: "分页测试教师",
+			phone: null,
+			subjects: ["英语"],
+			weeklyCapacityHours: 20,
+			campusIds: [ids.campusA],
+		});
+		const classes = await Promise.all(
+			[
+				{ name: "分页 A 班", startDate: "2026-09-01" },
+				{ name: "分页 B 班", startDate: "2026-09-02" },
+				{ name: "分页 C 班", startDate: "2026-09-03" },
+			].map((item) =>
+				createClassGroupRecord({
+					organizationId: ids.organizationId,
+					userId: ids.adminId,
+					name: item.name,
+					campusId: ids.campusA,
+					courseId: trainingCourse.id,
+					teacherId: instructor.id,
+					capacity: 12,
+					startDate: item.startDate,
+				}),
+			),
+		);
+		const firstClassPage = await listClassGroupRecords({
+			organizationId: ids.organizationId,
+			campusAccess: { kind: "all" },
+			pageSize: 2,
+		});
+		assert.deepEqual(
+			firstClassPage.map((item) => item.id),
+			[classes[2]?.id, classes[1]?.id, classes[0]?.id],
+		);
+		const classCursorRecord = firstClassPage[1];
+		assert.ok(classCursorRecord);
+		const secondClassPage = await listClassGroupRecords({
+			organizationId: ids.organizationId,
+			campusAccess: { kind: "all" },
+			pageSize: 2,
+			cursor: encodeTestCursor({
+				startDate: classCursorRecord.startDate,
+				name: classCursorRecord.name,
+				id: classCursorRecord.id,
+			}),
+		});
+		assert.deepEqual(
+			secondClassPage.map((item) => item.id),
+			[classes[0]?.id],
+		);
+
+		const [lessonOne, lessonTwo, lessonThree] = await Promise.all([
+			createLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				classGroupId: classes[0]?.id ?? "",
+				room: "分页教室",
+				startsAt: new Date("2026-09-01T01:00:00.000Z"),
+				endsAt: new Date("2026-09-01T02:00:00.000Z"),
+			}),
+			createLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				classGroupId: classes[0]?.id ?? "",
+				room: "分页教室",
+				startsAt: new Date("2026-09-01T02:00:00.000Z"),
+				endsAt: new Date("2026-09-01T03:00:00.000Z"),
+			}),
+			createLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.adminId,
+				classGroupId: classes[0]?.id ?? "",
+				room: "分页教室",
+				startsAt: new Date("2026-09-01T03:00:00.000Z"),
+				endsAt: new Date("2026-09-01T04:00:00.000Z"),
+			}),
+		]);
+		const firstLessonPage = await listLessonRecords({
+			organizationId: ids.organizationId,
+			campusAccess: { kind: "all" },
+			pageSize: 2,
+		});
+		assert.deepEqual(
+			firstLessonPage.map((item) => item.id),
+			[lessonOne.id, lessonTwo.id, lessonThree.id],
+		);
+		const lessonCursorRecord = firstLessonPage[1];
+		assert.ok(lessonCursorRecord);
+		const secondLessonPage = await listLessonRecords({
+			organizationId: ids.organizationId,
+			campusAccess: { kind: "all" },
+			pageSize: 2,
+			cursor: encodeTestCursor({
+				startsAt: lessonCursorRecord.startsAt.toISOString(),
+				id: lessonCursorRecord.id,
+			}),
+		});
+		assert.deepEqual(
+			secondLessonPage.map((item) => item.id),
+			[lessonThree.id],
+		);
+	} finally {
+		await cleanup(ids);
+	}
+});
 
 test("校区负责人只能在授权校区开班，课次冲突和取消状态保持一致", async () => {
 	const ids = createFixtureIds();

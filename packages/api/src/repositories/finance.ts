@@ -238,7 +238,7 @@ function throwFinanceError(error: unknown): never {
 			});
 		case "INVALID_CURSOR":
 			throw new ORPCError("BAD_REQUEST", {
-				message: "分页位置无效，请重新加载学员列表。",
+				message: "分页位置无效，请重新加载账单列表。",
 			});
 	}
 
@@ -257,11 +257,14 @@ export async function listInvoices(
 			campusAccess: scope.campusAccess ?? { kind: "all" },
 			query: input.query,
 			status: input.status,
+			cursor: input.cursor,
+			pageSize: input.pageSize,
 		});
 		const today = getShanghaiDate();
 		return {
 			total: result.total,
 			items: result.items.map((item) => toInvoiceSummary(item, today)),
+			nextCursor: result.nextCursor,
 		};
 	} catch (error) {
 		return throwFinanceError(error);

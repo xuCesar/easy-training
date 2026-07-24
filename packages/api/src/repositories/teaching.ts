@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import {
 	assignEnrollmentClassLegacyRecord,
 	bulkUpdateLessonsRecord,
@@ -95,6 +97,30 @@ function appendTarget<T extends { id: string }>(
 ) {
 	if (!target || items.some((item) => item.id === target.id)) return items;
 	return [...items, target];
+}
+
+type ClassGroupRecord = Awaited<
+	ReturnType<typeof listClassGroupRecords>
+>[number];
+type LessonRecord = Awaited<ReturnType<typeof listLessonRecords>>[number];
+
+function encodeCursor(value: Record<string, string>): string {
+	return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function encodeClassGroupCursor(record: ClassGroupRecord): string {
+	return encodeCursor({
+		startDate: record.startDate,
+		name: record.name,
+		id: record.id,
+	});
+}
+
+function encodeLessonCursor(record: LessonRecord): string {
+	return encodeCursor({
+		startsAt: record.startsAt.toISOString(),
+		id: record.id,
+	});
 }
 
 function throwTargetNotFound(): never {
@@ -702,8 +728,17 @@ export async function listClassGroups(
 			: Promise.resolve([]),
 	]);
 	if (targetId && !targetRecords[0]) throwTargetNotFound();
+	const page = records.slice(0, input.pageSize);
+	const last = page.at(-1);
 	return {
-		items: appendTarget(records, targetRecords[0]).map(toClassGroup),
+		items: appendTarget(
+			page,
+			filters.cursor ? undefined : targetRecords[0],
+		).map(toClassGroup),
+		nextCursor:
+			records.length > input.pageSize && last
+				? encodeClassGroupCursor(last)
+				: null,
 	};
 }
 export async function createClassGroup(
@@ -816,14 +851,23 @@ export async function listLessons(
 			classGroupId: filters.classGroupId,
 			from: filters.from ? new Date(filters.from) : undefined,
 			to: filters.to ? new Date(filters.to) : undefined,
+			cursor: filters.cursor,
+			pageSize: filters.pageSize,
 		}),
 		targetId
 			? listLessonRecords({ ...baseInput, targetId })
 			: Promise.resolve([]),
 	]);
 	if (targetId && !targetRecords[0]) throwTargetNotFound();
+	const page = records.slice(0, input.pageSize);
+	const last = page.at(-1);
 	return {
-		items: appendTarget(records, targetRecords[0]).map(toLesson),
+		items: appendTarget(
+			page,
+			filters.cursor ? undefined : targetRecords[0],
+		).map(toLesson),
+		nextCursor:
+			records.length > input.pageSize && last ? encodeLessonCursor(last) : null,
 	};
 }
 export async function createLesson(

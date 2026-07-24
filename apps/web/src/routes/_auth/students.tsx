@@ -534,11 +534,7 @@ function StudentsRoute() {
 					onOpenChange={setTagsOpen}
 				/>
 			) : null}
-			<StudentImportDialog
-				open={importOpen}
-				organizationId={organization.id}
-				onOpenChange={setImportOpen}
-			/>
+			<StudentImportDialog open={importOpen} onOpenChange={setImportOpen} />
 			{bulkAction &&
 			bulkAction !== "assignClass" &&
 			bulkAction !== "withdrawClass" ? (
@@ -547,7 +543,6 @@ function StudentsRoute() {
 					students={selectedStudents}
 					ownerItems={ownerFilterItems}
 					tags={tagsQuery.data?.items.filter((tag) => tag.isActive) ?? []}
-					organizationId={organization.id}
 					onClose={() => setBulkAction(null)}
 					onSuccess={() => {
 						setBulkAction(null);
@@ -559,7 +554,6 @@ function StudentsRoute() {
 				<EnrollmentBulkOperationDialog
 					action={bulkAction}
 					students={selectedStudents}
-					organizationId={organization.id}
 					onClose={() => setBulkAction(null)}
 					onSuccess={() => {
 						setBulkAction(null);
@@ -587,7 +581,6 @@ function StudentBulkOperationDialog({
 	students,
 	ownerItems,
 	tags,
-	organizationId,
 	onClose,
 	onSuccess,
 }: {
@@ -595,7 +588,6 @@ function StudentBulkOperationDialog({
 	students: StudentSummary[];
 	ownerItems: Array<{ value: string; label: string }>;
 	tags: StudentTag[];
-	organizationId: string;
 	onClose: () => void;
 	onSuccess: () => void;
 }) {
@@ -767,13 +759,11 @@ function StudentBulkOperationDialog({
 function EnrollmentBulkOperationDialog({
 	action,
 	students,
-	organizationId,
 	onClose,
 	onSuccess,
 }: {
 	action: "assignClass" | "withdrawClass";
 	students: StudentSummary[];
-	organizationId: string;
 	onClose: () => void;
 	onSuccess: () => void;
 }) {
@@ -1010,11 +1000,9 @@ function EnrollmentBulkOperationDialog({
 
 function StudentImportDialog({
 	open,
-	organizationId,
 	onOpenChange,
 }: {
 	open: boolean;
-	organizationId: string;
 	onOpenChange: (open: boolean) => void;
 }) {
 	const [content, setContent] = useState<string | null>(null);

@@ -948,8 +948,7 @@ export async function getFinancialAgingInvoicePage(input: {
 					break;
 				}
 			}
-			if (chain.at(-1)?.afterVersion !== versions.get(invoiceId))
-				valid = false;
+			if (chain.at(-1)?.afterVersion !== versions.get(invoiceId)) valid = false;
 			if (!valid) {
 				invalid.add(invoiceId);
 				continue;

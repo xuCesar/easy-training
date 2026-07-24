@@ -21,12 +21,12 @@ import {
 	TableHeader,
 	TableRow,
 } from "@easy-training/ui/components/table";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { useOrganization } from "@/features/training/organization-context";
-import { orpc } from "@/utils/orpc";
+import { client } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth/audit")({ component: AuditRoute });
 
@@ -138,12 +138,18 @@ function AuditRoute() {
 	const { organization } = useOrganization();
 	const [action, setAction] =
 		useState<(typeof actions)[number]["value"]>("all");
-	const query = useQuery({
-		...orpc.training.audit.list.queryOptions({
-			input: { action: action === "all" ? undefined : action, pageSize: 50 },
-		}),
+	const query = useInfiniteQuery({
 		queryKey: ["training-audit", organization.id, action],
+		queryFn: ({ pageParam }) =>
+			client.training.audit.list({
+				action: action === "all" ? undefined : action,
+				cursor: pageParam ?? undefined,
+				pageSize: 50,
+			}),
+		initialPageParam: null as string | null,
+		getNextPageParam: (page) => page.nextCursor ?? undefined,
 	});
+	const auditItems = query.data?.pages.flatMap((page) => page.items) ?? [];
 	return (
 		<div className="space-y-5">
 			<section className="flex flex-wrap items-end justify-between gap-3">
@@ -181,10 +187,10 @@ function AuditRoute() {
 						<EmptyTitle>审计记录加载失败</EmptyTitle>
 						<EmptyDescription>暂时无法读取操作记录。</EmptyDescription>
 					</EmptyHeader>
-					<Button onClick={() => query.refetch()}>重试</Button>
+					<Button onClick={() => void query.refetch()}>重试</Button>
 				</Empty>
 			) : null}
-			{query.data?.items.length === 0 ? (
+			{query.data && auditItems.length === 0 ? (
 				<Empty className="min-h-56 border">
 					<EmptyHeader>
 						<EmptyTitle>暂无操作记录</EmptyTitle>
@@ -194,7 +200,7 @@ function AuditRoute() {
 					</EmptyHeader>
 				</Empty>
 			) : null}
-			{query.data?.items.length ? (
+			{auditItems.length ? (
 				<section className="border">
 					<Table>
 						<TableHeader>
@@ -206,7 +212,7 @@ function AuditRoute() {
 							</TableRow>
 						</TableHeader>
 						<TableBody>
-							{query.data.items.map((item) => (
+							{auditItems.map((item) => (
 								<TableRow key={item.id}>
 									<TableCell>
 										{actions.find((entry) => entry.value === item.action)
@@ -229,6 +235,17 @@ function AuditRoute() {
 							))}
 						</TableBody>
 					</Table>
+					{query.hasNextPage ? (
+						<div className="flex justify-center border-t p-3">
+							<Button
+								variant="outline"
+								disabled={query.isFetchingNextPage}
+								onClick={() => void query.fetchNextPage()}
+							>
+								{query.isFetchingNextPage ? "正在加载更多" : "加载更多"}
+							</Button>
+						</div>
+					) : null}
 				</section>
 			) : null}
 		</div>

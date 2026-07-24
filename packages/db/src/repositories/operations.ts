@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import {
@@ -8,7 +9,9 @@ import {
 	gte,
 	inArray,
 	isNull,
+	lt,
 	lte,
+	or,
 	sql,
 } from "drizzle-orm";
 
@@ -49,6 +52,7 @@ export class OperationsRepositoryError extends Error {
 			| "IMPORT_LIMIT_EXCEEDED"
 			| "IMPORT_DEFAULT_CAMPUS_INVALID"
 			| "IMPORT_IDEMPOTENCY_CONFLICT"
+			| "INVALID_CURSOR"
 			| "MEMBER_FORBIDDEN",
 	) {
 		super(code);
@@ -57,6 +61,38 @@ export class OperationsRepositoryError extends Error {
 }
 
 export type ImportRowError = { row: number; message: string };
+
+type AuditCursor = {
+	createdAt: string;
+	id: string;
+};
+
+function encodeAuditCursor(cursor: AuditCursor): string {
+	return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeAuditCursor(cursor: string | undefined): AuditCursor | null {
+	if (!cursor) return null;
+	try {
+		const parsed = JSON.parse(
+			Buffer.from(cursor, "base64url").toString("utf8"),
+		);
+		if (
+			typeof parsed !== "object" ||
+			parsed === null ||
+			!("createdAt" in parsed) ||
+			!("id" in parsed) ||
+			typeof parsed.createdAt !== "string" ||
+			typeof parsed.id !== "string" ||
+			Number.isNaN(new Date(parsed.createdAt).getTime())
+		) {
+			throw new Error("Invalid audit cursor.");
+		}
+		return parsed;
+	} catch {
+		throw new OperationsRepositoryError("INVALID_CURSOR");
+	}
+}
 
 function auditCampusScope(campusAccess: CampusAccess) {
 	if (campusAccess.kind === "all") return sql`true`;
@@ -73,8 +109,10 @@ export async function listOrganizationAuditEvents(input: {
 	actorUserId?: string;
 	createdAtFrom?: Date;
 	createdAtTo?: Date;
+	cursor?: string;
 	pageSize: number;
 }) {
+	const cursor = decodeAuditCursor(input.cursor);
 	const filters = [
 		eq(organizationAuditEvent.organizationId, input.organizationId),
 		auditCampusScope(input.campusAccess),
@@ -87,6 +125,17 @@ export async function listOrganizationAuditEvents(input: {
 		filters.push(gte(organizationAuditEvent.createdAt, input.createdAtFrom));
 	if (input.createdAtTo)
 		filters.push(lte(organizationAuditEvent.createdAt, input.createdAtTo));
+	if (cursor) {
+		const createdAt = new Date(cursor.createdAt);
+		const cursorFilter = or(
+			lt(organizationAuditEvent.createdAt, createdAt),
+			and(
+				eq(organizationAuditEvent.createdAt, createdAt),
+				lt(organizationAuditEvent.id, cursor.id),
+			),
+		);
+		if (cursorFilter) filters.push(cursorFilter);
+	}
 
 	const rows = await db
 		.select({
@@ -106,9 +155,20 @@ export async function listOrganizationAuditEvents(input: {
 			desc(organizationAuditEvent.createdAt),
 			desc(organizationAuditEvent.id),
 		)
-		.limit(input.pageSize);
+		.limit(input.pageSize + 1);
+	const page = rows.slice(0, input.pageSize);
+	const last = page.at(-1);
 
-	return { items: rows };
+	return {
+		items: page,
+		nextCursor:
+			rows.length > input.pageSize && last
+				? encodeAuditCursor({
+						createdAt: last.createdAt.toISOString(),
+						id: last.id,
+					})
+				: null,
+	};
 }
 
 export async function listNotifications(input: {

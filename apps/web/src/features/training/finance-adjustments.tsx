@@ -29,7 +29,7 @@ import {
 	SelectValue,
 } from "@easy-training/ui/components/select";
 import { Textarea } from "@easy-training/ui/components/textarea";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import {
 	ArrowLeftRightIcon,
 	ClockAlertIcon,
@@ -40,7 +40,7 @@ import {
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 
-import { orpc, queryClient } from "@/utils/orpc";
+import { client, orpc, queryClient } from "@/utils/orpc";
 
 import { formatCentsToCurrency, formatDate, formatDateTime } from "./format";
 
@@ -68,17 +68,26 @@ export function FinanceAdjustments({
 		...(arrearsStatusFilter ? { status: arrearsStatusFilter } : {}),
 		...(pausedWithoutResumeOnly ? { pausedWithoutResumeOnly: true } : {}),
 	};
-	const arrearsOptions = orpc.training.finance.arrears.list.queryOptions({
-		input: arrearsInput,
-	});
 	const adjustmentsQuery = useQuery({
 		...adjustmentsOptions,
 		queryKey: [...adjustmentsOptions.queryKey, { organizationId }],
 	});
-	const arrearsQuery = useQuery({
-		...arrearsOptions,
-		queryKey: [...arrearsOptions.queryKey, { organizationId }],
+	const arrearsQuery = useInfiniteQuery({
+		queryKey: [
+			...orpc.training.finance.arrears.list.key(),
+			{ organizationId, arrearsInput },
+		],
+		queryFn: ({ pageParam }) =>
+			client.training.finance.arrears.list({
+				...arrearsInput,
+				cursor: pageParam ?? undefined,
+				pageSize: 20,
+			}),
+		initialPageParam: null as string | null,
+		getNextPageParam: (page) => page.nextCursor ?? undefined,
 	});
+	const arrearsItems =
+		arrearsQuery.data?.pages.flatMap((page) => page.items) ?? [];
 
 	return (
 		<>
@@ -211,11 +220,11 @@ export function FinanceAdjustments({
 					) : arrearsQuery.isError ? (
 						<PanelError
 							message={arrearsQuery.error.message}
-							onRetry={() => arrearsQuery.refetch()}
+							onRetry={() => void arrearsQuery.refetch()}
 						/>
 					) : (
 						<div className="divide-y">
-							{arrearsQuery.data.items.map((item) => (
+							{arrearsItems.map((item) => (
 								<div key={item.invoiceId} className="min-w-0 p-3">
 									<div className="flex items-start justify-between gap-3">
 										<div className="min-w-0">
@@ -270,8 +279,27 @@ export function FinanceAdjustments({
 									</div>
 								</div>
 							))}
-							{arrearsQuery.data.items.length === 0 ? (
+							{arrearsItems.length === 0 ? (
 								<EmptyRow text="暂无待跟进欠费" />
+							) : null}
+							{arrearsQuery.hasNextPage ? (
+								<div className="flex justify-center p-3">
+									<Button
+										variant="outline"
+										disabled={arrearsQuery.isFetchingNextPage}
+										onClick={() => void arrearsQuery.fetchNextPage()}
+									>
+										{arrearsQuery.isFetchingNextPage ? (
+											<LoaderCircleIcon
+												className="animate-spin"
+												data-icon="inline-start"
+											/>
+										) : null}
+										{arrearsQuery.isFetchingNextPage
+											? "正在加载更多"
+											: "加载更多"}
+									</Button>
+								</div>
 							) : null}
 						</div>
 					)}
