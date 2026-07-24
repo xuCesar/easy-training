@@ -470,7 +470,6 @@ function StudentsRoute() {
 				onRetry={() => void listQuery.refetch()}
 				onEdit={setEditor}
 				onTimeline={setTimelineTarget}
-				onMerge={canManageTags ? setMergeTarget : undefined}
 				selectedIds={new Set(selectedStudents.map((student) => student.id))}
 				onToggleSelected={canBulkManage ? toggleStudentSelection : undefined}
 			/>
@@ -511,6 +510,9 @@ function StudentsRoute() {
 					student={timelineTarget}
 					organizationId={organization.id}
 					sessionUserId={sessionUserId}
+					onMerge={
+						canManageTags ? () => setMergeTarget(timelineTarget) : undefined
+					}
 					onClose={() => {
 						setTimelineTarget(null);
 						if (studentId) void navigate({ search: {}, replace: true });
@@ -1216,7 +1218,6 @@ function StudentResults({
 	onRetry,
 	onEdit,
 	onTimeline,
-	onMerge,
 	selectedIds,
 	onToggleSelected,
 }: {
@@ -1227,7 +1228,6 @@ function StudentResults({
 	onRetry: () => void;
 	onEdit: (student: StudentSummary) => void;
 	onTimeline: (student: StudentSummary) => void;
-	onMerge?: (student: StudentSummary) => void;
 	selectedIds: ReadonlySet<string>;
 	onToggleSelected?: (student: StudentSummary, checked: boolean) => void;
 }) {
@@ -1297,7 +1297,6 @@ function StudentResults({
 								student={student}
 								onEdit={onEdit}
 								onTimeline={onTimeline}
-								onMerge={onMerge}
 								selected={selectedIds.has(student.id)}
 								onToggleSelected={onToggleSelected}
 							/>
@@ -1312,7 +1311,6 @@ function StudentResults({
 						student={student}
 						onEdit={onEdit}
 						onTimeline={onTimeline}
-						onMerge={onMerge}
 						selected={selectedIds.has(student.id)}
 						onToggleSelected={onToggleSelected}
 					/>
@@ -1326,14 +1324,12 @@ function StudentTableRow({
 	student,
 	onEdit,
 	onTimeline,
-	onMerge,
 	selected,
 	onToggleSelected,
 }: {
 	student: StudentSummary;
 	onEdit: (student: StudentSummary) => void;
 	onTimeline: (student: StudentSummary) => void;
-	onMerge?: (student: StudentSummary) => void;
 	selected: boolean;
 	onToggleSelected?: (student: StudentSummary, checked: boolean) => void;
 }) {
@@ -1384,11 +1380,6 @@ function StudentTableRow({
 					<PencilIcon data-icon="inline-start" />
 					编辑
 				</Button>
-				{onMerge ? (
-					<Button size="sm" variant="ghost" onClick={() => onMerge(student)}>
-						合并
-					</Button>
-				) : null}
 			</TableCell>
 		</TableRow>
 	);
@@ -1398,14 +1389,12 @@ function StudentCompactRow({
 	student,
 	onEdit,
 	onTimeline,
-	onMerge,
 	selected,
 	onToggleSelected,
 }: {
 	student: StudentSummary;
 	onEdit: (student: StudentSummary) => void;
 	onTimeline: (student: StudentSummary) => void;
-	onMerge?: (student: StudentSummary) => void;
 	selected: boolean;
 	onToggleSelected?: (student: StudentSummary, checked: boolean) => void;
 }) {
@@ -1466,16 +1455,6 @@ function StudentCompactRow({
 				<PencilIcon data-icon="inline-start" />
 				编辑档案
 			</Button>
-			{onMerge ? (
-				<Button
-					className="self-start"
-					size="sm"
-					variant="ghost"
-					onClick={() => onMerge(student)}
-				>
-					合并重复档案
-				</Button>
-			) : null}
 		</article>
 	);
 }

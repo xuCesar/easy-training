@@ -149,11 +149,13 @@ export function StudentTimelineSheet({
 	student,
 	organizationId,
 	sessionUserId,
+	onMerge,
 	onClose,
 }: {
 	student: StudentSummary;
 	organizationId: string;
 	sessionUserId?: string;
+	onMerge?: () => void;
 	onClose: () => void;
 }) {
 	const timelineQuery = useInfiniteQuery({
@@ -266,6 +268,17 @@ export function StudentTimelineSheet({
 							) : null}
 						</div>
 					)}
+					{onMerge ? (
+						<section className="mt-6 border-t pt-4">
+							<p className="font-medium text-sm">档案维护</p>
+							<p className="mt-1 text-muted-foreground text-xs">
+								仅在确认存在重复档案时使用，合并前会展示影响范围。
+							</p>
+							<Button className="mt-3" variant="outline" onClick={onMerge}>
+								合并重复档案
+							</Button>
+						</section>
+					) : null}
 				</div>
 			</SheetContent>
 		</Sheet>
