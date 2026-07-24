@@ -30,7 +30,6 @@ import { Input } from "@easy-training/ui/components/input";
 import {
 	Select,
 	SelectContent,
-	SelectGroup,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
@@ -53,6 +52,17 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { client, orpc, queryClient } from "@/utils/orpc";
+import {
+	EnrollmentCampusField,
+	EnrollmentClassField,
+	EnrollmentCourseField,
+	EnrollmentTextField,
+} from "./enrollment-form-fields";
+import {
+	formatCentsAsYuan,
+	getShanghaiToday,
+	parseNonNegativeYuanToCents,
+} from "./finance-form-utils";
 import { useOrganization } from "./organization-context";
 
 type StudentMode = "existing" | "new";
@@ -266,7 +276,7 @@ function IndependentEnrollmentForm({
 	function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		if (pending) return;
-		const amountInCents = parseYuanToCents(amountInYuan);
+		const amountInCents = parseNonNegativeYuanToCents(amountInYuan);
 		const lessons = parsePositiveInteger(purchasedLessons);
 		const nextErrors: EnrollmentErrors = {};
 		if (mode === "existing" && !selectedStudent) {
@@ -284,7 +294,7 @@ function IndependentEnrollmentForm({
 		if (lessons === null)
 			nextErrors.purchasedLessons = "请输入 1 至 1000 的整数课时";
 		if (amountInCents === null)
-			nextErrors.amountInCents = "请输入最多两位小数的有效金额";
+			nextErrors.amountInCents = "请输入 0 至 1,000,000 元的有效金额";
 		if (!invoiceDueDate) nextErrors.invoiceDueDate = "请选择付款到期日";
 		if (
 			Object.keys(nextErrors).length > 0 ||
@@ -582,13 +592,15 @@ function IndependentEnrollmentForm({
 			</Field>
 
 			<div className="grid min-w-0 gap-4 sm:grid-cols-2">
-				<CourseField
+				<EnrollmentCourseField
+					id="independent-enrollment-course"
 					courses={options.courses}
 					courseId={courseId}
 					error={errors.courseId}
 					onChange={chooseCourse}
+					emptyMessage="暂无启用课程，暂时不能办理报名。"
 				/>
-				<TextField
+				<EnrollmentTextField
 					id="independent-enrollment-lessons"
 					label="购买课时"
 					value={purchasedLessons}
@@ -603,7 +615,7 @@ function IndependentEnrollmentForm({
 					readOnly={!options.permissions.canOverridePackageTerms}
 					required
 				/>
-				<TextField
+				<EnrollmentTextField
 					id="independent-enrollment-amount"
 					label="成交金额（元）"
 					value={amountInYuan}
@@ -617,7 +629,7 @@ function IndependentEnrollmentForm({
 					placeholder="0.00"
 					required
 				/>
-				<TextField
+				<EnrollmentTextField
 					id="independent-enrollment-due-date"
 					label="付款到期日"
 					value={invoiceDueDate}
@@ -629,7 +641,8 @@ function IndependentEnrollmentForm({
 					type="date"
 					required
 				/>
-				<ClassField
+				<EnrollmentClassField
+					id="independent-enrollment-class"
 					courseId={courseId}
 					campusId={selectedCampusId}
 					classes={availableClasses}
@@ -800,7 +813,7 @@ function NewStudentFields({
 }) {
 	return (
 		<div className="grid min-w-0 gap-4 border p-3 sm:grid-cols-2">
-			<TextField
+			<EnrollmentTextField
 				id="independent-enrollment-student-name"
 				label="学员姓名"
 				value={studentName}
@@ -809,41 +822,16 @@ function NewStudentFields({
 				maxLength={50}
 				required
 			/>
-			<Field invalid={Boolean(errors.campusId)}>
-				<FieldLabel htmlFor="independent-enrollment-campus">
-					所属校区
-				</FieldLabel>
-				{campuses.length === 0 ? (
-					<p className="border p-2 text-muted-foreground text-xs">
-						暂无可用校区，不能新建学员。
-					</p>
-				) : (
-					<Select
-						value={campusId}
-						onValueChange={(value) => value && onCampusChange(value)}
-					>
-						<SelectTrigger
-							id="independent-enrollment-campus"
-							className="w-full"
-						>
-							<SelectValue placeholder="请选择校区" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectGroup>
-								{campuses.map((campus) => (
-									<SelectItem key={campus.id} value={campus.id}>
-										{campus.name}
-									</SelectItem>
-								))}
-							</SelectGroup>
-						</SelectContent>
-					</Select>
-				)}
-				<FieldError match={Boolean(errors.campusId)}>
-					{errors.campusId}
-				</FieldError>
-			</Field>
-			<TextField
+			<EnrollmentCampusField
+				id="independent-enrollment-campus"
+				label="所属校区"
+				campuses={campuses}
+				campusId={campusId}
+				error={errors.campusId}
+				emptyMessage="暂无可用校区，不能新建学员。"
+				onChange={onCampusChange}
+			/>
+			<EnrollmentTextField
 				id="independent-enrollment-contact-name"
 				label="主要联系人姓名"
 				value={contactName}
@@ -872,7 +860,7 @@ function NewStudentFields({
 					</ul>
 				</div>
 			) : null}
-			<TextField
+			<EnrollmentTextField
 				id="independent-enrollment-contact-phone"
 				label="主要联系人手机号"
 				value={contactPhone}
@@ -882,7 +870,7 @@ function NewStudentFields({
 				maxLength={50}
 				required
 			/>
-			<TextField
+			<EnrollmentTextField
 				id="independent-enrollment-contact-relationship"
 				label="关系（可选）"
 				value={contactRelationship}
@@ -891,168 +879,6 @@ function NewStudentFields({
 				maxLength={30}
 			/>
 		</div>
-	);
-}
-
-function CourseField({
-	courses,
-	courseId,
-	error,
-	onChange,
-}: {
-	courses: IndependentEnrollmentOptions["courses"];
-	courseId: string;
-	error?: string;
-	onChange: (value: string) => void;
-}) {
-	return (
-		<Field invalid={Boolean(error)}>
-			<FieldLabel htmlFor="independent-enrollment-course">课程</FieldLabel>
-			{courses.length === 0 ? (
-				<p className="border p-2 text-muted-foreground text-xs">
-					暂无启用课程，暂时不能办理报名。
-				</p>
-			) : (
-				<Select
-					value={courseId}
-					onValueChange={(value) => value && onChange(value)}
-				>
-					<SelectTrigger id="independent-enrollment-course" className="w-full">
-						<SelectValue placeholder="请选择课程" />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectGroup>
-							{courses.map((course) => (
-								<SelectItem key={course.id} value={course.id}>
-									{course.name} · {formatCentsAsYuan(course.listPriceInCents)}{" "}
-									元 / {course.lessonsPerPackage} 课时
-								</SelectItem>
-							))}
-						</SelectGroup>
-					</SelectContent>
-				</Select>
-			)}
-			<FieldError match={Boolean(error)}>{error}</FieldError>
-		</Field>
-	);
-}
-
-function ClassField({
-	courseId,
-	campusId,
-	classes,
-	classGroupId,
-	error,
-	onChange,
-}: {
-	courseId: string;
-	campusId?: string;
-	classes: IndependentEnrollmentOptions["classes"];
-	classGroupId: string | null;
-	error?: string;
-	onChange: (value: string | null) => void;
-}) {
-	return (
-		<Field invalid={Boolean(error)}>
-			<FieldLabel htmlFor="independent-enrollment-class">
-				班级（可选）
-			</FieldLabel>
-			{!courseId || !campusId ? (
-				<p className="border p-2 text-muted-foreground text-xs">
-					请先选择学员、校区和课程。
-				</p>
-			) : classes.length === 0 ? (
-				<p className="border p-2 text-muted-foreground text-xs">
-					该课程在所选校区暂无可选班级，可暂不分班。
-				</p>
-			) : (
-				<Select
-					value={classGroupId ?? "unassigned"}
-					onValueChange={(value) =>
-						onChange(value === "unassigned" ? null : (value ?? null))
-					}
-				>
-					<SelectTrigger id="independent-enrollment-class" className="w-full">
-						<SelectValue>
-							{() => {
-								const selected = classes.find(
-									(item) => item.id === classGroupId,
-								);
-								return selected
-									? `${selected.name} · 余 ${selected.seatsRemaining}`
-									: "暂不分班";
-							}}
-						</SelectValue>
-					</SelectTrigger>
-					<SelectContent>
-						<SelectGroup>
-							<SelectItem value="unassigned">暂不分班</SelectItem>
-							{classes.map((classGroup) => (
-								<SelectItem key={classGroup.id} value={classGroup.id}>
-									{classGroup.name} · 余 {classGroup.seatsRemaining} ·{" "}
-									{classGroup.scheduleText || "排课待定"}
-								</SelectItem>
-							))}
-						</SelectGroup>
-					</SelectContent>
-				</Select>
-			)}
-			<FieldError match={Boolean(error)}>{error}</FieldError>
-		</Field>
-	);
-}
-
-function TextField({
-	id,
-	label,
-	value,
-	onChange,
-	error,
-	type = "text",
-	readOnly,
-	required,
-	maxLength,
-	min,
-	max,
-	inputMode,
-	placeholder,
-}: {
-	id: string;
-	label: string;
-	value: string;
-	onChange: (value: string) => void;
-	error?: string;
-	type?: "text" | "tel" | "number" | "date";
-	readOnly?: boolean;
-	required?: boolean;
-	maxLength?: number;
-	min?: number;
-	max?: number;
-	inputMode?: "decimal";
-	placeholder?: string;
-}) {
-	return (
-		<Field invalid={Boolean(error)}>
-			<FieldLabel htmlFor={id}>{label}</FieldLabel>
-			<Input
-				id={id}
-				type={type}
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-				aria-invalid={Boolean(error)}
-				aria-describedby={error ? `${id}-error` : undefined}
-				readOnly={readOnly}
-				required={required}
-				maxLength={maxLength}
-				min={min}
-				max={max}
-				inputMode={inputMode}
-				placeholder={placeholder}
-			/>
-			<FieldError id={`${id}-error`} match={Boolean(error)}>
-				{error}
-			</FieldError>
-		</Field>
 	);
 }
 
@@ -1170,20 +996,6 @@ function parsePositiveInteger(value: string): number | null {
 	return Number.isSafeInteger(result) && result <= 1000 ? result : null;
 }
 
-function parseYuanToCents(value: string): number | null {
-	const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
-	if (!match) return null;
-	const result =
-		Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
-	return Number.isSafeInteger(result) ? result : null;
-}
-
-function formatCentsAsYuan(value: number) {
-	return `${Math.floor(value / 100)}.${String(value % 100).padStart(2, "0")}`;
-}
-function getShanghaiToday() {
-	return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
 function formatDateTime(value: string) {
 	return new Intl.DateTimeFormat("zh-CN", {
 		timeZone: "Asia/Shanghai",

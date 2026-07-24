@@ -38,15 +38,34 @@ export function formatCentsAsYuan(value: number): string {
 	return `${yuan}.${cents}`;
 }
 
-export function parseYuanToCents(value: string): number | null {
+function parseYuanToCentsWithBounds(
+	value: string,
+	input: { minCents: number; maxCents: number },
+): number | null {
 	const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
 	if (!match) return null;
 	const yuan = Number(match[1]);
 	const cents = Number((match[2] ?? "").padEnd(2, "0"));
 	const result = yuan * 100 + cents;
-	return Number.isSafeInteger(result) && result > 0 && result <= 100_000_000
+	return Number.isSafeInteger(result) &&
+		result >= input.minCents &&
+		result <= input.maxCents
 		? result
 		: null;
+}
+
+export function parseYuanToCents(value: string): number | null {
+	return parseYuanToCentsWithBounds(value, {
+		minCents: 1,
+		maxCents: 100_000_000,
+	});
+}
+
+export function parseNonNegativeYuanToCents(value: string): number | null {
+	return parseYuanToCentsWithBounds(value, {
+		minCents: 0,
+		maxCents: 100_000_000,
+	});
 }
 
 export function getShanghaiToday(now = new Date()): string {

@@ -42,6 +42,7 @@ import { toast } from "sonner";
 
 import { client, orpc, queryClient } from "@/utils/orpc";
 
+import { parseNonNegativeYuanToCents } from "./finance-form-utils";
 import { formatCentsToCurrency, formatDate, formatDateTime } from "./format";
 
 type Adjustment = EnrollmentAdjustmentListResult["items"][number];
@@ -351,7 +352,7 @@ function RenewalDialog({
 		const input = renewEnrollmentInputSchema.safeParse({
 			enrollmentId: enrollment.id,
 			addedLessons: Number(lessons),
-			amountInCents: parseYuanToCents(amount),
+			amountInCents: parseNonNegativeYuanToCents(amount),
 			dueDate,
 			requestId,
 		});
@@ -841,15 +842,6 @@ function toFieldErrors(error: {
 		if (typeof key === "string" && !result[key]) result[key] = issue.message;
 		return result;
 	}, {});
-}
-function parseYuanToCents(value: string): number | null {
-	const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
-	if (!match) return null;
-	const result =
-		Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
-	return Number.isSafeInteger(result) && result >= 0 && result <= 100_000_000
-		? result
-		: null;
 }
 function getShanghaiToday() {
 	return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
