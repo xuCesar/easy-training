@@ -216,7 +216,10 @@ function LeadsRoute() {
 		[campusId, createdAtFrom, createdAtTo, deferredSearch, ownerUserId, stage],
 	);
 	const listQuery = useInfiniteQuery({
-		queryKey: ["training-leads", organization.id, sessionUserId, filters],
+		queryKey: [
+			...orpc.training.leads.list.key(),
+			{ organizationId: organization.id, sessionUserId, filters },
+		],
 		queryFn: ({ pageParam }) =>
 			client.training.leads.list({
 				...filters,
@@ -263,7 +266,7 @@ function LeadsRoute() {
 					resetImport();
 				}
 				await queryClient.invalidateQueries({
-					queryKey: ["training-leads", organization.id],
+					queryKey: orpc.training.leads.list.key(),
 				});
 			},
 			onError: () => toast.error("线索导入失败，请稍后重试。"),
@@ -1509,5 +1512,7 @@ function toFieldErrors<T extends Record<string, unknown>>(
 }
 
 function invalidateLeadQueries() {
-	return queryClient.invalidateQueries({ queryKey: ["training-leads"] });
+	return queryClient.invalidateQueries({
+		queryKey: orpc.training.leads.list.key(),
+	});
 }

@@ -241,7 +241,10 @@ function StudentsRoute() {
 		[campusId, deferredSearch, ownerUserId, status, tagId],
 	);
 	const listQuery = useInfiniteQuery({
-		queryKey: ["training-students", organization.id, sessionUserId, filters],
+		queryKey: [
+			...orpc.training.students.list.key(),
+			{ organizationId: organization.id, sessionUserId, filters },
+		],
 		queryFn: ({ pageParam }) =>
 			client.training.students.list({
 				...filters,
@@ -628,7 +631,7 @@ function StudentBulkOperationDialog({
 		orpc.training.students.commitBulk.mutationOptions({
 			onSuccess: async (result) => {
 				await queryClient.invalidateQueries({
-					queryKey: ["training-students", organizationId],
+					queryKey: orpc.training.students.list.key(),
 				});
 				toast.success(
 					`批量操作完成：变更 ${result.changedCount} 位，无变化 ${result.unchangedCount} 位。`,
@@ -824,7 +827,7 @@ function EnrollmentBulkOperationDialog({
 			onSuccess: async (result) => {
 				await Promise.all([
 					queryClient.invalidateQueries({
-						queryKey: ["training-students", organizationId],
+						queryKey: orpc.training.students.list.key(),
 					}),
 					queryClient.invalidateQueries({
 						queryKey: orpc.training.students.activeEnrollmentOptions.key(),
@@ -1029,7 +1032,7 @@ function StudentImportDialog({
 		orpc.training.students.confirmImport.mutationOptions({
 			onSuccess: async (result) => {
 				await queryClient.invalidateQueries({
-					queryKey: ["training-students", organizationId],
+					queryKey: orpc.training.students.list.key(),
 				});
 				if (result.errorRows > 0) {
 					setPreview({
@@ -2576,7 +2579,9 @@ function formatDate(value: string) {
 	}).format(new Date(value));
 }
 function invalidateStudentQueries() {
-	return queryClient.invalidateQueries({ queryKey: ["training-students"] });
+	return queryClient.invalidateQueries({
+		queryKey: orpc.training.students.list.key(),
+	});
 }
 function invalidateTagQueries() {
 	return Promise.all([

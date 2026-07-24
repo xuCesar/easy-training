@@ -848,6 +848,9 @@ function invalidateConversionQueries() {
 			queryKey: orpc.training.leads.list.key(),
 		}),
 		queryClient.invalidateQueries({
+			queryKey: orpc.training.students.list.key(),
+		}),
+		queryClient.invalidateQueries({
 			queryKey: orpc.training.snapshot.key(),
 		}),
 		queryClient.invalidateQueries({

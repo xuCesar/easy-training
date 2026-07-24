@@ -1205,7 +1205,9 @@ function studentStatusLabel(status: StudentSummary["status"]) {
 }
 function invalidateEnrollmentQueries() {
 	return Promise.all([
-		queryClient.invalidateQueries({ queryKey: ["training-students"] }),
+		queryClient.invalidateQueries({
+			queryKey: orpc.training.students.list.key(),
+		}),
 		queryClient.invalidateQueries({
 			queryKey: orpc.training.teaching.classes.list.key(),
 		}),
