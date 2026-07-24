@@ -129,10 +129,106 @@ async function listMemberships(
 		.orderBy(asc(organizationMember.createdAt), asc(organizationMember.id));
 }
 
+async function listMembershipsReadOnly(
+	userId: string,
+): Promise<MembershipRecord[]> {
+	return db
+		.select(membershipSelection)
+		.from(organizationMember)
+		.innerJoin(
+			organization,
+			eq(organization.id, organizationMember.organizationId),
+		)
+		.where(eq(organizationMember.userId, userId))
+		.orderBy(asc(organizationMember.createdAt), asc(organizationMember.id));
+}
+
+async function getCampusAccessReadOnly(
+	member: CurrentOrganizationRecord["member"],
+): Promise<CampusAccess> {
+	if (
+		isOrganizationWideRole(member.role) ||
+		member.campusAccessMode === "all"
+	) {
+		return { kind: "all" };
+	}
+
+	const rows = await db
+		.select({ campusId: organizationMemberCampus.campusId })
+		.from(organizationMemberCampus)
+		.where(eq(organizationMemberCampus.organizationMemberId, member.id))
+		.orderBy(asc(organizationMemberCampus.campusId));
+
+	return rows.length > 0
+		? { kind: "selected", campusIds: rows.map((row) => row.campusId) }
+		: { kind: "none" };
+}
+
+async function readCurrentOrganization(input: {
+	userId: string;
+	sessionId: string;
+}): Promise<CurrentOrganizationRecord | null> {
+	const [sessionRecord] = await db
+		.select({ activeOrganizationId: session.activeOrganizationId })
+		.from(session)
+		.where(
+			and(eq(session.id, input.sessionId), eq(session.userId, input.userId)),
+		)
+		.limit(1);
+
+	if (!sessionRecord) {
+		throw new OrganizationContextError("SESSION_NOT_FOUND");
+	}
+
+	const memberships = await listMembershipsReadOnly(input.userId);
+	if (memberships.length === 0) return null;
+
+	const current =
+		memberships.find(
+			(item) => item.organization.id === sessionRecord.activeOrganizationId,
+		) ?? memberships[0];
+
+	if (!current) {
+		throw new Error("Membership list unexpectedly became empty.");
+	}
+
+	if (current.organization.id !== sessionRecord.activeOrganizationId) {
+		return null;
+	}
+
+	const [userRecord] = await db
+		.select({ organizationInitializedAt: user.organizationInitializedAt })
+		.from(user)
+		.where(eq(user.id, input.userId))
+		.limit(1);
+
+	if (!userRecord) {
+		throw new OrganizationContextError("SESSION_NOT_FOUND");
+	}
+	if (!userRecord.organizationInitializedAt) return null;
+
+	return toCurrentOrganization(
+		current,
+		memberships,
+		await getCampusAccessReadOnly(current.member),
+	);
+}
+
 /**
- * 同一用户的首次业务访问由事务级 advisory lock 串行化，避免并发创建重复机构。
+ * 稳态请求只读解析机构上下文；需要首次建机构、修正 session 选择或补迁移标记时，
+ * 才进入事务级 advisory lock，避免只读 RPC 在用户维度串行化。
  */
 export async function getOrCreateCurrentOrganization(input: {
+	userId: string;
+	userName: string;
+	sessionId: string;
+}): Promise<CurrentOrganizationRecord> {
+	const current = await readCurrentOrganization(input);
+	if (current) return current;
+	return getOrCreateCurrentOrganizationWithLock(input);
+}
+
+async function getOrCreateCurrentOrganizationWithLock(input: {
 	userId: string;
 	userName: string;
 	sessionId: string;
