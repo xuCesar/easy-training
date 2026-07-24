@@ -485,7 +485,7 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 		await seedFixture(ids);
 
 		const initialList = invoiceListResultSchema.parse(
-			await listInvoices(financeScope, { status: "all" }),
+			await listInvoices(financeScope, { status: "all", pageSize: 50 }),
 		);
 		assert.equal(initialList.total, 8);
 		assert.ok(
@@ -511,6 +511,7 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 		);
 		const historicalPartialList = await listInvoices(financeScope, {
 			status: "partial",
+			pageSize: 50,
 		});
 		assert.ok(
 			historicalPartialList.items.some(
@@ -519,6 +520,7 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 		);
 		const historicalPaidList = await listInvoices(financeScope, {
 			status: "paid",
+			pageSize: 50,
 		});
 		assert.ok(
 			historicalPaidList.items.some(
@@ -559,7 +561,10 @@ test("财务账单、收款事务、幂等、租户与角色边界保持一致",
 			id: ids.invoiceRefunded,
 		});
 		assert.equal(refundedDetail.invoice.status, "refunded");
-		const openList = await listInvoices(financeScope, { status: "open" });
+		const openList = await listInvoices(financeScope, {
+			status: "open",
+			pageSize: 50,
+		});
 		assert.ok(openList.items.every((item) => item.id !== ids.invoiceRefunded));
 		await expectOrpcError(
 			createPayment(financeScope, {
@@ -1082,11 +1087,12 @@ test("手工开单与账单调整保持幂等、版本和报名金额隔离", as
 		const matchingList = await listInvoices(financeScope, {
 			query: "秋季教材",
 			status: "all",
+			pageSize: 50,
 		});
 		assert.ok(matchingList.items.some((item) => item.id === created.invoiceId));
-		const manualArrears = (await listArrears(financeScope, {})).items.find(
-			(item) => item.invoiceId === created.invoiceId,
-		);
+		const manualArrears = (
+			await listArrears(financeScope, { pageSize: 50 })
+		).items.find((item) => item.invoiceId === created.invoiceId);
 		assert.equal(manualArrears?.source, "manual");
 		assert.equal(manualArrears?.summary, "秋季教材及资料费（延期）");
 		const dashboard = await getTrainingDashboardSnapshot({
@@ -1564,7 +1570,7 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 			"CONFLICT",
 		);
 
-		const arrears = await listArrears(financeScope, {});
+		const arrears = await listArrears(financeScope, { pageSize: 50 });
 		assert.ok(
 			arrears.items.some((item) => item.invoiceId === ids.invoiceIdempotent),
 		);
@@ -1615,6 +1621,7 @@ test("续费、转课、退费与欠费跟进保持课时和资金历史可追�
 		);
 		const promisedArrears = await listArrears(financeScope, {
 			status: "promised",
+			pageSize: 50,
 		});
 		assert.equal(
 			promisedArrears.items.find(
@@ -1831,7 +1838,10 @@ test("退款申请审批保持角色、幂等、并发与资金事务边界", as
 		assert.equal(mainEnrollment[0]?.paidAmountInCents, 0);
 		assert.ok(
 			(
-				await listInvoices(scope(ids.finance), { status: "refunded" })
+				await listInvoices(scope(ids.finance), {
+					status: "refunded",
+					pageSize: 50,
+				})
 			).items.some((item) => item.id === ids.invoiceMain),
 		);
 		assert.equal(

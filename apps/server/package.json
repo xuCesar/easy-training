@@ -7,7 +7,8 @@
 		"check-types": "tsc -b",
 		"compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
 		"dev": "tsx watch src/index.ts",
-		"start": "node dist/index.mjs"
+		"start": "node dist/index.mjs",
+		"test:integration": "tsc -p ../../packages/db/tests/tsconfig.json --noEmit && tsx --test src/app.test.ts ../../packages/db/tests/*.integration.ts"
 	},
 	"dependencies": {
 		"@easy-training/api": "workspace:*",
@@ -19,9 +20,7 @@
 		"@orpc/server": "catalog:",
 		"@orpc/zod": "catalog:",
 		"better-auth": "catalog:",
-		"dotenv": "catalog:",
-		"hono": "catalog:",
-		"zod": "catalog:"
+		"hono": "catalog:"
 	},
 	"devDependencies": {
 		"@easy-training/config": "workspace:*",

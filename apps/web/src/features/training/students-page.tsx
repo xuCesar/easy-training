@@ -2177,8 +2177,9 @@ function ContactsEditor({
 									const remaining = contacts.filter(
 										(_, currentIndex) => currentIndex !== index,
 									);
-									if (contact.isPrimary)
-										remaining[0] = { ...remaining[0], isPrimary: true };
+									const nextPrimary = remaining[0];
+									if (contact.isPrimary && nextPrimary)
+										remaining[0] = { ...nextPrimary, isPrimary: true };
 									onChange(remaining);
 								}}
 							>

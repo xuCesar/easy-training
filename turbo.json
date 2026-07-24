@@ -7,11 +7,11 @@
 			"inputs": ["$TURBO_DEFAULT$", ".env*"],
 			"outputs": ["dist/**"]
 		},
-		"lint": {
-			"dependsOn": ["^lint"]
-		},
 		"check-types": {
 			"dependsOn": ["^check-types"]
+		},
+		"test:integration": {
+			"cache": false
 		},
 		"dev": {
 			"cache": false,
@@ -24,8 +24,7 @@
 			"cache": false
 		},
 		"db:migrate": {
-			"cache": false,
-			"persistent": true
+			"cache": false
 		},
 		"db:studio": {
 			"cache": false,

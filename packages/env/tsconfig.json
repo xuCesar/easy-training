@@ -1,3 +1,4 @@
 {
-	"extends": "@easy-training/config/tsconfig.base.json"
+	"extends": "@easy-training/config/tsconfig.base.json",
+	"include": ["src/**/*.ts"]
 }

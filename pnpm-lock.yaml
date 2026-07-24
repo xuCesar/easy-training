@@ -64,16 +64,6 @@ catalogs:
 importers:
 
   .:
-    dependencies:
-      '@easy-training/env':
-        specifier: workspace:*
-        version: link:packages/env
-      dotenv:
-        specifier: 'catalog:'
-        version: 17.4.2
-      zod:
-        specifier: 'catalog:'
-        version: 4.4.3
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.5.2
@@ -120,15 +110,9 @@ importers:
       better-auth:
         specifier: 'catalog:'
         version: 1.6.23(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.29.3)(pg@8.22.0))(pg@8.22.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      dotenv:
-        specifier: 'catalog:'
-        version: 17.4.2
       hono:
         specifier: 'catalog:'
         version: 4.12.30
-      zod:
-        specifier: 'catalog:'
-        version: 4.4.3
     devDependencies:
       '@easy-training/config':
         specifier: workspace:*
@@ -184,9 +168,6 @@ importers:
       better-auth:
         specifier: 'catalog:'
         version: 1.6.23(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.29.3)(pg@8.22.0))(pg@8.22.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      dotenv:
-        specifier: 'catalog:'
-        version: 17.4.2
       lucide-react:
         specifier: 'catalog:'
         version: 1.24.0(react@19.2.7)
@@ -251,24 +232,9 @@ importers:
       '@easy-training/db':
         specifier: workspace:*
         version: link:../db
-      '@easy-training/env':
-        specifier: workspace:*
-        version: link:../env
-      '@orpc/client':
-        specifier: 'catalog:'
-        version: 1.14.8
-      '@orpc/openapi':
-        specifier: 'catalog:'
-        version: 1.14.8
       '@orpc/server':
         specifier: 'catalog:'
         version: 1.14.8
-      '@orpc/zod':
-        specifier: 'catalog:'
-        version: 1.14.8(@orpc/contract@1.14.8)(@orpc/server@1.14.8)(zod@4.4.3)
-      dotenv:
-        specifier: 'catalog:'
-        version: 17.4.2
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -294,12 +260,6 @@ importers:
       better-auth:
         specifier: 'catalog:'
         version: 1.6.23(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.29.3)(pg@8.22.0))(pg@8.22.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      dotenv:
-        specifier: 'catalog:'
-        version: 17.4.2
-      zod:
-        specifier: 'catalog:'
-        version: 4.4.3
     devDependencies:
       '@easy-training/config':
         specifier: workspace:*

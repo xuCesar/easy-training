@@ -9,13 +9,13 @@
 			"default": "./src/*.ts"
 		}
 	},
-	"scripts": {},
+	"scripts": {
+		"check-types": "tsc --noEmit"
+	},
 	"dependencies": {
 		"@easy-training/db": "workspace:*",
 		"@easy-training/env": "workspace:*",
-		"better-auth": "catalog:",
-		"dotenv": "catalog:",
-		"zod": "catalog:"
+		"better-auth": "catalog:"
 	},
 	"devDependencies": {
 		"@easy-training/config": "workspace:*",
