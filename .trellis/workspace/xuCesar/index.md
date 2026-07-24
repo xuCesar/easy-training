@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 28
+- **Total Sessions**: 29
 - **Last Active**: 2026-07-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1004 | Active |
+| `journal-1.md` | ~1038 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 29 | 2026-07-24 | 完成经营分析保存筛选与即时导出 | `d4422a0` | `develop` |
 | 28 | 2026-07-24 | 完成 P2 多维经营对比页面 | `5333ea1` | `develop` |
 | 27 | 2026-07-23 | 完成 P2 财务经营分析 | `90e16c8` | `develop` |
 | 26 | 2026-07-22 | 完成 P2 核心经营指标 | `4f4c798`, `33501dd`, `165b440` | `develop` |

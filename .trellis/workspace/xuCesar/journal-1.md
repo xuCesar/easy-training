@@ -1002,3 +1002,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: 完成经营分析保存筛选与即时导出
+
+**Date**: 2026-07-24
+**Task**: 完成经营分析保存筛选与即时导出
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+交付成员私有保存筛选与服务端受控 CSV 导出；补齐机构隔离、角色重验、导出审计、迁移与集成测试。浏览器页面验收受本地浏览器策略限制未自动执行，保留手工验收提示。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d4422a0` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
