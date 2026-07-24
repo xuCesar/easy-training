@@ -3,7 +3,7 @@
   "name": "p2-management-comparison-ui",
   "title": "P2 多维经营对比页面",
   "description": "交付校区、课程、教师和班级对比，并整合 analytics 页内标签、角色视图和受控下钻。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",

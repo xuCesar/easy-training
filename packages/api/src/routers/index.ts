@@ -2,6 +2,8 @@ import type { RouterClient } from "@orpc/server";
 
 import {
 	businessMetricAttendanceResultSchema,
+	businessMetricComparisonInputSchema,
+	businessMetricComparisonResultSchema,
 	businessMetricConsumptionResultSchema,
 	businessMetricDrilldownInputSchema,
 	businessMetricDrilldownResultSchema,
@@ -241,6 +243,7 @@ import {
 } from "../index";
 import {
 	getBusinessMetricAttendance,
+	getBusinessMetricComparison,
 	getBusinessMetricConsumption,
 	getBusinessMetricDrilldown,
 	getBusinessMetricFinancial,
@@ -2157,6 +2160,20 @@ export const appRouter = {
 			},
 		},
 		analytics: {
+			comparison: organizationProcedure
+				.input(businessMetricComparisonInputSchema)
+				.output(businessMetricComparisonResultSchema)
+				.handler(({ context, input }) =>
+					getBusinessMetricComparison(
+						{
+							organizationId: context.organization.id,
+							userId: context.session.user.id,
+							role: context.role,
+							campusAccess: context.campusAccess,
+						},
+						input,
+					),
+				),
 			financial: organizationProcedure
 				.input(businessMetricQueryInputSchema)
 				.output(businessMetricFinancialResultSchema)

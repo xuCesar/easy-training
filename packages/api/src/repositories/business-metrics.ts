@@ -1,4 +1,9 @@
 import {
+	type BusinessComparisonDimension,
+	type BusinessComparisonResult,
+	getBusinessComparisonRecords,
+} from "@easy-training/db/repositories/business-comparison";
+import {
 	getBusinessMetricAttendanceRecord,
 	getBusinessMetricConsumptionRecord,
 	getBusinessMetricDrilldownRecords,
@@ -25,6 +30,8 @@ import {
 	BUSINESS_METRIC_DEFINITION_VERSION,
 	BUSINESS_METRIC_TIMEZONE,
 	type BusinessMetricAttendanceResult,
+	type BusinessMetricComparisonInput,
+	type BusinessMetricComparisonResult,
 	type BusinessMetricConsumptionResult,
 	type BusinessMetricDataQuality,
 	type BusinessMetricDrilldownInput,
@@ -580,6 +587,170 @@ export async function getBusinessMetricSales(
 	}
 }
 
+function assertComparisonAccess(
+	role: OrganizationRole,
+	dimension: BusinessComparisonDimension,
+): void {
+	if (role === "finance") {
+		throw new ORPCError("FORBIDDEN", {
+			message: "当前角色无权查看该维度对比。",
+		});
+	}
+	if (role === "consultant" && dimension !== "campus") {
+		throw new ORPCError("FORBIDDEN", { message: "顾问仅可查看脱敏校区基准。" });
+	}
+	if (role === "teacher" && !["teacher", "class"].includes(dimension)) {
+		throw new ORPCError("FORBIDDEN", { message: "教师仅可查看本人教学维度。" });
+	}
+}
+
+function comparisonSortValue(
+	row: BusinessComparisonResult["rows"][number],
+	sortBy: BusinessMetricComparisonInput["sortBy"],
+): number {
+	const value = row.current;
+	if (sortBy === "attendanceRate") return value.attendanceRate.value ?? -1;
+	if (sortBy === "utilizationRate") return value.utilizationRate.value ?? -1;
+	if (sortBy === "occupancyRate") return value.occupancyRate.value ?? -1;
+	return value[sortBy];
+}
+
+function anonymizeConsultantRows(
+	rows: BusinessComparisonResult["rows"],
+): BusinessComparisonResult["rows"] {
+	if (rows.length === 0) return [];
+	const mergeValues = (
+		items: BusinessComparisonResult["rows"],
+		selector: (
+			row: BusinessComparisonResult["rows"][number],
+		) => BusinessComparisonResult["rows"][number]["current"],
+	) => {
+		const values = items.map(selector);
+		const numerator = (
+			key: "attendanceRate" | "utilizationRate" | "occupancyRate",
+		) => values.reduce((sum, value) => sum + value[key].numerator, 0);
+		const denominator = (
+			key: "attendanceRate" | "utilizationRate" | "occupancyRate",
+		) => values.reduce((sum, value) => sum + value[key].denominator, 0);
+		const first = values[0];
+		if (!first) return null;
+		const merged = { ...first };
+		for (const key of [
+			"enrollmentCount",
+			"enrollmentAmountInCents",
+			"lessonCount",
+			"completedLessonCount",
+			"consumedLessonCount",
+			"completedMinutes",
+			"plannedMinutes",
+			"netReceiptsInCents",
+			"activeSeatCount",
+			"capacity",
+		] as const) {
+			merged[key] = values.reduce((sum, value) => sum + value[key], 0);
+		}
+		for (const key of [
+			"attendanceRate",
+			"utilizationRate",
+			"occupancyRate",
+		] as const) {
+			const n = numerator(key);
+			const d = denominator(key);
+			merged[key] =
+				d > 0
+					? { status: "available", value: n / d, numerator: n, denominator: d }
+					: {
+							status: "notApplicable",
+							value: null,
+							numerator: n,
+							denominator: d,
+							reason: "noDenominator",
+						};
+		}
+		merged.capacityConfigured = values.some(
+			(value) => value.capacityConfigured,
+		);
+		merged.dataCoverageIncomplete = values.some(
+			(value) => value.dataCoverageIncomplete,
+		);
+		return merged;
+	};
+	const current = mergeValues(rows, (row) => row.current);
+	const comparison = mergeValues(rows, (row) => row.comparison);
+	if (!current || !comparison) return [];
+	return [
+		{
+			id: "consultant-campus-benchmark",
+			label: "授权校区脱敏基准",
+			campusId: null,
+			sampleSmall: current.enrollmentCount > 0 && current.enrollmentCount < 5,
+			detailPath: null,
+			current,
+			comparison,
+		},
+	];
+}
+
+export async function getBusinessMetricComparison(
+	scope: BusinessMetricScope,
+	input: BusinessMetricComparisonInput,
+	now = new Date(),
+): Promise<BusinessMetricComparisonResult> {
+	assertComparisonAccess(scope.role, input.dimension);
+	const { window, base } = envelope(scope, input, now);
+	try {
+		const result = await getBusinessComparisonRecords({
+			organizationId: scope.organizationId,
+			campusAccess: scope.campusAccess,
+			dimension: input.dimension,
+			teacherUserId: scope.role === "teacher" ? scope.userId : undefined,
+			from: new Date(window.range.from),
+			to: new Date(window.range.to),
+			comparisonFrom: new Date(window.comparisonRange.from),
+			comparisonTo: new Date(window.comparisonRange.to),
+		});
+		const rows =
+			scope.role === "consultant"
+				? anonymizeConsultantRows(result.rows)
+				: [...result.rows].sort((a, b) => {
+						const difference =
+							comparisonSortValue(a, input.sortBy) -
+							comparisonSortValue(b, input.sortBy);
+						return input.sortDirection === "asc" ? difference : -difference;
+					});
+		const visibleRows = financeManagementRoles.has(scope.role)
+			? rows
+			: rows.map((row) => ({
+					...row,
+					current: {
+						...row.current,
+						enrollmentAmountInCents: 0,
+						netReceiptsInCents: 0,
+					},
+					comparison: {
+						...row.comparison,
+						enrollmentAmountInCents: 0,
+						netReceiptsInCents: 0,
+					},
+				}));
+		return {
+			...base,
+			dimension: input.dimension,
+			dataQuality: {
+				missingFinancialFactCount: result.missingFinancialFactCount,
+				unlinkedDimensionCount: result.unlinkedDimensionCount,
+				scopeCoverageIncomplete: result.scopeCoverageIncomplete,
+			},
+			rows: visibleRows,
+		};
+	} catch (error) {
+		if (error instanceof ORPCError) throw error;
+		throw new ORPCError("INTERNAL_SERVER_ERROR", {
+			message: "暂时无法加载经营对比，请稍后重试。",
+		});
+	}
+}
+
 export const businessMetricDefinitionRegistry = {
 	sales: getBusinessMetricSales,
 	attendance: getBusinessMetricAttendance,
@@ -587,6 +758,7 @@ export const businessMetricDefinitionRegistry = {
 	renewal: getBusinessMetricRenewal,
 	resource: getBusinessMetricResource,
 	financial: getBusinessMetricFinancial,
+	comparison: getBusinessMetricComparison,
 	drilldown: getBusinessMetricDrilldown,
 } as const;
 

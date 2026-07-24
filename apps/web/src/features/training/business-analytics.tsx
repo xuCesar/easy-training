@@ -1,12 +1,17 @@
 import type {
 	BusinessMetricAttendanceResult,
+	BusinessMetricComparisonDimension,
+	BusinessMetricComparisonInput,
+	BusinessMetricComparisonResult,
 	BusinessMetricConsumptionResult,
 	BusinessMetricDrilldownInput,
 	BusinessMetricDrilldownKind,
 	BusinessMetricDrilldownResult,
+	BusinessMetricFinancialResult,
 	BusinessMetricQueryInput,
 	BusinessMetricRatio,
 	BusinessMetricRenewalResult,
+	BusinessMetricResourceResult,
 	BusinessMetricSalesResult,
 } from "@easy-training/api/contracts/business-metrics";
 import { Button } from "@easy-training/ui/components/button";
@@ -20,6 +25,7 @@ import { useOrganization } from "./organization-context";
 
 type Preset = Exclude<BusinessMetricQueryInput["range"]["preset"], "custom">;
 type RangeMode = Preset | "custom";
+type AnalyticsTab = "overview" | "comparison" | "resource-finance";
 
 const presetLabels: Record<Preset, string> = {
 	last7Days: "最近 7 天",
@@ -39,6 +45,15 @@ const defaultCustomTo = new Date(shanghaiNow.getTime() + 24 * 60 * 60 * 1000)
 export function BusinessAnalytics() {
 	const { organization } = useOrganization();
 	const [rangeMode, setRangeMode] = useState<RangeMode>("month");
+	const [activeTab, setActiveTab] = useState<AnalyticsTab>(
+		organization.role === "finance" ? "resource-finance" : "overview",
+	);
+	const [comparisonDimension, setComparisonDimension] =
+		useState<BusinessMetricComparisonDimension>(
+			organization.role === "teacher" ? "teacher" : "campus",
+		);
+	const [comparisonSortBy, setComparisonSortBy] =
+		useState<BusinessMetricComparisonInput["sortBy"]>("enrollmentCount");
 	const [customFrom, setCustomFrom] = useState(defaultCustomFrom);
 	const [customTo, setCustomTo] = useState(defaultCustomTo);
 	const customRangeValid = customFrom.length > 0 && customTo > customFrom;
@@ -64,27 +79,92 @@ export function BusinessAnalytics() {
 	const canViewRenewal = ["owner", "admin", "campus_manager"].includes(
 		organization.role,
 	);
+	const canViewFinancial = [
+		"owner",
+		"admin",
+		"campus_manager",
+		"finance",
+	].includes(organization.role);
+	const canViewResource = [
+		"owner",
+		"admin",
+		"campus_manager",
+		"teacher",
+	].includes(organization.role);
+	const canViewComparison = [
+		"owner",
+		"admin",
+		"campus_manager",
+		"consultant",
+		"teacher",
+	].includes(organization.role);
+	const comparisonDimensions: BusinessMetricComparisonDimension[] =
+		organization.role === "consultant"
+			? ["campus"]
+			: organization.role === "teacher"
+				? ["teacher", "class"]
+				: ["campus", "course", "teacher", "class"];
+	const effectiveComparisonDimension = comparisonDimensions.includes(
+		comparisonDimension,
+	)
+		? comparisonDimension
+		: (comparisonDimensions[0] ?? "campus");
+	const visibleTabs: AnalyticsTab[] =
+		organization.role === "finance"
+			? ["resource-finance"]
+			: [
+					"overview",
+					...(canViewComparison ? ["comparison" as const] : []),
+					...(canViewFinancial || canViewResource
+						? ["resource-finance" as const]
+						: []),
+				];
+	const comparisonInput: BusinessMetricComparisonInput = {
+		range: input.range,
+		dimension: effectiveComparisonDimension,
+		sortBy: comparisonSortBy,
+		sortDirection: "desc",
+	};
 	const sales = useQuery({
 		...orpc.training.analytics.sales.queryOptions({ input }),
-		enabled: canViewSales && rangeEnabled,
+		enabled: canViewSales && activeTab === "overview" && rangeEnabled,
 	});
 	const attendance = useQuery({
 		...orpc.training.analytics.attendance.queryOptions({ input }),
-		enabled: canViewTeaching && rangeEnabled,
+		enabled: canViewTeaching && activeTab === "overview" && rangeEnabled,
 	});
 	const consumption = useQuery({
 		...orpc.training.analytics.consumption.queryOptions({ input }),
-		enabled: canViewTeaching && rangeEnabled,
+		enabled: canViewTeaching && activeTab === "overview" && rangeEnabled,
 	});
 	const renewal = useQuery({
 		...orpc.training.analytics.renewal.queryOptions({ input }),
-		enabled: canViewRenewal && rangeEnabled,
+		enabled: canViewRenewal && activeTab === "overview" && rangeEnabled,
+	});
+	const comparison = useQuery({
+		...orpc.training.analytics.comparison.queryOptions({
+			input: comparisonInput,
+		}),
+		enabled: canViewComparison && activeTab === "comparison" && rangeEnabled,
+	});
+	const resource = useQuery({
+		...orpc.training.analytics.resource.queryOptions({ input }),
+		enabled:
+			canViewResource && activeTab === "resource-finance" && rangeEnabled,
+	});
+	const financial = useQuery({
+		...orpc.training.analytics.financial.queryOptions({ input }),
+		enabled:
+			canViewFinancial && activeTab === "resource-finance" && rangeEnabled,
 	});
 	const visibleQueries = [
-		canViewSales ? sales : null,
-		canViewTeaching ? attendance : null,
-		canViewTeaching ? consumption : null,
-		canViewRenewal ? renewal : null,
+		activeTab === "overview" && canViewSales ? sales : null,
+		activeTab === "overview" && canViewTeaching ? attendance : null,
+		activeTab === "overview" && canViewTeaching ? consumption : null,
+		activeTab === "overview" && canViewRenewal ? renewal : null,
+		activeTab === "comparison" && canViewComparison ? comparison : null,
+		activeTab === "resource-finance" && canViewResource ? resource : null,
+		activeTab === "resource-finance" && canViewFinancial ? financial : null,
 	].filter((query) => query !== null);
 	const pending = visibleQueries.some((query) => query.isPending);
 	const failed = visibleQueries.find((query) => query.isError);
@@ -92,16 +172,18 @@ export function BusinessAnalytics() {
 		sales.data?.asOf ??
 		attendance.data?.asOf ??
 		consumption.data?.asOf ??
-		renewal.data?.asOf;
+		renewal.data?.asOf ??
+		comparison.data?.asOf ??
+		resource.data?.asOf ??
+		financial.data?.asOf;
 	const definitionVersion =
 		sales.data?.definitionVersion ??
 		attendance.data?.definitionVersion ??
 		consumption.data?.definitionVersion ??
-		renewal.data?.definitionVersion;
-
-	if (organization.role === "finance") {
-		return <Unavailable />;
-	}
+		renewal.data?.definitionVersion ??
+		comparison.data?.definitionVersion ??
+		resource.data?.definitionVersion ??
+		financial.data?.definitionVersion;
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6">
@@ -156,6 +238,26 @@ export function BusinessAnalytics() {
 					) : null}
 				</div>
 			</header>
+			<nav
+				className="flex min-w-0 flex-wrap gap-2 border-b pb-2"
+				aria-label="经营分析视图"
+			>
+				{visibleTabs.map((tab) => (
+					<button
+						key={tab}
+						type="button"
+						className={`border px-3 py-2 text-sm ${activeTab === tab ? "border-primary bg-primary/10 font-medium" : "bg-background"}`}
+						onClick={() => setActiveTab(tab)}
+						aria-current={activeTab === tab ? "page" : undefined}
+					>
+						{tab === "overview"
+							? "经营概览"
+							: tab === "comparison"
+								? "经营对比"
+								: "资源与财务"}
+					</button>
+				))}
+			</nav>
 
 			{pending ? <AnalyticsSkeleton /> : null}
 			{rangeMode === "custom" && !customRangeValid ? (
@@ -176,7 +278,7 @@ export function BusinessAnalytics() {
 					</div>
 				</section>
 			) : null}
-			{!pending && !failed ? (
+			{!pending && !failed && activeTab === "overview" ? (
 				<>
 					{sales.data ? (
 						<SalesSection
@@ -195,6 +297,30 @@ export function BusinessAnalytics() {
 						<RenewalSection result={renewal.data} input={input} />
 					) : null}
 				</>
+			) : null}
+			{!pending && !failed && activeTab === "comparison" && comparison.data ? (
+				<ComparisonSection
+					result={comparison.data}
+					dimension={effectiveComparisonDimension}
+					dimensions={comparisonDimensions}
+					sortBy={comparisonSortBy}
+					onDimensionChange={setComparisonDimension}
+					onSortChange={setComparisonSortBy}
+					showFinancial={["owner", "admin", "campus_manager"].includes(
+						organization.role,
+					)}
+				/>
+			) : null}
+			{!pending && !failed && activeTab === "resource-finance" ? (
+				<div className="grid gap-6">
+					{resource.data ? <ResourceSection result={resource.data} /> : null}
+					{financial.data ? <FinancialSection result={financial.data} /> : null}
+					{!resource.data && !financial.data ? (
+						<p className="border p-5 text-muted-foreground text-sm">
+							当前角色暂无可展示的资源或财务指标。
+						</p>
+					) : null}
+				</div>
 			) : null}
 			{asOf ? (
 				<p className="text-muted-foreground text-xs">
@@ -532,6 +658,310 @@ function formatDrilldownItem(
 	return `${status} · ${formatCentsToCurrency(item.renewalAmountInCents)} · ${item.renewalLessonCount} 课时`;
 }
 
+const comparisonDimensionLabels: Record<
+	BusinessMetricComparisonDimension,
+	string
+> = {
+	campus: "校区",
+	course: "课程",
+	teacher: "教师",
+	class: "班级",
+};
+
+const comparisonSortLabels: Record<
+	BusinessMetricComparisonInput["sortBy"],
+	string
+> = {
+	enrollmentCount: "报名数",
+	lessonCount: "课次数",
+	consumedLessonCount: "消课数",
+	attendanceRate: "到课率",
+	utilizationRate: "教师利用率",
+	occupancyRate: "课次上座率",
+	netReceiptsInCents: "净回款",
+};
+
+function ComparisonSection({
+	result,
+	dimension,
+	dimensions,
+	sortBy,
+	onDimensionChange,
+	onSortChange,
+	showFinancial,
+}: {
+	result: BusinessMetricComparisonResult;
+	dimension: BusinessMetricComparisonDimension;
+	dimensions: BusinessMetricComparisonDimension[];
+	sortBy: BusinessMetricComparisonInput["sortBy"];
+	onDimensionChange: (value: BusinessMetricComparisonDimension) => void;
+	onSortChange: (value: BusinessMetricComparisonInput["sortBy"]) => void;
+	showFinancial: boolean;
+}) {
+	return (
+		<AnalyticsSection
+			title={`${comparisonDimensionLabels[dimension]}经营对比`}
+			quality={[
+				result.dataQuality.missingFinancialFactCount > 0
+					? `${result.dataQuality.missingFinancialFactCount} 张账单缺少不可变财务事实`
+					: null,
+				result.dataQuality.unlinkedDimensionCount > 0
+					? "存在未关联维度，已单列且不隐藏金额"
+					: null,
+				result.dataQuality.scopeCoverageIncomplete
+					? "当前授权范围的财务事实覆盖不完整"
+					: null,
+			].filter((item): item is string => item !== null)}
+		>
+			<div className="flex flex-wrap gap-2 border-b pb-4">
+				<label className="grid gap-1 text-sm">
+					<span className="text-muted-foreground">对比维度</span>
+					<select
+						className="h-9 border bg-background px-3"
+						value={dimension}
+						onChange={(event) =>
+							onDimensionChange(
+								event.target.value as BusinessMetricComparisonDimension,
+							)
+						}
+					>
+						{dimensions.map((value) => (
+							<option key={value} value={value}>
+								{comparisonDimensionLabels[value]}
+							</option>
+						))}
+					</select>
+				</label>
+				<label className="grid gap-1 text-sm">
+					<span className="text-muted-foreground">排序指标</span>
+					<select
+						className="h-9 border bg-background px-3"
+						value={sortBy}
+						onChange={(event) =>
+							onSortChange(
+								event.target.value as BusinessMetricComparisonInput["sortBy"],
+							)
+						}
+					>
+						{Object.entries(comparisonSortLabels).map(([value, label]) => (
+							<option key={value} value={value}>
+								{label}
+							</option>
+						))}
+					</select>
+				</label>
+			</div>
+			{result.rows.length === 0 ? (
+				<p className="mt-4 text-muted-foreground text-sm">
+					当前范围暂无可比较数据。
+				</p>
+			) : (
+				<div className="mt-4 grid gap-3">
+					{result.rows.map((row) => (
+						<article key={row.id} className="min-w-0 border p-4">
+							<div className="flex flex-wrap items-start justify-between gap-2">
+								<div>
+									<h3 className="font-medium">{row.label}</h3>
+									{row.sampleSmall ? (
+										<p className="mt-1 text-amber-700 text-xs">
+											样本较少，比例不参与 Top/Bottom 判断
+										</p>
+									) : null}
+								</div>
+								{row.detailPath ? (
+									<a
+										className="text-primary text-sm underline"
+										href={row.detailPath}
+									>
+										受控下钻
+									</a>
+								) : null}
+							</div>
+							<div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+								<ComparisonValue
+									label="报名数"
+									value={`${row.current.enrollmentCount}`}
+									comparison={`${row.comparison.enrollmentCount}`}
+								/>
+								<ComparisonValue
+									label="课次数"
+									value={`${row.current.lessonCount}`}
+									comparison={`${row.comparison.lessonCount}`}
+								/>
+								<ComparisonValue
+									label="消课数"
+									value={`${row.current.consumedLessonCount}`}
+									comparison={`${row.comparison.consumedLessonCount}`}
+								/>
+								<ComparisonValue
+									label="到课率"
+									value={formatComparisonRatio(row.current.attendanceRate)}
+									comparison={formatComparisonRatio(
+										row.comparison.attendanceRate,
+									)}
+								/>
+								{dimension === "teacher" ? (
+									<ComparisonValue
+										label="实际利用率"
+										value={formatComparisonRatio(row.current.utilizationRate)}
+										comparison={formatComparisonRatio(
+											row.comparison.utilizationRate,
+										)}
+									/>
+								) : null}
+								{dimension === "class" ? (
+									<ComparisonValue
+										label="课次上座率"
+										value={formatComparisonRatio(row.current.occupancyRate)}
+										comparison={formatComparisonRatio(
+											row.comparison.occupancyRate,
+										)}
+									/>
+								) : null}
+								{showFinancial ? (
+									<ComparisonValue
+										label="净回款"
+										value={formatCentsToCurrency(
+											row.current.netReceiptsInCents,
+										)}
+										comparison={formatCentsToCurrency(
+											row.comparison.netReceiptsInCents,
+										)}
+									/>
+								) : null}
+							</div>
+						</article>
+					))}
+				</div>
+			)}
+		</AnalyticsSection>
+	);
+}
+
+function ComparisonValue({
+	label,
+	value,
+	comparison,
+}: {
+	label: string;
+	value: string;
+	comparison: string;
+}) {
+	return (
+		<div className="min-w-0 bg-muted/30 p-3">
+			<p className="text-muted-foreground text-xs">{label}</p>
+			<p className="mt-1 break-words font-medium">{value}</p>
+			<p className="mt-1 text-muted-foreground text-xs">对比期 {comparison}</p>
+		</div>
+	);
+}
+
+function formatComparisonRatio(
+	value: BusinessMetricComparisonResult["rows"][number]["current"]["attendanceRate"],
+): string {
+	if (value.status === "available") return `${(value.value * 100).toFixed(1)}%`;
+	if (value.reason === "insufficientSample") return "样本不足";
+	if (value.reason === "factCoverageMissing") return "事实缺口";
+	return "暂不可计算";
+}
+
+function ResourceSection({ result }: { result: BusinessMetricResourceResult }) {
+	return (
+		<AnalyticsSection
+			title="资源利用"
+			quality={resourceQualityMessages(result)}
+		>
+			<MetricGrid>
+				<Metric
+					label="实际教师利用率"
+					value={formatRatio(result.data.actualUtilizationRate)}
+					helper={`${result.data.completedMinutes} / ${result.data.actualCapacityMinutes} 分钟`}
+				/>
+				<Metric
+					label="计划教师利用率"
+					value={formatRatio(result.data.plannedUtilizationRate)}
+					helper={`${result.data.plannedMinutes} / ${result.data.plannedCapacityMinutes} 分钟`}
+				/>
+				<Metric
+					label="班级容量利用率"
+					value={formatRatio(result.data.classCapacityUtilizationRate)}
+					helper={`${result.data.activeSeatCount} / ${result.data.classCapacity} 席`}
+				/>
+				<Metric
+					label="课次上座率"
+					value={formatRatio(result.data.lessonOccupancyRate)}
+					helper="已完成课次的实际到场人数 / 当时容量"
+				/>
+				<Metric
+					label="满班班级"
+					value={`${result.data.fullClassCount}`}
+					helper={`有效班级 ${result.data.eligibleClassCount}`}
+				/>
+				<Metric
+					label="接近满班"
+					value={`${result.data.nearFullClassCount}`}
+					helper="达到 90% 但未满班"
+				/>
+			</MetricGrid>
+		</AnalyticsSection>
+	);
+}
+
+function FinancialSection({
+	result,
+}: {
+	result: BusinessMetricFinancialResult;
+}) {
+	return (
+		<AnalyticsSection
+			title="回款与应收"
+			quality={[
+				result.dataQuality.scopeCoverageIncomplete
+					? "当前授权范围的财务事实覆盖不完整"
+					: null,
+				result.dataQuality.missingFinancialFactCount > 0
+					? `${result.dataQuality.missingFinancialFactCount} 张账单缺少财务事实`
+					: null,
+			].filter((item): item is string => item !== null)}
+		>
+			<MetricGrid>
+				<Metric
+					label="净回款"
+					value={formatCentsToCurrency(result.data.netReceiptsInCents)}
+					helper={`收款 ${formatCentsToCurrency(result.data.paymentsInCents)} · 冲正 ${formatCentsToCurrency(result.data.reversalsInCents)} · 退款 ${formatCentsToCurrency(result.data.refundsInCents)}`}
+					comparison={`对比期 ${formatCentsToCurrency(result.data.comparisonNetReceiptsInCents)}`}
+				/>
+				<Metric
+					label="30 日 cohort 回款率"
+					value={formatRatio(result.data.cohortCollectionRate)}
+					helper={`${result.data.matureCohortInvoiceCount} 张成熟账单 · 未成熟 ${result.data.immatureCohortInvoiceCount}`}
+				/>
+				<Metric
+					label="应收账龄总额"
+					value={formatCentsToCurrency(result.data.agingTotalInCents)}
+					helper={`快照 ${formatDateTime(result.data.agingSnapshotAt)}`}
+				/>
+			</MetricGrid>
+		</AnalyticsSection>
+	);
+}
+
+function resourceQualityMessages(
+	result: BusinessMetricResourceResult,
+): string[] {
+	return [
+		result.dataQuality.missingTeacherCapacityCount > 0
+			? `${result.dataQuality.missingTeacherCapacityCount} 名教师未配置容量`
+			: null,
+		result.dataQuality.partialTeacherCapacityCount > 0
+			? `${result.dataQuality.partialTeacherCapacityCount} 名教师容量历史覆盖不完整`
+			: null,
+		result.dataQuality.missingLessonCapacityCount > 0
+			? `${result.dataQuality.missingLessonCapacityCount} 个历史课次缺少班级容量`
+			: null,
+	].filter((item): item is string => item !== null);
+}
+
 function AnalyticsSection({
 	title,
 	quality,
@@ -626,17 +1056,5 @@ function AnalyticsSkeleton() {
 			<Skeleton className="h-56" />
 			<Skeleton className="h-56" />
 		</div>
-	);
-}
-function Unavailable() {
-	return (
-		<section className="grid min-h-72 place-items-center border p-6 text-center">
-			<div>
-				<h1 className="font-semibold text-lg">当前角色无权访问经营分析</h1>
-				<p className="mt-2 text-muted-foreground text-sm">
-					财务回款与应收分析将在经营对比阶段单独提供。
-				</p>
-			</div>
-		</section>
 	);
 }

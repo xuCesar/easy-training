@@ -5,6 +5,7 @@ import { inArray } from "drizzle-orm";
 
 import {
 	businessMetricAttendanceResultSchema,
+	businessMetricComparisonResultSchema,
 	businessMetricConsumptionResultSchema,
 	businessMetricDrilldownResultSchema,
 	businessMetricFinancialAgingDrilldownResultSchema,
@@ -17,6 +18,7 @@ import {
 import {
 	businessMetricDefinitionRegistry,
 	getBusinessMetricAttendance,
+	getBusinessMetricComparison,
 	getBusinessMetricConsumption,
 	getBusinessMetricDrilldown,
 	getBusinessMetricFinancial,
@@ -103,6 +105,42 @@ test("经营指标空机构查询返回稳定零值且所有 SQL 可执行", asy
 	});
 	assert.equal(resource.completedMinutes, 0);
 	assert.equal(resource.eligibleClassCount, 0);
+});
+
+test("经营对比空机构返回稳定契约并按角色拒绝财务以外维度", async () => {
+	const input = {
+		range: { preset: "month" as const },
+		dimension: "campus" as const,
+		sortBy: "enrollmentCount" as const,
+		sortDirection: "desc" as const,
+	};
+	const result = businessMetricComparisonResultSchema.parse(
+		await getBusinessMetricComparison(
+			{
+				organizationId: emptyScope.organizationId,
+				userId: "comparison-user",
+				role: "owner",
+				campusAccess: emptyScope.campusAccess,
+			},
+			input,
+			now,
+		),
+	);
+	assert.deepEqual(result.rows, []);
+	await assert.rejects(
+		getBusinessMetricComparison(
+			{
+				organizationId: emptyScope.organizationId,
+				userId: "comparison-finance-user",
+				role: "finance",
+				campusAccess: emptyScope.campusAccess,
+			},
+			input,
+			now,
+		),
+		(error: unknown) =>
+			error instanceof Error && error.message.includes("无权"),
+	);
 });
 
 test("经营指标角色权限和无效范围使用明确错误语义", async () => {
@@ -764,6 +802,18 @@ test("固定 fixture 返回销售、教学、消课和续费金值", async () =>
 		const financial = businessMetricFinancialResultSchema.parse(
 			await getBusinessMetricFinancial(scope, { range }, fixtureNow),
 		);
+		const comparison = businessMetricComparisonResultSchema.parse(
+			await getBusinessMetricComparison(
+				scope,
+				{
+					range,
+					dimension: "campus",
+					sortBy: "lessonCount",
+					sortDirection: "desc",
+				},
+				fixtureNow,
+			),
+		);
 
 		assert.deepEqual(sales.data.conversionRate, {
 			status: "available",
@@ -815,6 +865,11 @@ test("固定 fixture 返回销售、教学、消课和续费金值", async () =>
 		assert.equal(financial.data.matureCohortInvoiceCount, 3);
 		assert.equal(financial.data.immatureCohortInvoiceCount, 0);
 		assert.equal(financial.data.agingTotalInCents, 200_000);
+		const campusComparison = comparison.rows.find((row) => row.id === campusA);
+		assert.ok(campusComparison);
+		// 06/30 16:30Z 按 Asia/Shanghai 归入 7 月 1 日，因此本月共 5 节课。
+		assert.equal(campusComparison.current.lessonCount, 5);
+		assert.equal(campusComparison.current.netReceiptsInCents, 180_000);
 		assert.deepEqual(financial.data.agingBuckets, [
 			{ kind: "notDue", amountInCents: 0, invoiceCount: 0 },
 			{ kind: "overdue1To30", amountInCents: 200_000, invoiceCount: 3 },

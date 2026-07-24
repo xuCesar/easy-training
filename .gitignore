@@ -54,3 +54,6 @@ coverage
 .cache
 tmp
 temp
+
+# Local demo and performance fixtures
+output/

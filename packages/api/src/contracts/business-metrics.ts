@@ -27,6 +27,30 @@ export const businessMetricQueryInputSchema = z.object({
 	range: businessMetricRangeInputSchema.default({ preset: "month" }),
 });
 
+export const businessMetricComparisonDimensionSchema = z.enum([
+	"campus",
+	"course",
+	"teacher",
+	"class",
+]);
+
+export const businessMetricComparisonSortSchema = z.enum([
+	"enrollmentCount",
+	"lessonCount",
+	"consumedLessonCount",
+	"attendanceRate",
+	"utilizationRate",
+	"occupancyRate",
+	"netReceiptsInCents",
+]);
+
+export const businessMetricComparisonInputSchema =
+	businessMetricQueryInputSchema.extend({
+		dimension: businessMetricComparisonDimensionSchema,
+		sortBy: businessMetricComparisonSortSchema.default("enrollmentCount"),
+		sortDirection: z.enum(["asc", "desc"]).default("desc"),
+	});
+
 export const businessMetricDrilldownKindSchema = z.enum([
 	"salesCycles",
 	"attendanceLessons",
@@ -196,6 +220,67 @@ export const businessMetricResourceResultSchema =
 		dataQuality: resourceMetricDataQualitySchema,
 		data: businessMetricResourceDataSchema,
 	});
+
+const comparisonRatioSchema = z.discriminatedUnion("status", [
+	z.object({
+		status: z.literal("available"),
+		value: z.number().min(0),
+		numerator: z.number().nonnegative(),
+		denominator: z.number().positive(),
+	}),
+	z.object({
+		status: z.literal("notApplicable"),
+		value: z.null(),
+		numerator: z.number().nonnegative(),
+		denominator: z.number().nonnegative(),
+		reason: businessMetricNotApplicableReasonSchema,
+	}),
+]);
+
+const businessMetricComparisonValuesSchema = z.object({
+	enrollmentCount: z.number().int().nonnegative(),
+	enrollmentAmountInCents: z.number().int(),
+	lessonCount: z.number().int().nonnegative(),
+	completedLessonCount: z.number().int().nonnegative(),
+	consumedLessonCount: z.number().int().nonnegative(),
+	completedMinutes: z.number().nonnegative(),
+	plannedMinutes: z.number().nonnegative(),
+	attendanceRate: comparisonRatioSchema,
+	utilizationRate: comparisonRatioSchema,
+	occupancyRate: comparisonRatioSchema,
+	netReceiptsInCents: z.number().int(),
+	activeSeatCount: z.number().int().nonnegative(),
+	capacity: z.number().int().nonnegative(),
+	capacityConfigured: z.boolean(),
+	dataCoverageIncomplete: z.boolean(),
+});
+
+export const businessMetricComparisonRowSchema = z.object({
+	id: z.string().min(1),
+	label: z.string().min(1),
+	campusId: z.uuid().nullable(),
+	sampleSmall: z.boolean(),
+	detailPath: z.string().min(1).nullable(),
+	current: businessMetricComparisonValuesSchema,
+	comparison: businessMetricComparisonValuesSchema,
+});
+
+export const businessMetricComparisonResultSchema = z.object({
+	contractVersion: z.literal(BUSINESS_METRIC_CONTRACT_VERSION),
+	definitionVersion: z.literal(BUSINESS_METRIC_DEFINITION_VERSION),
+	timezone: z.literal(BUSINESS_METRIC_TIMEZONE),
+	asOf: z.iso.datetime({ offset: true }),
+	range: resolvedBusinessMetricRangeSchema,
+	comparisonRange: resolvedBusinessMetricRangeSchema,
+	granularity: businessMetricGranularitySchema,
+	dimension: businessMetricComparisonDimensionSchema,
+	dataQuality: z.object({
+		missingFinancialFactCount: z.number().int().nonnegative(),
+		unlinkedDimensionCount: z.number().int().nonnegative(),
+		scopeCoverageIncomplete: z.boolean(),
+	}),
+	rows: z.array(businessMetricComparisonRowSchema),
+});
 
 export const financialMetricDataQualitySchema = z.object({
 	missingAttributionCount: z.number().int().nonnegative(),
@@ -389,6 +474,15 @@ export type BusinessMetricRangeInput = z.infer<
 >;
 export type BusinessMetricQueryInput = z.infer<
 	typeof businessMetricQueryInputSchema
+>;
+export type BusinessMetricComparisonInput = z.infer<
+	typeof businessMetricComparisonInputSchema
+>;
+export type BusinessMetricComparisonDimension = z.infer<
+	typeof businessMetricComparisonDimensionSchema
+>;
+export type BusinessMetricComparisonResult = z.infer<
+	typeof businessMetricComparisonResultSchema
 >;
 export type BusinessMetricDrilldownKind = z.infer<
 	typeof businessMetricDrilldownKindSchema
