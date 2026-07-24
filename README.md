@@ -122,6 +122,18 @@ pnpm --filter @easy-training/db db:migrate
 
 不要在生产服务器生成 migration，也不要编辑已发布的 migration 文件。每个 schema 变更必须随应用版本提交新的 migration，并先在与生产兼容的环境中完成迁移和回归验证。
 
+### 子表租户边界决策
+
+`attendance`、`studentContact`、`teacherCampus` 暂不直接增加 `organizationId`。这些表的租户归属分别来自 `lesson`、`student`、`teacher`/`campus`，直接加列需要 expand/backfill/dual-read-or-write/contract 多阶段兼容发布，当前阶段先采用强制 repository 边界、父表 join 机构条件和非破坏性索引兜底。`makeupLesson` 已包含 `organizationId`，列表和详情查询必须继续把它作为第一查询边界。
+
+代码审查时按以下清单检查子表查询：
+
+- 查询 `attendance` 必须先锁定或校验所属 `lesson`，或 join `lesson` 并限制 `lesson.organizationId`；不能只凭 `attendance.id`、`lessonId` 或 `studentId` 返回业务数据。
+- 查询 `studentContact` 必须 join `student` 并限制 `student.organizationId`；手机号查重不能使用 `studentContact.phoneNormalized` 做全局判重。
+- 查询 `teacherCampus` 必须通过 `teacher` 与 `campus` 绑定机构和校区范围；不能只凭 `teacherId` 或 `campusId` 返回机构级业务数据。
+- 查询 `makeupLesson` 必须带 `organizationId`，涉及同一 requestId 重放时还要重新校验关联班级、课次和校区权限。
+- 后续若为子表补 `organizationId`，必须拆成 expand/backfill/dual-read-or-write/contract 发布，不得和应用回滚绑定执行破坏性回退。
+
 ### 生产发布前置条件
 
 发布负责人必须在开始前逐项确认；下列能力目前未随本仓库配置或验证，缺少任一项时不得把本 Runbook 视为已完成的生产保障：

@@ -1143,6 +1143,36 @@ test("学员合并显式选择主档案字段，迁移安全关联并冻结来�
 			[source.id],
 		);
 
+		const crossOrganizationStudentId = randomUUID();
+		await db.insert(student).values({
+			id: crossOrganizationStudentId,
+			organizationId: ids.organizationB,
+			campusId: ids.campusB,
+			name: "跨机构同手机号学员",
+			guardianName: "跨机构家长",
+			guardianPhone: "13800138000",
+			guardianPhoneNormalized: "13800138000",
+			status: "active",
+		});
+		await db.insert(studentContact).values({
+			studentId: crossOrganizationStudentId,
+			name: "跨机构联系人",
+			phone: "13800138000",
+			phoneNormalized: "13800138000",
+			relationship: "家长",
+			isPrimary: true,
+		});
+
+		const scopedDuplicateCandidates = await findDuplicateStudentCandidates({
+			organizationId: ids.organizationA,
+			campusAccess: access,
+			phone: "13800138000",
+		});
+		assert.deepEqual(
+			scopedDuplicateCandidates.map((item) => item.id),
+			[source.id],
+		);
+
 		const preview = await getStudentMergePreviewRecord({
 			organizationId: ids.organizationA,
 			userId: ids.managerUserId,

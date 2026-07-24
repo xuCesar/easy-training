@@ -683,6 +683,10 @@ export const teacherCampus = pgTable(
 	},
 	(table) => [
 		uniqueIndex("teacher_campus_uidx").on(table.teacherId, table.campusId),
+		index("teacher_campus_campus_teacher_idx").on(
+			table.campusId,
+			table.teacherId,
+		),
 	],
 );
 
@@ -937,6 +941,10 @@ export const studentContact = pgTable(
 			.on(table.studentId)
 			.where(sql`${table.isPrimary} = true`),
 		index("student_contact_student_idx").on(table.studentId),
+		index("student_contact_student_phone_idx").on(
+			table.studentId,
+			table.phoneNormalized,
+		),
 		index("student_contact_phone_normalized_idx").on(table.phoneNormalized),
 	],
 );
@@ -1813,6 +1821,11 @@ export const makeupLesson = pgTable(
 			table.targetLessonId,
 			table.status,
 		),
+		index("makeup_lesson_org_updated_idx").on(
+			table.organizationId,
+			table.updatedAt,
+			table.id,
+		),
 	],
 );
 
@@ -1875,6 +1888,7 @@ export const attendance = pgTable(
 			table.lessonId,
 			table.studentId,
 		),
+		index("attendance_lesson_status_idx").on(table.lessonId, table.status),
 		index("attendance_student_idx").on(table.studentId),
 	],
 );
