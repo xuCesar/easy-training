@@ -38,8 +38,6 @@ import {
 	arrearsMutationResultSchema,
 	assignEnrollmentClassInputSchema,
 	assignEnrollmentClassResultSchema,
-	auditEventListInputSchema,
-	auditEventListResultSchema,
 	bindableTeacherMemberListResultSchema,
 	bulkUpdateLessonsInputSchema,
 	bulkUpdateLessonsResultSchema,
@@ -84,7 +82,6 @@ import {
 	createMakeupLessonInputSchema,
 	createManualInvoiceInputSchema,
 	createManualInvoiceResultSchema,
-	createOperationTaskInputSchema,
 	createPaymentInputSchema,
 	createPaymentResultSchema,
 	createPaymentReversalInputSchema,
@@ -96,7 +93,6 @@ import {
 	createStudentTagInputSchema,
 	createTeacherInputSchema,
 	currentOrganizationSchema,
-	dashboardSnapshotSchema,
 	deactivateScheduleRuleInputSchema,
 	deactivateScheduleRuleResultSchema,
 	decideRefundRequestInputSchema,
@@ -116,8 +112,6 @@ import {
 	getReceiptByPaymentInputSchema,
 	getReceiptByPaymentResultSchema,
 	getReceiptDocumentInputSchema,
-	globalSearchInputSchema,
-	globalSearchResultSchema,
 	independentEnrollmentOptionsInputSchema,
 	independentEnrollmentOptionsSchema,
 	invitationListResultSchema,
@@ -143,21 +137,11 @@ import {
 	makeupLessonMutationResultSchema,
 	manualInvoiceOptionsInputSchema,
 	manualInvoiceOptionsSchema,
-	markNotificationReadInputSchema,
-	markNotificationsReadResultSchema,
 	memberListResultSchema,
 	memberOwnerImpactInputSchema,
 	memberOwnerImpactResultSchema,
 	mergeStudentsInputSchema,
 	mergeStudentsResultSchema,
-	notificationListInputSchema,
-	notificationListResultSchema,
-	operationTaskActionInputSchema,
-	operationTaskAssigneeListInputSchema,
-	operationTaskAssigneeListResultSchema,
-	operationTaskListInputSchema,
-	operationTaskListResultSchema,
-	operationTaskMutationResultSchema,
 	pauseClassGroupInputSchema,
 	pauseClassGroupResultSchema,
 	previewBulkLessonUpdateInputSchema,
@@ -225,7 +209,6 @@ import {
 	updateEnrollmentLifecycleResultSchema,
 	updateLeadInputSchema,
 	updateMemberInputSchema,
-	updateOperationTaskInputSchema,
 	updateScheduleRuleInputSchema,
 	updateScheduleRuleResultSchema,
 	updateStudentInputSchema,
@@ -298,7 +281,6 @@ import {
 	getManualInvoiceOptions,
 	listInvoices,
 } from "../repositories/finance";
-import { searchGlobal } from "../repositories/global-search";
 import {
 	addLeadFollowUp,
 	createLead,
@@ -310,22 +292,8 @@ import {
 	updateLead,
 } from "../repositories/leads";
 import {
-	cancelOperationTaskForOrganization,
-	claimOperationTaskForOrganization,
-	completeOperationTaskForOrganization,
-	createOperationTaskForOrganization,
-	listOperationTaskAssigneesForOrganization,
-	listOperationTasksForOrganization,
-	reopenOperationTaskForOrganization,
-	updateOperationTaskForOrganization,
-} from "../repositories/operation-tasks";
-import {
 	confirmLeadImport,
-	getNotifications,
-	listAuditEvents,
 	previewLeadImport,
-	readAllNotifications,
-	readNotification,
 } from "../repositories/operations";
 import {
 	type CurrentOrganization as CurrentOrganizationContext,
@@ -425,7 +393,11 @@ import {
 	updateScheduleRule,
 	updateTeacher,
 } from "../repositories/teaching";
-import { getTrainingDashboardSnapshot } from "../repositories/training-dashboard";
+import { auditRouter } from "./training/audit";
+import { dashboardSnapshotProcedure } from "./training/dashboard";
+import { notificationsRouter } from "./training/notifications";
+import { operationTasksRouter } from "./training/operation-tasks";
+import { searchRouter } from "./training/search";
 
 function toCurrentOrganizationResponse(
 	context: Pick<
@@ -452,22 +424,7 @@ export const appRouter = {
 		};
 	}),
 	training: {
-		search: {
-			global: organizationProcedure
-				.input(globalSearchInputSchema)
-				.output(globalSearchResultSchema)
-				.handler(({ context, input }) =>
-					searchGlobal(
-						{
-							organizationId: context.organization.id,
-							userId: context.session.user.id,
-							role: context.role,
-							campusAccess: context.campusAccess,
-						},
-						input,
-					),
-				),
-		},
+		search: searchRouter,
 		organization: {
 			current: currentOrganizationProcedure
 				.output(currentOrganizationSchema)
@@ -647,59 +604,8 @@ export const appRouter = {
 					}),
 				),
 		},
-		notifications: {
-			list: organizationProcedure
-				.input(notificationListInputSchema)
-				.output(notificationListResultSchema)
-				.handler(({ context, input }) =>
-					getNotifications(
-						{
-							organizationId: context.organization.id,
-							userId: context.session.user.id,
-							campusAccess: context.campusAccess,
-						},
-						input,
-					),
-				),
-			read: organizationProcedure
-				.input(markNotificationReadInputSchema)
-				.output(markNotificationsReadResultSchema)
-				.handler(async ({ context, input }) => {
-					await readNotification(
-						{
-							organizationId: context.organization.id,
-							userId: context.session.user.id,
-							campusAccess: context.campusAccess,
-						},
-						input.id,
-					);
-					return { count: 1 };
-				}),
-			readAll: organizationProcedure
-				.output(markNotificationsReadResultSchema)
-				.handler(({ context }) =>
-					readAllNotifications({
-						organizationId: context.organization.id,
-						userId: context.session.user.id,
-						campusAccess: context.campusAccess,
-					}),
-				),
-		},
-		audit: {
-			list: organizationManagementProcedure
-				.input(auditEventListInputSchema)
-				.output(auditEventListResultSchema)
-				.handler(({ context, input }) =>
-					listAuditEvents(
-						{
-							organizationId: context.organization.id,
-							userId: context.session.user.id,
-							campusAccess: context.campusAccess,
-						},
-						input,
-					),
-				),
-		},
+		notifications: notificationsRouter,
+		audit: auditRouter,
 		students: {
 			importTemplate: studentProcedure
 				.output(studentImportTemplateResultSchema)
@@ -2056,120 +1962,7 @@ export const appRouter = {
 			},
 		},
 		operations: {
-			tasks: {
-				list: organizationProcedure
-					.input(operationTaskListInputSchema)
-					.output(operationTaskListResultSchema)
-					.handler(({ context, input }) =>
-						listOperationTasksForOrganization(
-							{
-								organizationId: context.organization.id,
-								userId: context.session.user.id,
-								role: context.role,
-								campusAccess: context.campusAccess,
-							},
-							input,
-						),
-					),
-				assignees: organizationProcedure
-					.input(operationTaskAssigneeListInputSchema)
-					.output(operationTaskAssigneeListResultSchema)
-					.handler(({ context, input }) =>
-						listOperationTaskAssigneesForOrganization(
-							{
-								organizationId: context.organization.id,
-								userId: context.session.user.id,
-								role: context.role,
-								campusAccess: context.campusAccess,
-							},
-							input,
-						),
-					),
-				create: organizationProcedure
-					.input(createOperationTaskInputSchema)
-					.output(operationTaskMutationResultSchema)
-					.handler(({ context, input }) =>
-						createOperationTaskForOrganization(
-							{
-								organizationId: context.organization.id,
-								userId: context.session.user.id,
-								role: context.role,
-								campusAccess: context.campusAccess,
-							},
-							input,
-						),
-					),
-				update: organizationProcedure
-					.input(updateOperationTaskInputSchema)
-					.output(operationTaskMutationResultSchema)
-					.handler(({ context, input }) =>
-						updateOperationTaskForOrganization(
-							{
-								organizationId: context.organization.id,
-								userId: context.session.user.id,
-								role: context.role,
-								campusAccess: context.campusAccess,
-							},
-							input,
-						),
-					),
-				claim: organizationProcedure
-					.input(operationTaskActionInputSchema)
-					.output(operationTaskMutationResultSchema)
-					.handler(({ context, input }) =>
-						claimOperationTaskForOrganization(
-							{
-								organizationId: context.organization.id,
-								userId: context.session.user.id,
-								role: context.role,
-								campusAccess: context.campusAccess,
-							},
-							input,
-						),
-					),
-				complete: organizationProcedure
-					.input(operationTaskActionInputSchema)
-					.output(operationTaskMutationResultSchema)
-					.handler(({ context, input }) =>
-						completeOperationTaskForOrganization(
-							{
-								organizationId: context.organization.id,
-								userId: context.session.user.id,
-								role: context.role,
-								campusAccess: context.campusAccess,
-							},
-							input,
-						),
-					),
-				reopen: organizationProcedure
-					.input(operationTaskActionInputSchema)
-					.output(operationTaskMutationResultSchema)
-					.handler(({ context, input }) =>
-						reopenOperationTaskForOrganization(
-							{
-								organizationId: context.organization.id,
-								userId: context.session.user.id,
-								role: context.role,
-								campusAccess: context.campusAccess,
-							},
-							input,
-						),
-					),
-				cancel: organizationProcedure
-					.input(operationTaskActionInputSchema)
-					.output(operationTaskMutationResultSchema)
-					.handler(({ context, input }) =>
-						cancelOperationTaskForOrganization(
-							{
-								organizationId: context.organization.id,
-								userId: context.session.user.id,
-								role: context.role,
-								campusAccess: context.campusAccess,
-							},
-							input,
-						),
-					),
-			},
+			tasks: operationTasksRouter,
 		},
 		analytics: {
 			export: organizationProcedure
@@ -2395,16 +2188,7 @@ export const appRouter = {
 					),
 				),
 		},
-		snapshot: organizationProcedure
-			.output(dashboardSnapshotSchema)
-			.handler(({ context }) =>
-				getTrainingDashboardSnapshot({
-					organizationId: context.organization.id,
-					userId: context.session.user.id,
-					role: context.role,
-					campusAccess: context.campusAccess,
-				}),
-			),
+		snapshot: dashboardSnapshotProcedure,
 	},
 };
 export type AppRouter = typeof appRouter;
