@@ -17,13 +17,13 @@ import {
 	studentBulkOperationBatch,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import { isCampusAccessible, type Transaction } from "./campus-access";
 import type { CampusAccess } from "./organization";
 import {
 	getCurrentStudentWriteCampusAccess,
 	StudentRepositoryError,
 } from "./students";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type EnrollmentBulkTarget = { enrollmentId: string; expectedVersion: number };
 
 export type EnrollmentBulkOperationInput =
@@ -75,13 +75,6 @@ export class EnrollmentBulkOperationError extends Error {
 const managementRoles = new Set<
 	(typeof organizationMember.$inferSelect)["role"]
 >(["owner", "admin", "campus_manager"]);
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
 
 function summarize(items: EnrollmentBulkPreviewItem[]) {
 	return {

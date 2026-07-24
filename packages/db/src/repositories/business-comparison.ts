@@ -1,6 +1,7 @@
 import { type SQL, sql } from "drizzle-orm";
 
 import { db } from "../index";
+import { campusAccessSqlCondition } from "./campus-access";
 import type { CampusAccess } from "./organization";
 
 export type BusinessComparisonDimension =
@@ -104,20 +105,6 @@ const zeroMetric = (): DimensionMetric => ({
 	netReceiptsInCents: 0,
 });
 
-function sqlList(values: string[]): SQL {
-	return sql.join(
-		values.map((value) => sql`${value}`),
-		sql`, `,
-	);
-}
-
-function campusCondition(access: CampusAccess, expression: SQL): SQL {
-	if (access.kind === "none") return sql`false`;
-	if (access.kind === "all") return sql`true`;
-	if (access.campusIds.length === 0) return sql`false`;
-	return sql`${expression} in (${sqlList(access.campusIds)})`;
-}
-
 function teacherCondition(userId: string | undefined): SQL {
 	return userId
 		? sql`cg.teacher_id in (select t_scope.id from teacher t_scope where t_scope.organization_id = cg.organization_id and t_scope.user_id = ${userId})`
@@ -191,7 +178,7 @@ async function getDimensionRecords(input: {
 				from campus c
 				where c.organization_id = ${organizationId}
 					and c.is_active = true
-					and ${campusCondition(campusAccess, sql`c.id`)}
+					and ${campusAccessSqlCondition(sql`c.id`, campusAccess)}
 				order by c.name, c.id
 			`)
 			: dimension === "course"
@@ -208,7 +195,7 @@ async function getDimensionRecords(input: {
 									: sql`exists (
 								select 1 from class_group scoped_cg
 								where scoped_cg.course_id = c.id
-								and ${campusCondition(campusAccess, sql`scoped_cg.campus_id`)}
+								and ${campusAccessSqlCondition(sql`scoped_cg.campus_id`, campusAccess)}
 							)`
 							}
 						)
@@ -223,7 +210,7 @@ async function getDimensionRecords(input: {
 						left join teacher_campus tc on tc.teacher_id = t.id
 						where t.organization_id = ${organizationId}
 							and ${teacherUserId ? sql`t.user_id = ${teacherUserId}` : sql`true`}
-							and ${campusCondition(campusAccess, sql`tc.campus_id`)}
+							and ${campusAccessSqlCondition(sql`tc.campus_id`, campusAccess)}
 						group by t.id
 						order by t.name, t.id
 					`)
@@ -236,7 +223,7 @@ async function getDimensionRecords(input: {
 						left join enrollment en on en.class_group_id = cg.id
 						where cg.organization_id = ${organizationId}
 							and cg.status in ('recruiting', 'running')
-							and ${campusCondition(campusAccess, sql`cg.campus_id`)}
+							and ${campusAccessSqlCondition(sql`cg.campus_id`, campusAccess)}
 							and ${teacherCondition(teacherUserId)}
 						group by cg.id
 						order by cg.name, cg.id
@@ -270,7 +257,7 @@ async function getMetricRows(input: {
 				left join class_group cg on cg.id = e.class_group_id and cg.organization_id = e.organization_id
 				where e.organization_id = ${organizationId}
 					and e.enrolled_at >= ${from} and e.enrolled_at < ${to}
-					and ${campusCondition(campusAccess, enrollmentExpr.campus)}
+					and ${campusAccessSqlCondition(enrollmentExpr.campus, campusAccess)}
 					and ${teacherCondition(input.teacherUserId)}
 				group by ${enrollmentExpr.key}
 			`),
@@ -290,7 +277,7 @@ async function getMetricRows(input: {
 				left join class_group cg on cg.id = l.class_group_id and cg.organization_id = l.organization_id
 				where l.organization_id = ${organizationId}
 					and l.starts_at >= ${from} and l.starts_at < ${to}
-					and ${campusCondition(campusAccess, lessonExpr.campus)}
+					and ${campusAccessSqlCondition(lessonExpr.campus, campusAccess)}
 					and ${teacherCondition(input.teacherUserId)}
 				group by ${lessonExpr.key}
 			`),
@@ -308,7 +295,7 @@ async function getMetricRows(input: {
 				where l.organization_id = ${organizationId}
 					and l.status = 'completed'
 					and l.starts_at >= ${from} and l.starts_at < ${to}
-					and ${campusCondition(campusAccess, lessonExpr.campus)}
+					and ${campusAccessSqlCondition(lessonExpr.campus, campusAccess)}
 					and ${teacherCondition(input.teacherUserId)}
 				group by ${lessonExpr.key}
 			`),
@@ -325,7 +312,7 @@ async function getMetricRows(input: {
 				left join class_group cg on cg.id = l.class_group_id and cg.organization_id = l.organization_id
 				where lc.organization_id = ${organizationId}
 					and l.starts_at >= ${from} and l.starts_at < ${to}
-					and ${campusCondition(campusAccess, lessonExpr.campus)}
+					and ${campusAccessSqlCondition(lessonExpr.campus, campusAccess)}
 					and ${teacherCondition(input.teacherUserId)}
 				group by ${lessonExpr.key}
 			`),
@@ -343,7 +330,7 @@ async function getMetricRows(input: {
 					left join enrollment e on e.id = i.enrollment_id and e.organization_id = i.organization_id
 					left join class_group cg on cg.id = e.class_group_id and cg.organization_id = e.organization_id
 					where p.organization_id = ${organizationId} and p.received_at >= ${from} and p.received_at < ${to}
-						and ${campusCondition(campusAccess, invoiceExpr.campus)}
+						and ${campusAccessSqlCondition(invoiceExpr.campus, campusAccess)}
 						and ${teacherCondition(input.teacherUserId)}
 					union all
 					select ${invoiceExpr.key}::text as key, -r.amount_in_cents as amount
@@ -353,7 +340,7 @@ async function getMetricRows(input: {
 					left join enrollment e on e.id = i.enrollment_id and e.organization_id = i.organization_id
 					left join class_group cg on cg.id = e.class_group_id and cg.organization_id = e.organization_id
 					where r.organization_id = ${organizationId} and r.reversed_at >= ${from} and r.reversed_at < ${to}
-						and ${campusCondition(campusAccess, invoiceExpr.campus)}
+						and ${campusAccessSqlCondition(invoiceExpr.campus, campusAccess)}
 						and ${teacherCondition(input.teacherUserId)}
 					union all
 					select ${invoiceExpr.key}::text as key, -rf.amount_in_cents as amount
@@ -363,7 +350,7 @@ async function getMetricRows(input: {
 					left join enrollment e on e.id = i.enrollment_id and e.organization_id = i.organization_id
 					left join class_group cg on cg.id = e.class_group_id and cg.organization_id = e.organization_id
 					where rf.organization_id = ${organizationId} and rf.refunded_at >= ${from} and rf.refunded_at < ${to}
-						and ${campusCondition(campusAccess, invoiceExpr.campus)}
+						and ${campusAccessSqlCondition(invoiceExpr.campus, campusAccess)}
 						and ${teacherCondition(input.teacherUserId)}
 				) events
 				group by key

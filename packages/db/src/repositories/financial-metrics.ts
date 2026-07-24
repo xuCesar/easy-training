@@ -10,6 +10,7 @@ import {
 	paymentReversal,
 	refund,
 } from "../schema";
+import { campusAccessCondition } from "./campus-access";
 import type { CampusAccess } from "./organization";
 
 export type FinancialMetricScope = {
@@ -130,7 +131,10 @@ export async function getFinancialReceiptEvents(input: {
 			.where(
 				and(
 					eq(payment.organizationId, input.scope.organizationId),
-					campusCondition(input.scope.campusAccess),
+					campusAccessCondition(
+						invoiceMetricFact.campusId,
+						input.scope.campusAccess,
+					),
 					...filter(payment.receivedAt),
 				),
 			),
@@ -151,7 +155,10 @@ export async function getFinancialReceiptEvents(input: {
 			.where(
 				and(
 					eq(paymentReversal.organizationId, input.scope.organizationId),
-					campusCondition(input.scope.campusAccess),
+					campusAccessCondition(
+						invoiceMetricFact.campusId,
+						input.scope.campusAccess,
+					),
 					gte(paymentReversal.reversedAt, input.from),
 					lt(paymentReversal.reversedAt, input.to),
 				),
@@ -173,7 +180,10 @@ export async function getFinancialReceiptEvents(input: {
 			.where(
 				and(
 					eq(refund.organizationId, input.scope.organizationId),
-					campusCondition(input.scope.campusAccess),
+					campusAccessCondition(
+						invoiceMetricFact.campusId,
+						input.scope.campusAccess,
+					),
 					gte(refund.refundedAt, input.from),
 					lt(refund.refundedAt, input.to),
 				),
@@ -247,7 +257,10 @@ export async function getFinancialReceiptEventPage(input: {
 			.where(
 				and(
 					eq(payment.organizationId, input.scope.organizationId),
-					campusCondition(input.scope.campusAccess),
+					campusAccessCondition(
+						invoiceMetricFact.campusId,
+						input.scope.campusAccess,
+					),
 					gte(payment.receivedAt, input.from),
 					lt(payment.receivedAt, input.to),
 					afterFinancialEventCursor(
@@ -277,7 +290,10 @@ export async function getFinancialReceiptEventPage(input: {
 			.where(
 				and(
 					eq(paymentReversal.organizationId, input.scope.organizationId),
-					campusCondition(input.scope.campusAccess),
+					campusAccessCondition(
+						invoiceMetricFact.campusId,
+						input.scope.campusAccess,
+					),
 					gte(paymentReversal.reversedAt, input.from),
 					lt(paymentReversal.reversedAt, input.to),
 					afterFinancialEventCursor(
@@ -307,7 +323,10 @@ export async function getFinancialReceiptEventPage(input: {
 			.where(
 				and(
 					eq(refund.organizationId, input.scope.organizationId),
-					campusCondition(input.scope.campusAccess),
+					campusAccessCondition(
+						invoiceMetricFact.campusId,
+						input.scope.campusAccess,
+					),
 					gte(refund.refundedAt, input.from),
 					lt(refund.refundedAt, input.to),
 					afterFinancialEventCursor(refund.refundedAt, refund.id, input.cursor),
@@ -444,7 +463,10 @@ export async function getFinancialCohortRecord(input: {
 				eq(invoice.organizationId, input.scope.organizationId),
 				gte(invoice.issuedAt, input.from),
 				lt(invoice.issuedAt, input.to),
-				campusCondition(input.scope.campusAccess),
+				campusAccessCondition(
+					invoiceMetricFact.campusId,
+					input.scope.campusAccess,
+				),
 			),
 		);
 	const invoiceIds = invoices.map((row) => row.id);
@@ -637,7 +659,10 @@ export async function getFinancialAgingRecord(input: {
 			and(
 				eq(invoice.organizationId, input.scope.organizationId),
 				lt(invoice.issuedAt, input.snapshotAt),
-				campusCondition(input.scope.campusAccess),
+				campusAccessCondition(
+					invoiceMetricFact.campusId,
+					input.scope.campusAccess,
+				),
 			),
 		);
 	const ids = rows.map((row) => row.id);
@@ -855,7 +880,10 @@ export async function getFinancialAgingInvoicePage(input: {
 				and(
 					eq(invoice.organizationId, input.scope.organizationId),
 					lt(invoice.issuedAt, input.snapshotAt),
-					campusCondition(input.scope.campusAccess),
+					campusAccessCondition(
+						invoiceMetricFact.campusId,
+						input.scope.campusAccess,
+					),
 					afterFinancialEventCursor(invoice.issuedAt, invoice.id, rawCursor),
 				),
 			)
@@ -1036,14 +1064,6 @@ export function getFinancialAgingBucket(
 	return "overdueOver90";
 }
 
-function campusCondition(access: CampusAccess) {
-	if (access.kind === "none") return sql`false`;
-	if (access.kind === "selected") {
-		return inArray(invoiceMetricFact.campusId, access.campusIds);
-	}
-	return sql`true`;
-}
-
 function bucketStart(value: Date, granularity: "day" | "week" | "month"): Date {
 	const shanghai = new Date(value.getTime() + 8 * 60 * 60 * 1000);
 	const year = shanghai.getUTCFullYear();
@@ -1069,7 +1089,7 @@ export async function getFinancialReceiptRecord(input: {
 }): Promise<FinancialReceiptRecord> {
 	const scopeFilters = [
 		eq(invoiceMetricFact.organizationId, input.scope.organizationId),
-		campusCondition(input.scope.campusAccess),
+		campusAccessCondition(invoiceMetricFact.campusId, input.scope.campusAccess),
 	];
 	const [payments, reversals, refunds, missing] = await Promise.all([
 		db

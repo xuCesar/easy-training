@@ -1,8 +1,6 @@
 import { sql } from "drizzle-orm";
 
-import type { db } from "../index";
-
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+import type { Transaction } from "./campus-access";
 
 /**
  * 仅规范化用于同机构查重的展示差异，不推断姓名、地区或号码归属。

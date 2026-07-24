@@ -14,6 +14,7 @@ import {
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import { campusAccessCondition, isCampusAccessible } from "./campus-access";
 import {
 	type FinanceTransaction,
 	getCurrentFinanceWriteCampusAccess,
@@ -163,20 +164,6 @@ const eventSelection = {
 	sourceType: invoiceArrearsEvent.sourceType,
 	createdAt: invoiceArrearsEvent.createdAt,
 };
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
-
-function campusAccessCondition(access: CampusAccess) {
-	if (access.kind === "none") return sql`false`;
-	return access.kind === "selected"
-		? inArray(student.campusId, access.campusIds)
-		: sql`true`;
-}
 
 function getShanghaiDate(now = new Date()): string {
 	const values = new Intl.DateTimeFormat("en-US", {
@@ -475,7 +462,7 @@ export async function listArrearsWorkflowRecords(input: {
 		eq(invoice.organizationId, input.organizationId),
 		ne(invoice.status, "refunded"),
 		sql`${invoice.amountInCents} > ${invoice.paidAmountInCents}`,
-		campusAccessCondition(input.campusAccess),
+		campusAccessCondition(student.campusId, input.campusAccess),
 	];
 	if (cursor) {
 		const cursorFilter = or(
@@ -643,7 +630,7 @@ export async function getArrearsDetailRecord(input: {
 			and(
 				eq(invoice.organizationId, input.organizationId),
 				eq(invoice.id, input.invoiceId),
-				campusAccessCondition(input.campusAccess),
+				campusAccessCondition(student.campusId, input.campusAccess),
 			),
 		)
 		.limit(1);

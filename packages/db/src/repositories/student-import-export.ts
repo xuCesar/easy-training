@@ -17,6 +17,12 @@ import {
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
 import {
+	campusAccessCondition,
+	escapedContains,
+	isCampusAccessible,
+	type Transaction,
+} from "./campus-access";
+import {
 	CsvRepositoryError,
 	type CsvRow,
 	hasCsvFormulaPrefix,
@@ -33,7 +39,6 @@ import {
 	StudentRepositoryError,
 } from "./students";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type StudentStatus = NonNullable<(typeof student.$inferInsert)["status"]>;
 
 const studentImportRoles = new Set<
@@ -112,13 +117,6 @@ type ResolvedStudentImportRow = ParsedStudentImportRow & {
 	ownerUserId: string | null;
 	tagIds: string[];
 };
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
 
 function maskPhone(phone: string): string {
 	const compact = phone.replace(/[\s()（）-]/gu, "");
@@ -731,11 +729,7 @@ export async function exportStudentRecords(input: {
 			const filters = [
 				eq(student.organizationId, input.organizationId),
 				isNull(student.mergedIntoStudentId),
-				campusAccess.kind === "all"
-					? sql`true`
-					: campusAccess.kind === "selected"
-						? inArray(student.campusId, campusAccess.campusIds)
-						: sql`false`,
+				campusAccessCondition(student.campusId, campusAccess),
 			];
 			if (input.campusId) filters.push(eq(student.campusId, input.campusId));
 			if (input.status) filters.push(eq(student.status, input.status));
@@ -751,7 +745,7 @@ export async function exportStudentRecords(input: {
 				)`);
 			}
 			if (input.query) {
-				const pattern = `%${input.query}%`;
+				const pattern = escapedContains(input.query);
 				filters.push(sql<boolean>`(
 					${student.name} ilike ${pattern}
 					or exists (

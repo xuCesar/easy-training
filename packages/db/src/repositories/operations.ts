@@ -30,6 +30,7 @@ import {
 	type OrganizationAuditAction,
 	writeOrganizationAuditEvent,
 } from "./audit";
+import { isCampusAccessible, type Transaction } from "./campus-access";
 import {
 	CsvRepositoryError,
 	type CsvRow,
@@ -39,7 +40,6 @@ import {
 import { createLeadRecordInTransaction, type WritableLeadStage } from "./leads";
 import type { CampusAccess } from "./organization";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type NotificationType = (typeof organizationNotification.$inferInsert)["type"];
 
 export class OperationsRepositoryError extends Error {
@@ -426,17 +426,6 @@ function parseLeadImport(content: string): ParsedLeadImport {
 		});
 	}
 	return { rows, errors };
-}
-
-function isCampusAccessible(
-	campusAccess: CampusAccess,
-	campusId: string,
-): boolean {
-	return (
-		campusAccess.kind === "all" ||
-		(campusAccess.kind === "selected" &&
-			campusAccess.campusIds.includes(campusId))
-	);
 }
 
 function campusScopeCondition(campusAccess: CampusAccess) {

@@ -15,6 +15,7 @@ import {
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import type { Transaction } from "./campus-access";
 import type { CampusAccess } from "./organization";
 import {
 	clearInvalidStudentOwnersForMember,
@@ -81,7 +82,6 @@ export type InvitationRecord = {
 
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
 type AccessMode = (typeof organizationMember.$inferSelect)["campusAccessMode"];
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 function normalizeEmail(value: string): string {
 	return value.trim().toLocaleLowerCase("en-US");

@@ -33,6 +33,7 @@ import type {
 	UpdateLeadInput,
 } from "../contracts/training";
 import { quoteCsv } from "./csv";
+import { throwMappedRepositoryError } from "./repository-error-mapping";
 
 type LeadScope = {
 	organizationId: string;
@@ -80,15 +81,19 @@ function throwRepositoryError(error: LeadRepositoryError): never {
 				message: "已报名线索不能修改或继续跟进。",
 			});
 		case "IDEMPOTENCY_CONFLICT":
-			throw new ORPCError("CONFLICT", {
+			return throwMappedRepositoryError("IDEMPOTENCY_CONFLICT", {
 				message: "该创建请求已使用，且提交内容不一致。",
 			});
 		case "INVALID_CURSOR":
-			throw new ORPCError("BAD_REQUEST", { message: "分页游标无效。" });
+			return throwMappedRepositoryError("INVALID_CURSOR", {
+				message: "分页游标无效。",
+			});
 		case "CAMPUS_OUT_OF_SCOPE":
-			throw new ORPCError("FORBIDDEN", { message: "当前账号无权访问该校区。" });
+			return throwMappedRepositoryError("CAMPUS_OUT_OF_SCOPE", {
+				message: "当前账号无权访问该校区。",
+			});
 		case "CAMPUS_INACTIVE":
-			throw new ORPCError("CONFLICT", {
+			return throwMappedRepositoryError("CAMPUS_INACTIVE", {
 				message: "校区已停用，不能继续写入。",
 			});
 		case "PROVIDER_NOT_ELIGIBLE":

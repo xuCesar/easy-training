@@ -1,7 +1,6 @@
-import type { db } from "../index";
 import { organizationAuditEvent } from "../schema";
+import type { Transaction } from "./campus-access";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export type OrganizationAuditAction =
 	(typeof organizationAuditEvent.$inferInsert)["action"];
 

@@ -11,6 +11,7 @@ import {
 	studentTagAssignment,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import { isCampusAccessible, type Transaction } from "./campus-access";
 import type { CampusAccess } from "./organization";
 import {
 	assertEligibleStudentOwner,
@@ -22,7 +23,6 @@ import {
 	StudentRepositoryError,
 } from "./students";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type StudentBulkTarget = { studentId: string; expectedVersion: number };
 export type StudentBulkOperationInput =
 	| {
@@ -67,13 +67,6 @@ export class StudentBulkOperationError extends Error {
 const managementRoles = new Set<
 	(typeof organizationMember.$inferSelect)["role"]
 >(["owner", "admin", "campus_manager"]);
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
 
 function summarize(items: StudentBulkPreviewItem[]) {
 	return {

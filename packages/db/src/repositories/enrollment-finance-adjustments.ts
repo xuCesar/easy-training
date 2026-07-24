@@ -19,6 +19,11 @@ import {
 } from "../schema";
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
+import {
+	campusAccessCondition,
+	isCampusAccessible,
+	type Transaction,
+} from "./campus-access";
 import { getCurrentFinanceWriteCampusAccess } from "./finance-access";
 import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import type { CampusAccess } from "./organization";
@@ -47,21 +52,6 @@ export class EnrollmentFinanceAdjustmentError extends Error {
 		super(code);
 		this.name = "EnrollmentFinanceAdjustmentError";
 	}
-}
-
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
-
-function campusAccessCondition(access: CampusAccess) {
-	if (access.kind === "none") return sql`false`;
-	return access.kind === "selected"
-		? inArray(student.campusId, access.campusIds)
-		: sql`true`;
 }
 
 async function getCurrentWriteCampusAccess(
@@ -190,7 +180,7 @@ export async function listEnrollmentAdjustmentRecords(input: {
 		.where(
 			and(
 				eq(enrollment.organizationId, input.organizationId),
-				campusAccessCondition(input.campusAccess),
+				campusAccessCondition(student.campusId, input.campusAccess),
 			),
 		)
 		.orderBy(asc(student.name), asc(course.name), asc(enrollment.id));
@@ -848,7 +838,7 @@ export async function listArrearsRecords(input: {
 				eq(invoice.organizationId, input.organizationId),
 				ne(invoice.status, "refunded"),
 				sql`${invoice.amountInCents} > ${invoice.paidAmountInCents}`,
-				campusAccessCondition(input.campusAccess),
+				campusAccessCondition(student.campusId, input.campusAccess),
 			),
 		)
 		.orderBy(asc(invoice.dueDate), asc(student.name), asc(invoice.id));

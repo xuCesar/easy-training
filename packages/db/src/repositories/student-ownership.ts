@@ -1,16 +1,14 @@
 import { and, asc, count, eq, inArray, notInArray, sql } from "drizzle-orm";
 
-import type { db } from "../index";
 import {
 	organizationMember,
 	organizationMemberCampus,
 	student,
 	studentOwnerAssignmentEvent,
 } from "../schema";
+import type { Transaction } from "./campus-access";
 
-export type StudentOwnershipTransaction = Parameters<
-	Parameters<typeof db.transaction>[0]
->[0];
+export type StudentOwnershipTransaction = Transaction;
 
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
 type AssignmentSource =

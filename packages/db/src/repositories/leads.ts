@@ -25,6 +25,12 @@ import {
 	organizationMember,
 	user,
 } from "../schema";
+import {
+	campusAccessCondition,
+	escapedContains,
+	isCampusAccessible,
+	type Transaction,
+} from "./campus-access";
 import type { CampusAccess } from "./organization";
 
 const stageToDatabase = {
@@ -127,28 +133,8 @@ export class LeadRepositoryError extends Error {
 
 type LeadCursor = { createdAt: string; id: string };
 
-function campusAccessCondition(campusAccess: CampusAccess) {
-	if (campusAccess.kind === "none") return sql`false`;
-	if (campusAccess.kind === "selected") {
-		return inArray(lead.campusId, campusAccess.campusIds);
-	}
-	return sql`true`;
-}
-
-function isCampusAccessible(
-	campusAccess: CampusAccess,
-	campusId: string | null,
-): boolean {
-	if (campusAccess.kind === "all") return true;
-	return (
-		campusId !== null &&
-		campusAccess.kind === "selected" &&
-		campusAccess.campusIds.includes(campusId)
-	);
-}
-
 async function assertWritableCampus(
-	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+	tx: Transaction,
 	input: {
 		organizationId: string;
 		campusAccess: CampusAccess;
@@ -253,7 +239,7 @@ function createLeadFilters(input: {
 	const filters = [
 		eq(lead.organizationId, input.organizationId),
 		ne(lead.stage, "enrolled"),
-		campusAccessCondition(input.campusAccess),
+		campusAccessCondition(lead.campusId, input.campusAccess),
 	];
 
 	if (input.stage) filters.push(eq(lead.stage, stageToDatabase[input.stage]));
@@ -263,7 +249,7 @@ function createLeadFilters(input: {
 		filters.push(gte(lead.createdAt, input.createdAtFrom));
 	if (input.createdAtTo) filters.push(lte(lead.createdAt, input.createdAtTo));
 	if (input.query) {
-		const pattern = `%${input.query}%`;
+		const pattern = escapedContains(input.query);
 		const search = or(
 			ilike(lead.name, pattern),
 			ilike(lead.phone, pattern),
@@ -345,7 +331,7 @@ export async function getLeadRecord(input: {
 				eq(lead.id, input.id),
 				eq(lead.organizationId, input.organizationId),
 				ne(lead.stage, "enrolled"),
-				campusAccessCondition(input.campusAccess),
+				campusAccessCondition(lead.campusId, input.campusAccess),
 			),
 		)
 		.limit(1);
@@ -444,7 +430,7 @@ export async function findLeadStage(input: {
 			and(
 				eq(lead.id, input.id),
 				eq(lead.organizationId, input.organizationId),
-				campusAccessCondition(input.campusAccess),
+				campusAccessCondition(lead.campusId, input.campusAccess),
 			),
 		)
 		.limit(1);

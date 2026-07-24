@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { db } from "../index";
 import { student } from "../schema";
+import { isCampusAccessible } from "./campus-access";
 import type { CampusAccess } from "./organization";
 import { StudentRepositoryError } from "./students";
 
@@ -90,11 +91,6 @@ const timelineRowSchema = z.object({
 	beforeStatus: z.string().nullable(),
 	afterStatus: z.string().nullable(),
 });
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	if (access.kind === "all") return true;
-	return access.kind === "selected" && access.campusIds.includes(campusId);
-}
 
 function encodeCursor(cursor: TimelineCursor): string {
 	return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");

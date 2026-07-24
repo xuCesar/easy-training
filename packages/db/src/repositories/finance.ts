@@ -33,6 +33,11 @@ import {
 	startArrearsCycleIfNeeded,
 } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
+import {
+	campusAccessCondition,
+	escapedContains,
+	isCampusAccessible,
+} from "./campus-access";
 import { updateEnrollmentPaidAmount } from "./enrollment-finance-adjustments";
 import {
 	type FinanceTransaction,
@@ -184,14 +189,6 @@ export type CreatePaymentRecordInput = {
 	requestId: string;
 };
 
-function campusAccessCondition(campusAccess: CampusAccess) {
-	if (campusAccess.kind === "none") return sql`false`;
-	if (campusAccess.kind === "selected") {
-		return inArray(student.campusId, campusAccess.campusIds);
-	}
-	return sql`true`;
-}
-
 const invoiceRecordSelection = {
 	id: invoice.id,
 	enrollmentId: invoice.enrollmentId,
@@ -255,7 +252,7 @@ export async function listInvoiceRecords(input: {
 	const cursor = decodeInvoiceCursor(input.cursor);
 	const filters = [
 		eq(invoice.organizationId, input.organizationId),
-		campusAccessCondition(input.campusAccess),
+		campusAccessCondition(student.campusId, input.campusAccess),
 	];
 
 	switch (input.status) {
@@ -295,7 +292,7 @@ export async function listInvoiceRecords(input: {
 	}
 
 	if (input.query) {
-		const pattern = `%${input.query}%`;
+		const pattern = escapedContains(input.query);
 		const search = or(
 			ilike(student.name, pattern),
 			ilike(course.name, pattern),
@@ -429,7 +426,7 @@ export async function getInvoiceDetailRecord(input: {
 			and(
 				eq(invoice.id, input.id),
 				eq(invoice.organizationId, input.organizationId),
-				campusAccessCondition(input.campusAccess),
+				campusAccessCondition(student.campusId, input.campusAccess),
 			),
 		)
 		.limit(1);
@@ -598,7 +595,7 @@ export async function createPaymentRecord(
 					and(
 						eq(student.id, invoiceRecord.studentId),
 						eq(student.organizationId, input.organizationId),
-						campusAccessCondition(currentCampusAccess),
+						campusAccessCondition(student.campusId, currentCampusAccess),
 					),
 				)
 				.limit(1)
@@ -808,13 +805,6 @@ const manualInvoiceBusinessActivityTypes =
 		"other",
 	]);
 
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
-
 function assertValidBusinessDate(value: string): void {
 	if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
 		throw new FinanceError("INVALID_INVOICE_INPUT");
@@ -923,9 +913,10 @@ export async function listManualInvoiceOptionRecords(input: {
 		eq(student.organizationId, input.organizationId),
 		eq(campus.organizationId, input.organizationId),
 		eq(campus.isActive, true),
-		campusAccessCondition(input.campusAccess),
+		campusAccessCondition(student.campusId, input.campusAccess),
 	];
-	if (input.query) filters.push(ilike(student.name, `%${input.query}%`));
+	if (input.query)
+		filters.push(ilike(student.name, escapedContains(input.query)));
 	if (cursor) {
 		const cursorFilter = or(
 			gt(student.name, cursor.name),

@@ -12,6 +12,7 @@ import {
 	makeupLesson,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import { campusAccessCondition, type Transaction } from "./campus-access";
 import type { CampusAccess } from "./organization";
 import {
 	academicWriteRoles,
@@ -23,20 +24,12 @@ import {
 	normalizeRoom,
 	resolveActiveClassroom,
 	TeachingRepositoryError,
-	type Transaction,
 } from "./teaching";
 
 export const MAX_SCHEDULE_CANDIDATES = 200;
 const SHANGHAI_TIMEZONE = "Asia/Shanghai";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const weekdayLabels = ["", "一", "二", "三", "四", "五", "六", "日"];
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
 
 export type ScheduleRuleData = {
 	weekdays: number[];
@@ -523,7 +516,10 @@ export async function listScheduleRuleRecords(input: {
 	classGroupId?: string;
 }): Promise<ScheduleRuleRecord[]> {
 	if (input.campusAccess.kind === "none") return [];
-	const filters = [eq(lessonScheduleRule.organizationId, input.organizationId)];
+	const filters = [
+		eq(lessonScheduleRule.organizationId, input.organizationId),
+		campusAccessCondition(classGroup.campusId, input.campusAccess),
+	];
 	if (input.classGroupId)
 		filters.push(eq(lessonScheduleRule.classGroupId, input.classGroupId));
 	const rows = await db
@@ -556,13 +552,11 @@ export async function listScheduleRuleRecords(input: {
 						)
 				).flatMap((item) => item.scheduleRuleId ?? []),
 	);
-	return rows
-		.filter((row) => isCampusAccessible(input.campusAccess, row.campusId))
-		.map(({ rule, ...context }) => ({
-			...rule,
-			...context,
-			hasGeneratedLessons: generatedRuleIds.has(rule.id),
-		}));
+	return rows.map(({ rule, ...context }) => ({
+		...rule,
+		...context,
+		hasGeneratedLessons: generatedRuleIds.has(rule.id),
+	}));
 }
 
 export async function createScheduleRuleRecord(input: {

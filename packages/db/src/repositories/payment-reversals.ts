@@ -13,6 +13,7 @@ import {
 } from "../schema";
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
+import { isCampusAccessible } from "./campus-access";
 import { updateEnrollmentPaidAmount } from "./enrollment-finance-adjustments";
 import {
 	type FinanceTransaction,
@@ -94,13 +95,6 @@ const reversalSelection = {
 	requestId: paymentReversal.requestId,
 	createdAt: paymentReversal.createdAt,
 };
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
 
 async function assertActiveCampus(
 	tx: FinanceTransaction,

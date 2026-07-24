@@ -27,6 +27,7 @@ import {
 	teacher,
 	user,
 } from "../schema";
+import { campusAccessCondition as requiredCampusAccessCondition } from "./campus-access";
 import type { CampusAccess } from "./organization";
 
 export type DashboardLeadSummaryRow = {
@@ -120,11 +121,7 @@ function campusAccessCondition(
 	campusAccess: CampusAccess | undefined,
 ) {
 	if (!campusAccess) return sql`true`;
-	if (campusAccess.kind === "none") return sql`false`;
-	if (campusAccess.kind === "selected") {
-		return inArray(campusId, campusAccess.campusIds);
-	}
-	return sql`true`;
+	return requiredCampusAccessCondition(campusId, campusAccess);
 }
 
 function toDashboardLeadStage(

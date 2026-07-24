@@ -4,13 +4,11 @@ import {
 	desc,
 	eq,
 	ilike,
-	inArray,
 	ne,
 	or,
 	type SQLWrapper,
 	sql,
 } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { db } from "../index";
 import {
@@ -25,6 +23,7 @@ import {
 	studentContact,
 	teacher,
 } from "../schema";
+import { campusAccessCondition, escapedContains } from "./campus-access";
 import type { CampusAccess } from "./organization";
 
 export const globalSearchKinds = [
@@ -56,23 +55,11 @@ type SearchInput = {
 
 const perKindLimit = 6;
 
-function escapedContains(query: string): string {
-	return `%${query.replace(/[\\%_]/gu, "\\$&")}%`;
-}
-
 function maskedPhone(phone: string | null): string | null {
 	if (!phone) return null;
 	const compact = phone.replace(/\s/gu, "");
 	if (compact.length <= 4) return "****";
 	return `${compact.slice(0, 3)}****${compact.slice(-4)}`;
-}
-
-function campusCondition(column: AnyPgColumn, access: CampusAccess) {
-	if (access.kind === "all") return undefined;
-	if (access.kind === "none") return sql`false`;
-	return access.campusIds.length > 0
-		? inArray(column, access.campusIds)
-		: sql`false`;
 }
 
 function rank(column: SQLWrapper, query: string) {
@@ -100,7 +87,7 @@ async function searchLeads(input: SearchInput): Promise<GlobalSearchRecord[]> {
 			and(
 				eq(lead.organizationId, input.organizationId),
 				ne(lead.stage, "enrolled"),
-				campusCondition(lead.campusId, input.campusAccess),
+				campusAccessCondition(lead.campusId, input.campusAccess),
 				or(
 					ilike(lead.name, query),
 					ilike(lead.phone, query),
@@ -156,7 +143,7 @@ async function searchStudents(
 			and(
 				eq(student.organizationId, input.organizationId),
 				sql`${student.mergedIntoStudentId} is null`,
-				campusCondition(student.campusId, input.campusAccess),
+				campusAccessCondition(student.campusId, input.campusAccess),
 				or(ilike(student.name, query), contactMatch),
 			),
 		)
@@ -240,7 +227,7 @@ async function searchClasses(
 		.where(
 			and(
 				eq(classGroup.organizationId, input.organizationId),
-				campusCondition(classGroup.campusId, input.campusAccess),
+				campusAccessCondition(classGroup.campusId, input.campusAccess),
 				or(
 					ilike(classGroup.name, query),
 					ilike(course.name, query),
@@ -304,7 +291,7 @@ async function searchLessons(
 		.where(
 			and(
 				eq(lesson.organizationId, input.organizationId),
-				campusCondition(lesson.campusId, input.campusAccess),
+				campusAccessCondition(lesson.campusId, input.campusAccess),
 				teacherFilter,
 				or(
 					ilike(classGroup.name, query),
@@ -357,7 +344,7 @@ async function searchInvoices(
 		.where(
 			and(
 				eq(invoice.organizationId, input.organizationId),
-				campusCondition(student.campusId, input.campusAccess),
+				campusAccessCondition(student.campusId, input.campusAccess),
 				or(ilike(invoice.summary, query), ilike(student.name, query)),
 			),
 		)
@@ -391,7 +378,7 @@ async function searchReceipts(
 		.where(
 			and(
 				eq(receiptDocument.organizationId, input.organizationId),
-				campusCondition(receiptDocument.campusId, input.campusAccess),
+				campusAccessCondition(receiptDocument.campusId, input.campusAccess),
 				or(
 					ilike(receiptDocument.number, query),
 					ilike(receiptDocument.studentName, query),

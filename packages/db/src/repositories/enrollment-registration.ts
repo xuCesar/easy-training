@@ -21,6 +21,7 @@ import {
 } from "../schema";
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
 import { writeOrganizationAuditEvent } from "./audit";
+import { campusAccessCondition, isCampusAccessible } from "./campus-access";
 import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import type { CampusAccess } from "./organization";
 import {
@@ -155,20 +156,6 @@ export type CreateIndependentEnrollmentRecordResult = {
 	classGroupId: string | null;
 	replayed: boolean;
 };
-
-function campusAccessCondition(access: CampusAccess) {
-	if (access.kind === "none") return sql`false`;
-	return access.kind === "selected"
-		? inArray(campus.id, access.campusIds)
-		: sql`true`;
-}
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
 
 function getDatabaseError(error: unknown): {
 	code?: unknown;
@@ -320,7 +307,7 @@ export async function getIndependentEnrollmentOptionsRecord(input: {
 				and(
 					eq(campus.organizationId, input.organizationId),
 					eq(campus.isActive, true),
-					campusAccessCondition(input.campusAccess),
+					campusAccessCondition(campus.id, input.campusAccess),
 				),
 			)
 			.orderBy(asc(campus.name), asc(campus.id)),
@@ -371,7 +358,7 @@ export async function getIndependentEnrollmentOptionsRecord(input: {
 				and(
 					eq(classGroup.organizationId, input.organizationId),
 					inArray(classGroup.status, availableClassStatuses),
-					campusAccessCondition(input.campusAccess),
+					campusAccessCondition(campus.id, input.campusAccess),
 					eq(campus.isActive, true),
 				),
 			)

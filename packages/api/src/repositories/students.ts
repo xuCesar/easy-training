@@ -63,6 +63,7 @@ import type {
 	UpdateStudentTagInput,
 } from "../contracts/training";
 import { quoteCsv } from "./csv";
+import { throwMappedRepositoryError } from "./repository-error-mapping";
 
 type StudentScope = {
 	organizationId: string;
@@ -132,13 +133,15 @@ function throwStudentError(error: unknown): never {
 		case "STUDENT_TAG_NOT_FOUND":
 			throw new ORPCError("NOT_FOUND", { message: "目标资源不存在。" });
 		case "MEMBER_FORBIDDEN":
-			throw new ORPCError("FORBIDDEN", {
+			return throwMappedRepositoryError("MEMBER_FORBIDDEN", {
 				message: "当前账号无权访问学员档案。",
 			});
 		case "CAMPUS_OUT_OF_SCOPE":
-			throw new ORPCError("FORBIDDEN", { message: "当前账号无权访问该校区。" });
+			return throwMappedRepositoryError("CAMPUS_OUT_OF_SCOPE", {
+				message: "当前账号无权访问该校区。",
+			});
 		case "CAMPUS_INACTIVE":
-			throw new ORPCError("CONFLICT", {
+			return throwMappedRepositoryError("CAMPUS_INACTIVE", {
 				message: "校区已停用，不能继续写入。",
 			});
 		case "STUDENT_VERSION_CONFLICT":
@@ -165,7 +168,9 @@ function throwStudentError(error: unknown): never {
 		case "STUDENT_TAG_DUPLICATE":
 			throw new ORPCError("CONFLICT", { message: "机构内已存在同名标签。" });
 		case "INVALID_CURSOR":
-			throw new ORPCError("BAD_REQUEST", { message: "分页游标无效。" });
+			return throwMappedRepositoryError("INVALID_CURSOR", {
+				message: "分页游标无效。",
+			});
 		case "CAMPUS_NOT_FOUND":
 			throw new ORPCError("BAD_REQUEST", { message: "校区不可用。" });
 	}

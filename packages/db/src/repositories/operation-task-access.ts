@@ -1,10 +1,9 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 
-import type { db } from "../index";
 import { organizationMember, organizationMemberCampus } from "../schema";
+import type { Transaction } from "./campus-access";
 import type { CampusAccess } from "./organization";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
 
 export type OperationTaskWriteAccess = {

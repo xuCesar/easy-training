@@ -23,6 +23,12 @@ import {
 	studentTagAssignment,
 	user,
 } from "../schema";
+import {
+	campusAccessCondition,
+	escapedContains,
+	isCampusAccessible,
+	type Transaction,
+} from "./campus-access";
 import type { CampusAccess } from "./organization";
 import {
 	assertEligibleStudentOwner,
@@ -136,18 +142,6 @@ export type UpdateStudentRecordInput = {
 };
 
 type StudentCursor = { name: string; id: string };
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-
-function isCampusAccessible(
-	campusAccess: CampusAccess,
-	campusId: string,
-): boolean {
-	return (
-		campusAccess.kind === "all" ||
-		(campusAccess.kind === "selected" &&
-			campusAccess.campusIds.includes(campusId))
-	);
-}
 
 const studentWriteRoles = new Set<
 	(typeof organizationMember.$inferSelect)["role"]
@@ -211,14 +205,6 @@ export async function getCurrentStudentWriteCampusAccess(
 	return scopes.length > 0
 		? { kind: "selected", campusIds: scopes.map((scope) => scope.campusId) }
 		: { kind: "none" };
-}
-
-function campusAccessCondition(campusAccess: CampusAccess) {
-	if (campusAccess.kind === "none") return sql`false`;
-	if (campusAccess.kind === "selected") {
-		return inArray(student.campusId, campusAccess.campusIds);
-	}
-	return sql`true`;
 }
 
 function encodeCursor(cursor: StudentCursor): string {
@@ -292,7 +278,7 @@ export async function findDuplicateStudentCandidates(input: {
 			and(
 				eq(student.organizationId, input.organizationId),
 				isNull(student.mergedIntoStudentId),
-				campusAccessCondition(input.campusAccess),
+				campusAccessCondition(student.campusId, input.campusAccess),
 				input.excludeStudentId
 					? sql`${student.id} <> ${input.excludeStudentId}`
 					: undefined,
@@ -547,7 +533,7 @@ export async function listStudentRecords(input: {
 	const baseFilters = [
 		eq(student.organizationId, input.organizationId),
 		isNull(student.mergedIntoStudentId),
-		campusAccessCondition(input.campusAccess),
+		campusAccessCondition(student.campusId, input.campusAccess),
 	];
 	if (input.campusId) baseFilters.push(eq(student.campusId, input.campusId));
 	if (input.status) baseFilters.push(eq(student.status, input.status));
@@ -566,7 +552,7 @@ export async function listStudentRecords(input: {
 		)`);
 	}
 	if (input.query) {
-		const pattern = `%${input.query}%`;
+		const pattern = escapedContains(input.query);
 		baseFilters.push(sql<boolean>`(
 			${student.name} ilike ${pattern}
 			or exists (

@@ -2,8 +2,7 @@ import { sql } from "drizzle-orm";
 
 import { db } from "../index";
 import { invoiceMetricFact } from "../schema";
-
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+import type { Transaction } from "./campus-access";
 
 type NativeCourseAttribution =
 	| { kind: "linked"; courseId: string; courseNameSnapshot: string }

@@ -17,6 +17,7 @@ import {
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import { isCampusAccessible } from "./campus-access";
 import {
 	type FinanceTransaction,
 	getCurrentFinanceWriteCampusAccess,
@@ -159,13 +160,6 @@ function normalizeText(value: string | null | undefined): string | null {
 
 function fingerprint(value: unknown): string {
 	return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
 }
 
 async function assertActiveAccessibleCampus(

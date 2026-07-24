@@ -18,6 +18,7 @@ import {
 	user,
 } from "../schema";
 import { startArrearsCycleIfNeeded } from "./arrears-workflow";
+import { campusAccessCondition, isCampusAccessible } from "./campus-access";
 import { createNativeInvoiceMetricFact } from "./invoice-metric-facts";
 import type { CampusAccess } from "./organization";
 import {
@@ -149,26 +150,6 @@ export type ConvertLeadRecordInput = {
 	canOverridePackageTerms: boolean;
 };
 
-function campusAccessCondition(campusAccess: CampusAccess) {
-	if (campusAccess.kind === "none") return sql`false`;
-	if (campusAccess.kind === "selected") {
-		return inArray(campus.id, campusAccess.campusIds);
-	}
-	return sql`true`;
-}
-
-function isCampusAccessible(
-	campusAccess: CampusAccess,
-	campusId: string | null,
-): boolean {
-	return (
-		campusAccess.kind === "all" ||
-		(campusId !== null &&
-			campusAccess.kind === "selected" &&
-			campusAccess.campusIds.includes(campusId))
-	);
-}
-
 export type ConvertLeadRecordResult = {
 	leadId: string;
 	studentId: string;
@@ -284,7 +265,7 @@ export async function getLeadConversionOptionsRecord(input: {
 			.where(
 				and(
 					eq(student.organizationId, input.organizationId),
-					campusAccessCondition(input.campusAccess),
+					campusAccessCondition(campus.id, input.campusAccess),
 					normalizedPhoneEquals(student.guardianPhone, leadRecord.phone),
 				),
 			)
@@ -296,7 +277,7 @@ export async function getLeadConversionOptionsRecord(input: {
 				and(
 					eq(campus.organizationId, input.organizationId),
 					eq(campus.isActive, true),
-					campusAccessCondition(input.campusAccess),
+					campusAccessCondition(campus.id, input.campusAccess),
 				),
 			)
 			.orderBy(asc(campus.name), asc(campus.id)),
@@ -347,7 +328,7 @@ export async function getLeadConversionOptionsRecord(input: {
 				and(
 					eq(classGroup.organizationId, input.organizationId),
 					inArray(classGroup.status, availableClassStatuses),
-					campusAccessCondition(input.campusAccess),
+					campusAccessCondition(campus.id, input.campusAccess),
 					eq(campus.isActive, true),
 				),
 			)

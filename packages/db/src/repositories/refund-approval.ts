@@ -13,6 +13,11 @@ import {
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import {
+	campusAccessCondition,
+	isCampusAccessible,
+	type Transaction,
+} from "./campus-access";
 import { updateEnrollmentPaidAmount } from "./enrollment-finance-adjustments";
 import { getCurrentFinanceWriteAccess } from "./finance-access";
 import type { CampusAccess } from "./organization";
@@ -155,22 +160,8 @@ function assertValidRefundTime(value: Date): void {
 	}
 }
 
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
-
-function campusAccessCondition(access: CampusAccess) {
-	if (access.kind === "none") return sql`false`;
-	return access.kind === "selected"
-		? inArray(student.campusId, access.campusIds)
-		: sql`true`;
-}
-
 async function assertActiveCampus(
-	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+	tx: Transaction,
 	input: {
 		organizationId: string;
 		campusId: string;
@@ -256,7 +247,7 @@ export async function listInvoiceRefundRequestRecords(input: {
 			and(
 				eq(invoice.organizationId, input.organizationId),
 				eq(invoice.id, input.invoiceId),
-				campusAccessCondition(input.campusAccess),
+				campusAccessCondition(student.campusId, input.campusAccess),
 			),
 		)
 		.limit(1);

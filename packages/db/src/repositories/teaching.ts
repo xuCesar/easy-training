@@ -43,6 +43,11 @@ import {
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import {
+	campusAccessCondition,
+	isCampusAccessible,
+	type Transaction,
+} from "./campus-access";
 import type { CampusAccess } from "./organization";
 
 export type TeachingRepositoryErrorCode =
@@ -165,7 +170,8 @@ export async function markMakeupLessonsNeedsReschedule(
 	}
 }
 
-export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type { Transaction } from "./campus-access";
+
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
 
 function getShanghaiDate(now = new Date()): string {
@@ -322,20 +328,6 @@ function assertClassStatusTransition(
 	if (!allowedClassStatusTransitions[currentStatus].has(nextStatus)) {
 		throw new TeachingRepositoryError("CLASS_STATUS_TRANSITION_INVALID");
 	}
-}
-
-function isCampusAccessible(access: CampusAccess, campusId: string): boolean {
-	return (
-		access.kind === "all" ||
-		(access.kind === "selected" && access.campusIds.includes(campusId))
-	);
-}
-
-function campusAccessCondition(access: CampusAccess) {
-	if (access.kind === "none") return sql`false`;
-	return access.kind === "selected"
-		? inArray(classGroup.campusId, access.campusIds)
-		: sql`true`;
 }
 
 export async function getCurrentWriteCampusAccess(
@@ -839,7 +831,12 @@ export async function listTeacherRecords(input: {
 		})
 		.from(teacher)
 		.leftJoin(teacherCampus, eq(teacherCampus.teacherId, teacher.id))
-		.where(eq(teacher.organizationId, input.organizationId))
+		.where(
+			and(
+				eq(teacher.organizationId, input.organizationId),
+				campusAccessCondition(teacherCampus.campusId, input.campusAccess),
+			),
+		)
 		.orderBy(asc(teacher.name), asc(teacher.id), asc(teacherCampus.campusId));
 	const records = new Map<string, TeacherRecord>();
 	for (const row of rows) {
@@ -847,11 +844,7 @@ export async function listTeacherRecords(input: {
 			...row.teacher,
 			campusIds: [],
 		};
-		if (
-			row.campusId &&
-			(input.campusAccess.kind === "all" ||
-				input.campusAccess.campusIds.includes(row.campusId))
-		) {
+		if (row.campusId) {
 			current.campusIds.push(row.campusId);
 		}
 		records.set(row.teacher.id, current);
@@ -1155,7 +1148,7 @@ export async function listClassGroupRecords(input: {
 	const cursor = decodeClassGroupCursor(input.cursor);
 	const filters = [
 		eq(classGroup.organizationId, input.organizationId),
-		campusAccessCondition(input.campusAccess),
+		campusAccessCondition(classGroup.campusId, input.campusAccess),
 	];
 	if (input.campusId) filters.push(eq(classGroup.campusId, input.campusId));
 	if (input.status) filters.push(eq(classGroup.status, input.status));

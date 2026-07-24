@@ -28,6 +28,7 @@ import type {
 	ManualInvoiceOptionsInput,
 } from "../contracts/training";
 import { getInvoiceRefunds } from "./enrollment-finance-adjustments";
+import { throwMappedRepositoryError } from "./repository-error-mapping";
 
 type FinanceScope = {
 	organizationId: string;
@@ -188,7 +189,7 @@ function throwFinanceError(error: unknown): never {
 				message: "收款金额超过账单待收金额。",
 			});
 		case "IDEMPOTENCY_CONFLICT":
-			throw new ORPCError("CONFLICT", {
+			return throwMappedRepositoryError("IDEMPOTENCY_CONFLICT", {
 				message: "该请求标识已用于不同的收款内容。",
 			});
 		case "RESOURCE_UNAVAILABLE":
@@ -196,12 +197,12 @@ function throwFinanceError(error: unknown): never {
 				message: "关联资源已发生变化，请刷新后重试。",
 			});
 		case "CAMPUS_INACTIVE":
-			throw new ORPCError("CONFLICT", {
+			return throwMappedRepositoryError("CAMPUS_INACTIVE", {
 				message: "校区已停用，不能继续收款。",
 			});
 		case "MEMBER_FORBIDDEN":
 		case "CAMPUS_OUT_OF_SCOPE":
-			throw new ORPCError("FORBIDDEN", {
+			return throwMappedRepositoryError(error.code, {
 				message: "你没有权限操作该校区的财务数据。",
 			});
 		case "STUDENT_NOT_FOUND":
@@ -237,7 +238,7 @@ function throwFinanceError(error: unknown): never {
 				message: "账单内容没有发生变化。",
 			});
 		case "INVALID_CURSOR":
-			throw new ORPCError("BAD_REQUEST", {
+			return throwMappedRepositoryError("INVALID_CURSOR", {
 				message: "分页位置无效，请重新加载账单列表。",
 			});
 	}

@@ -25,11 +25,11 @@ import {
 	user,
 } from "../schema";
 import { writeOrganizationAuditEvent } from "./audit";
+import { escapedContains, type Transaction } from "./campus-access";
 import { getCurrentOperationTaskWriteAccess } from "./operation-task-access";
 import { createInAppNotification } from "./operations";
 import type { CampusAccess } from "./organization";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export class OperationTaskError extends Error {
 	constructor(
 		public readonly code:
@@ -442,7 +442,7 @@ export async function listOperationTasks(input: {
 	if (input.dueAtFrom) filters.push(gte(operationTask.dueAt, input.dueAtFrom));
 	if (input.dueAtTo) filters.push(lte(operationTask.dueAt, input.dueAtTo));
 	if (input.keyword)
-		filters.push(ilike(operationTask.title, `%${input.keyword}%`));
+		filters.push(ilike(operationTask.title, escapedContains(input.keyword)));
 	if (cursor) {
 		const cursorFilter = or(
 			gt(operationTask.dueAt, cursor.dueAt),
