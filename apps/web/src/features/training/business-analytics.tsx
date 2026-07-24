@@ -17,18 +17,12 @@ import type {
 } from "@easy-training/api/contracts/business-metrics";
 import { Button } from "@easy-training/ui/components/button";
 import { Input } from "@easy-training/ui/components/input";
-import {
-	Select,
-	SelectContent,
-	SelectGroup,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@easy-training/ui/components/select";
 import { Skeleton } from "@easy-training/ui/components/skeleton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { downloadCsv } from "@/features/training/ui/download-csv";
+import { FilterSelect } from "@/features/training/ui/filter-select";
 import { orpc } from "@/utils/orpc";
 import { formatCentsToCurrency, formatDateTime } from "./format";
 import { useOrganization } from "./organization-context";
@@ -190,14 +184,7 @@ export function BusinessAnalytics() {
 	const exportCsv = useMutation({
 		...orpc.training.analytics.export.mutationOptions(),
 		onSuccess: ({ csv, fileName }) => {
-			const url = URL.createObjectURL(
-				new Blob([csv], { type: "text/csv;charset=utf-8" }),
-			);
-			const anchor = document.createElement("a");
-			anchor.href = url;
-			anchor.download = fileName;
-			anchor.click();
-			URL.revokeObjectURL(url);
+			downloadCsv(csv, fileName);
 		},
 	});
 	function applySavedFilter(id: string) {
@@ -295,9 +282,11 @@ export function BusinessAnalytics() {
 						<span className="text-muted-foreground">统计范围</span>
 						<FilterSelect
 							id="analytics-range"
+							label="统计范围"
 							value={rangeMode}
 							onValueChange={(value) => setRangeMode(value as RangeMode)}
 							items={rangeOptions}
+							className="h-10 w-full"
 						/>
 					</label>
 					{rangeMode === "custom" ? (
@@ -355,6 +344,7 @@ export function BusinessAnalytics() {
 			</header>
 			<div className="flex flex-wrap items-center gap-2 border p-3 text-sm">
 				<FilterSelect
+					label="应用已保存筛选"
 					ariaLabel="应用已保存筛选"
 					value={selectedFilterId || savedFilterPlaceholderValue}
 					onValueChange={(value) =>
@@ -370,6 +360,7 @@ export function BusinessAnalytics() {
 							label: item.name,
 						})),
 					]}
+					className="h-9 w-full min-w-48"
 				/>
 				<Button
 					variant="outline"
@@ -492,59 +483,6 @@ export function BusinessAnalytics() {
 					{definitionVersion}
 				</p>
 			) : null}
-		</div>
-	);
-}
-
-function FilterSelect({
-	id,
-	ariaLabel,
-	label,
-	value,
-	onValueChange,
-	items,
-}: {
-	id?: string;
-	ariaLabel?: string;
-	label?: string;
-	value: string;
-	onValueChange: (value: string) => void;
-	items: Array<{ value: string; label: string }>;
-}) {
-	return (
-		<div className={label ? "w-full sm:w-[200px]" : undefined}>
-			{label ? (
-				<span className="mb-1 block text-muted-foreground text-xs">
-					{label}
-				</span>
-			) : null}
-			<Select
-				value={value}
-				onValueChange={(next) => next && onValueChange(next)}
-			>
-				<SelectTrigger
-					id={id}
-					className={label ? "h-10 w-full" : "h-9 w-full min-w-48"}
-					aria-label={ariaLabel ?? label}
-				>
-					<SelectValue>
-						{() =>
-							items.find((item) => item.value === value)?.label ??
-							ariaLabel ??
-							label
-						}
-					</SelectValue>
-				</SelectTrigger>
-				<SelectContent>
-					<SelectGroup>
-						{items.map((item) => (
-							<SelectItem key={item.value} value={item.value}>
-								{item.label}
-							</SelectItem>
-						))}
-					</SelectGroup>
-				</SelectContent>
-			</Select>
 		</div>
 	);
 }
@@ -933,6 +871,9 @@ function ComparisonSection({
 			<div className="flex flex-wrap gap-2 border-b pb-4">
 				<FilterSelect
 					label="对比维度"
+					showLabel
+					containerClassName="w-full sm:w-[200px]"
+					className="h-10 w-full"
 					value={dimension}
 					onValueChange={(value) =>
 						onDimensionChange(value as BusinessMetricComparisonDimension)
@@ -944,6 +885,9 @@ function ComparisonSection({
 				/>
 				<FilterSelect
 					label="排序指标"
+					showLabel
+					containerClassName="w-full sm:w-[200px]"
+					className="h-10 w-full"
 					value={sortBy}
 					onValueChange={(value) =>
 						onSortChange(value as BusinessMetricComparisonInput["sortBy"])

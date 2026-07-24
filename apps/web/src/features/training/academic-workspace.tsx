@@ -66,6 +66,7 @@ import {
 	isUnavailableTargetError,
 	unavailableTargetMessage,
 } from "./target-navigation";
+import { FilterSelect } from "./ui/filter-select";
 
 type AcademicTab = "classes" | "lessons" | "rooms" | "courses" | "teachers";
 type Editor =
@@ -624,6 +625,9 @@ function ClassesPanel({
 			>
 				<FilterSelect
 					label="班级状态"
+					showLabel
+					containerClassName="w-full sm:w-[200px]"
+					className="h-10 w-full"
 					value={status}
 					onValueChange={onStatusChange}
 					items={[{ value: "all", label: "全部状态" }, ...classStatuses]}
@@ -1139,6 +1143,9 @@ function FilterBar({
 		<section className="flex flex-wrap gap-3 border p-3">
 			<FilterSelect
 				label="校区"
+				showLabel
+				containerClassName="w-full sm:w-[200px]"
+				className="h-10 w-full"
 				value={campusId ?? "all"}
 				onValueChange={(value) =>
 					onCampusChange(value === "all" ? undefined : value)
@@ -1150,40 +1157,6 @@ function FilterBar({
 			/>
 			{children}
 		</section>
-	);
-}
-function FilterSelect({
-	label,
-	value,
-	onValueChange,
-	items,
-}: {
-	label: string;
-	value: string;
-	onValueChange: (value: string) => void;
-	items: Array<{ value: string; label: string }>;
-}) {
-	return (
-		<div className="w-full sm:w-[200px]">
-			<span className="mb-1 block text-muted-foreground text-xs">{label}</span>
-			<Select
-				value={value}
-				onValueChange={(next) => onValueChange(next ?? "all")}
-			>
-				<SelectTrigger className="h-10 w-full" aria-label={label}>
-					<SelectValue>
-						{() => items.find((item) => item.value === value)?.label ?? label}
-					</SelectValue>
-				</SelectTrigger>
-				<SelectContent>
-					{items.map((item) => (
-						<SelectItem key={item.value} value={item.value}>
-							{item.label}
-						</SelectItem>
-					))}
-				</SelectContent>
-			</Select>
-		</div>
 	);
 }
 function PanelState({
