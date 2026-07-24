@@ -35,7 +35,7 @@ import {
 	SelectValue,
 } from "@easy-training/ui/components/select";
 import { Skeleton } from "@easy-training/ui/components/skeleton";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
 	CalendarClockIcon,
@@ -170,10 +170,12 @@ export function AcademicWorkspace({
 	const classesQuery = useQuery({
 		...classesOptions,
 		queryKey: [...classesOptions.queryKey, context, classesInput],
+		placeholderData: keepPreviousData,
 	});
 	const lessonsQuery = useQuery({
 		...lessonsOptions,
 		queryKey: [...lessonsOptions.queryKey, context, { campusId }],
+		placeholderData: keepPreviousData,
 	});
 	const targetQuery =
 		initialTab === "courses" && initialCourseId
@@ -288,7 +290,7 @@ export function AcademicWorkspace({
 					classes={classesQuery.data?.items ?? []}
 					lessons={lessonsQuery.data?.items ?? []}
 					isLessonsPending={lessonsQuery.isPending}
-					isPending={classesQuery.isPending}
+					isPending={classesQuery.isPending && !classesQuery.data}
 					isError={classesQuery.isError}
 					campusId={campusId}
 					status={classStatus}
@@ -311,6 +313,8 @@ export function AcademicWorkspace({
 					rooms={classroomsQuery.data?.items ?? []}
 					isPending={classroomsQuery.isPending}
 					isError={classroomsQuery.isError}
+					campusId={campusId}
+					onCampusChange={setCampusId}
 					onRetry={() => void classroomsQuery.refetch()}
 					onSaved={refresh}
 				/>
@@ -319,7 +323,7 @@ export function AcademicWorkspace({
 				<LessonsPanel
 					campuses={campusesQuery.data?.items ?? []}
 					lessons={lessonsQuery.data?.items ?? []}
-					isPending={lessonsQuery.isPending}
+					isPending={lessonsQuery.isPending && !lessonsQuery.data}
 					isError={lessonsQuery.isError}
 					campusId={campusId}
 					highlightedLessonId={initialLessonId}
@@ -1050,13 +1054,13 @@ function FilterSelect({
 	items: Array<{ value: string; label: string }>;
 }) {
 	return (
-		<div className="w-full sm:w-44">
+		<div className="w-full sm:w-[200px]">
 			<span className="mb-1 block text-muted-foreground text-xs">{label}</span>
 			<Select
 				value={value}
 				onValueChange={(next) => onValueChange(next ?? "all")}
 			>
-				<SelectTrigger className="h-10 w-full sm:w-auto" aria-label={label}>
+				<SelectTrigger className="h-10 w-full" aria-label={label}>
 					<SelectValue>
 						{() => items.find((item) => item.value === value)?.label ?? label}
 					</SelectValue>

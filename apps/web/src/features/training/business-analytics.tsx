@@ -16,6 +16,15 @@ import type {
 	BusinessMetricSalesResult,
 } from "@easy-training/api/contracts/business-metrics";
 import { Button } from "@easy-training/ui/components/button";
+import { Input } from "@easy-training/ui/components/input";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@easy-training/ui/components/select";
 import { Skeleton } from "@easy-training/ui/components/skeleton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -36,6 +45,14 @@ const presetLabels: Record<Preset, string> = {
 	quarter: "本季度",
 	year: "本年度",
 };
+const rangeOptions: Array<{ value: RangeMode; label: string }> = [
+	...Object.entries(presetLabels).map(([value, label]) => ({
+		value: value as Preset,
+		label,
+	})),
+	{ value: "custom", label: "自定义" },
+];
+const savedFilterPlaceholderValue = "__empty_saved_filter__";
 
 const shanghaiNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
 const defaultCustomFrom = `${shanghaiNow.getUTCFullYear()}-${String(shanghaiNow.getUTCMonth() + 1).padStart(2, "0")}-01`;
@@ -276,38 +293,31 @@ export function BusinessAnalytics() {
 				<div className="flex flex-wrap items-end gap-2">
 					<label className="grid gap-1 text-sm" htmlFor="analytics-range">
 						<span className="text-muted-foreground">统计范围</span>
-						<select
+						<FilterSelect
 							id="analytics-range"
-							className="h-9 min-w-36 border bg-background px-3"
 							value={rangeMode}
-							onChange={(event) =>
-								setRangeMode(event.target.value as RangeMode)
-							}
-						>
-							{Object.entries(presetLabels).map(([value, label]) => (
-								<option key={value} value={value}>
-									{label}
-								</option>
-							))}
-							<option value="custom">自定义</option>
-						</select>
+							onValueChange={(value) => setRangeMode(value as RangeMode)}
+							items={rangeOptions}
+						/>
 					</label>
 					{rangeMode === "custom" ? (
 						<>
-							<label className="grid gap-1 text-sm">
+							<label className="grid gap-1 text-sm" htmlFor="analytics-from">
 								<span className="text-muted-foreground">开始日期</span>
-								<input
-									className="h-9 border bg-background px-2"
+								<Input
+									id="analytics-from"
 									type="date"
+									className="min-w-40"
 									value={customFrom}
 									onChange={(event) => setCustomFrom(event.target.value)}
 								/>
 							</label>
-							<label className="grid gap-1 text-sm">
+							<label className="grid gap-1 text-sm" htmlFor="analytics-to">
 								<span className="text-muted-foreground">结束日期（不含）</span>
-								<input
-									className="h-9 border bg-background px-2"
+								<Input
+									id="analytics-to"
 									type="date"
+									className="min-w-40"
 									value={customTo}
 									onChange={(event) => setCustomTo(event.target.value)}
 								/>
@@ -316,10 +326,11 @@ export function BusinessAnalytics() {
 					) : null}
 				</div>
 				<div className="flex flex-wrap items-end gap-2">
-					<label className="grid gap-1 text-sm">
+					<label className="grid gap-1 text-sm" htmlFor="analytics-filter-name">
 						<span className="text-muted-foreground">保存筛选</span>
-						<input
-							className="h-9 border bg-background px-2"
+						<Input
+							id="analytics-filter-name"
+							className="min-w-48"
 							value={filterName}
 							onChange={(event) => setFilterName(event.target.value)}
 							placeholder="筛选名称"
@@ -343,18 +354,23 @@ export function BusinessAnalytics() {
 				</div>
 			</header>
 			<div className="flex flex-wrap items-center gap-2 border p-3 text-sm">
-				<select
-					className="h-9 min-w-48 border bg-background px-2"
-					value={selectedFilterId}
-					onChange={(event) => applySavedFilter(event.target.value)}
-				>
-					<option value="">应用已保存筛选</option>
-					{savedFilters.data?.items.map((item) => (
-						<option key={item.id} value={item.id}>
-							{item.name}
-						</option>
-					))}
-				</select>
+				<FilterSelect
+					ariaLabel="应用已保存筛选"
+					value={selectedFilterId || savedFilterPlaceholderValue}
+					onValueChange={(value) =>
+						applySavedFilter(value === savedFilterPlaceholderValue ? "" : value)
+					}
+					items={[
+						{
+							value: savedFilterPlaceholderValue,
+							label: "应用已保存筛选",
+						},
+						...(savedFilters.data?.items ?? []).map((item) => ({
+							value: item.id,
+							label: item.name,
+						})),
+					]}
+				/>
 				<Button
 					variant="outline"
 					disabled={!selectedFilterId || deleteFilter.isPending}
@@ -394,7 +410,7 @@ export function BusinessAnalytics() {
 					<button
 						key={tab}
 						type="button"
-						className={`border px-3 py-2 text-sm ${activeTab === tab ? "border-primary bg-primary/10 font-medium" : "bg-background"}`}
+						className={`border px-3 py-2 text-sm ${activeTab === tab ? "border-primary font-medium text-primary" : "border-border text-muted-foreground"}`}
 						onClick={() => setActiveTab(tab)}
 						aria-current={activeTab === tab ? "page" : undefined}
 					>
@@ -476,6 +492,59 @@ export function BusinessAnalytics() {
 					{definitionVersion}
 				</p>
 			) : null}
+		</div>
+	);
+}
+
+function FilterSelect({
+	id,
+	ariaLabel,
+	label,
+	value,
+	onValueChange,
+	items,
+}: {
+	id?: string;
+	ariaLabel?: string;
+	label?: string;
+	value: string;
+	onValueChange: (value: string) => void;
+	items: Array<{ value: string; label: string }>;
+}) {
+	return (
+		<div className={label ? "w-full sm:w-[200px]" : undefined}>
+			{label ? (
+				<span className="mb-1 block text-muted-foreground text-xs">
+					{label}
+				</span>
+			) : null}
+			<Select
+				value={value}
+				onValueChange={(next) => next && onValueChange(next)}
+			>
+				<SelectTrigger
+					id={id}
+					className={label ? "h-10 w-full" : "h-9 w-full min-w-48"}
+					aria-label={ariaLabel ?? label}
+				>
+					<SelectValue>
+						{() =>
+							items.find((item) => item.value === value)?.label ??
+							ariaLabel ??
+							label
+						}
+					</SelectValue>
+				</SelectTrigger>
+				<SelectContent>
+					<SelectGroup>
+						{items.map((item) => (
+							<SelectItem key={item.value} value={item.value}>
+								{item.label}
+							</SelectItem>
+						))}
+					</SelectGroup>
+				</SelectContent>
+			</Select>
 		</div>
 	);
 }
@@ -862,42 +931,27 @@ function ComparisonSection({
 			].filter((item): item is string => item !== null)}
 		>
 			<div className="flex flex-wrap gap-2 border-b pb-4">
-				<label className="grid gap-1 text-sm">
-					<span className="text-muted-foreground">对比维度</span>
-					<select
-						className="h-9 border bg-background px-3"
-						value={dimension}
-						onChange={(event) =>
-							onDimensionChange(
-								event.target.value as BusinessMetricComparisonDimension,
-							)
-						}
-					>
-						{dimensions.map((value) => (
-							<option key={value} value={value}>
-								{comparisonDimensionLabels[value]}
-							</option>
-						))}
-					</select>
-				</label>
-				<label className="grid gap-1 text-sm">
-					<span className="text-muted-foreground">排序指标</span>
-					<select
-						className="h-9 border bg-background px-3"
-						value={sortBy}
-						onChange={(event) =>
-							onSortChange(
-								event.target.value as BusinessMetricComparisonInput["sortBy"],
-							)
-						}
-					>
-						{Object.entries(comparisonSortLabels).map(([value, label]) => (
-							<option key={value} value={value}>
-								{label}
-							</option>
-						))}
-					</select>
-				</label>
+				<FilterSelect
+					label="对比维度"
+					value={dimension}
+					onValueChange={(value) =>
+						onDimensionChange(value as BusinessMetricComparisonDimension)
+					}
+					items={dimensions.map((value) => ({
+						value,
+						label: comparisonDimensionLabels[value],
+					}))}
+				/>
+				<FilterSelect
+					label="排序指标"
+					value={sortBy}
+					onValueChange={(value) =>
+						onSortChange(value as BusinessMetricComparisonInput["sortBy"])
+					}
+					items={Object.entries(comparisonSortLabels).map(
+						([value, optionLabel]) => ({ value, label: optionLabel }),
+					)}
+				/>
 			</div>
 			{result.rows.length === 0 ? (
 				<p className="mt-4 text-muted-foreground text-sm">
@@ -1010,7 +1064,7 @@ function formatComparisonRatio(
 	if (value.status === "available") return `${(value.value * 100).toFixed(1)}%`;
 	if (value.reason === "insufficientSample") return "样本不足";
 	if (value.reason === "factCoverageMissing") return "事实缺口";
-	return "暂不可计算";
+	return "-";
 }
 
 function ResourceSection({ result }: { result: BusinessMetricResourceResult }) {
@@ -1174,7 +1228,7 @@ function formatRatio(value: BusinessMetricRatio) {
 		? "样本不足"
 		: value.reason === "immatureCohort"
 			? "尚未成熟"
-			: "暂不可计算";
+			: "-";
 }
 function qualityMessages(result: {
 	dataQuality: BusinessMetricSalesResult["dataQuality"];

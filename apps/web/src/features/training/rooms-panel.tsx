@@ -35,6 +35,8 @@ export function RoomsPanel({
 	rooms,
 	isPending,
 	isError,
+	campusId,
+	onCampusChange,
 	onRetry,
 	onSaved,
 }: {
@@ -42,29 +44,32 @@ export function RoomsPanel({
 	rooms: Classroom[];
 	isPending: boolean;
 	isError: boolean;
+	campusId: string | undefined;
+	onCampusChange: (value: string | undefined) => void;
 	onRetry: () => void;
 	onSaved: () => Promise<unknown>;
 }) {
-	const [campusId, setCampusId] = useState<string>("all");
 	const [editor, setEditor] = useState<Classroom | "create" | null>(null);
 	const [activeTarget, setActiveTarget] = useState<Classroom | null>(null);
 	const visibleRooms = rooms.filter(
-		(room) => campusId === "all" || room.campusId === campusId,
+		(room) => !campusId || room.campusId === campusId,
 	);
 
 	return (
 		<div className="grid gap-3">
-			<div className="flex flex-wrap items-end justify-between gap-2 border p-3">
-				<div className="grid min-w-0 gap-1 text-sm sm:min-w-48">
-					<span>校区</span>
+			<div className="flex flex-wrap items-end justify-between gap-3 border p-3">
+				<div className="w-full sm:w-[200px]">
+					<span className="mb-1 block text-muted-foreground text-xs">校区</span>
 					<Select
-						value={campusId}
-						onValueChange={(value) => value && setCampusId(value)}
+						value={campusId ?? "all"}
+						onValueChange={(value) =>
+							onCampusChange(value && value !== "all" ? value : undefined)
+						}
 					>
-						<SelectTrigger>
+						<SelectTrigger className="h-10 w-full" aria-label="校区">
 							<SelectValue>
 								{() =>
-									campusId === "all"
+									!campusId
 										? "全部校区"
 										: (campuses.find((campus) => campus.id === campusId)
 												?.name ?? "选择校区")
