@@ -831,174 +831,185 @@ export async function getFinancialAgingInvoicePage(input: {
 	cursor?: FinancialReceiptEventCursor;
 }): Promise<FinancialAgingInvoicePage> {
 	const limit = Math.min(Math.max(input.limit, 1), 50);
-	const rows = await db
-		.select({
-			id: invoice.id,
-			issuedAt: invoice.issuedAt,
-			amountInCents: invoice.amountInCents,
-			dueDate: invoice.dueDate,
-			version: invoice.version,
-		})
-		.from(invoice)
-		.innerJoin(
-			invoiceMetricFact,
-			and(
-				eq(invoiceMetricFact.invoiceId, invoice.id),
-				eq(invoiceMetricFact.organizationId, invoice.organizationId),
-			),
-		)
-		.where(
-			and(
-				eq(invoice.organizationId, input.scope.organizationId),
-				lt(invoice.issuedAt, input.snapshotAt),
-				campusCondition(input.scope.campusAccess),
-				afterFinancialEventCursor(invoice.issuedAt, invoice.id, input.cursor),
-			),
-		)
-		.orderBy(asc(invoice.issuedAt), asc(invoice.id))
-		.limit(limit + 1);
-	const ids = rows.map((row) => row.id);
-	if (ids.length === 0) return { items: [], nextCursor: null };
-	const [adjustments, payments, reversals] = await Promise.all([
-		db
+	const items: FinancialAgingInvoiceRecord[] = [];
+	let rawCursor = input.cursor;
+	let hasMoreRawRows = true;
+	while (items.length <= limit && hasMoreRawRows) {
+		const rows = await db
 			.select({
-				invoiceId: invoiceAdjustment.invoiceId,
-				id: invoiceAdjustment.id,
-				beforeVersion: invoiceAdjustment.beforeVersion,
-				afterVersion: invoiceAdjustment.afterVersion,
-				beforeAmountInCents: invoiceAdjustment.beforeAmountInCents,
-				beforeDueDate: invoiceAdjustment.beforeDueDate,
-				amountInCents: invoiceAdjustment.afterAmountInCents,
-				dueDate: invoiceAdjustment.afterDueDate,
-				createdAt: invoiceAdjustment.createdAt,
+				id: invoice.id,
+				issuedAt: invoice.issuedAt,
+				amountInCents: invoice.amountInCents,
+				dueDate: invoice.dueDate,
+				version: invoice.version,
 			})
-			.from(invoiceAdjustment)
+			.from(invoice)
+			.innerJoin(
+				invoiceMetricFact,
+				and(
+					eq(invoiceMetricFact.invoiceId, invoice.id),
+					eq(invoiceMetricFact.organizationId, invoice.organizationId),
+				),
+			)
 			.where(
 				and(
-					eq(invoiceAdjustment.organizationId, input.scope.organizationId),
-					inArray(invoiceAdjustment.invoiceId, ids),
+					eq(invoice.organizationId, input.scope.organizationId),
+					lt(invoice.issuedAt, input.snapshotAt),
+					campusCondition(input.scope.campusAccess),
+					afterFinancialEventCursor(invoice.issuedAt, invoice.id, rawCursor),
 				),
-			),
-		db
-			.select({
-				invoiceId: payment.invoiceId,
-				amountInCents: payment.amountInCents,
-			})
-			.from(payment)
-			.where(
-				and(
-					eq(payment.organizationId, input.scope.organizationId),
-					inArray(payment.invoiceId, ids),
-					lt(payment.receivedAt, input.snapshotAt),
+			)
+			.orderBy(asc(invoice.issuedAt), asc(invoice.id))
+			.limit(limit + 1);
+		const lastRaw = rows.at(-1);
+		if (!lastRaw) break;
+		hasMoreRawRows = rows.length > limit;
+		rawCursor = { occurredAt: lastRaw.issuedAt, id: lastRaw.id };
+		const ids = rows.map((row) => row.id);
+		const [adjustments, payments, reversals] = await Promise.all([
+			db
+				.select({
+					invoiceId: invoiceAdjustment.invoiceId,
+					id: invoiceAdjustment.id,
+					beforeVersion: invoiceAdjustment.beforeVersion,
+					afterVersion: invoiceAdjustment.afterVersion,
+					beforeAmountInCents: invoiceAdjustment.beforeAmountInCents,
+					beforeDueDate: invoiceAdjustment.beforeDueDate,
+					amountInCents: invoiceAdjustment.afterAmountInCents,
+					dueDate: invoiceAdjustment.afterDueDate,
+					createdAt: invoiceAdjustment.createdAt,
+				})
+				.from(invoiceAdjustment)
+				.where(
+					and(
+						eq(invoiceAdjustment.organizationId, input.scope.organizationId),
+						inArray(invoiceAdjustment.invoiceId, ids),
+					),
 				),
-			),
-		db
-			.select({
-				invoiceId: paymentReversal.invoiceId,
-				amountInCents: paymentReversal.amountInCents,
-			})
-			.from(paymentReversal)
-			.where(
-				and(
-					eq(paymentReversal.organizationId, input.scope.organizationId),
-					inArray(paymentReversal.invoiceId, ids),
-					lt(paymentReversal.reversedAt, input.snapshotAt),
+			db
+				.select({
+					invoiceId: payment.invoiceId,
+					amountInCents: payment.amountInCents,
+				})
+				.from(payment)
+				.where(
+					and(
+						eq(payment.organizationId, input.scope.organizationId),
+						inArray(payment.invoiceId, ids),
+						lt(payment.receivedAt, input.snapshotAt),
+					),
 				),
-			),
-	]);
-	const terms = new Map(
-		rows.map((row) => [
-			row.id,
-			{ amountInCents: row.amountInCents, dueDate: row.dueDate },
-		]),
-	);
-	const versions = new Map(rows.map((row) => [row.id, row.version]));
-	const grouped = new Map<string, typeof adjustments>();
-	for (const adjustment of adjustments) {
-		const list = grouped.get(adjustment.invoiceId) ?? [];
-		list.push(adjustment);
-		grouped.set(adjustment.invoiceId, list);
-	}
-	const invalid = new Set<string>();
-	for (const [invoiceId, values] of grouped) {
-		const chain = values.sort(
-			(a, b) =>
-				a.createdAt.getTime() - b.createdAt.getTime() ||
-				a.afterVersion - b.afterVersion ||
-				a.id.localeCompare(b.id),
+			db
+				.select({
+					invoiceId: paymentReversal.invoiceId,
+					amountInCents: paymentReversal.amountInCents,
+				})
+				.from(paymentReversal)
+				.where(
+					and(
+						eq(paymentReversal.organizationId, input.scope.organizationId),
+						inArray(paymentReversal.invoiceId, ids),
+						lt(paymentReversal.reversedAt, input.snapshotAt),
+					),
+				),
+		]);
+		const terms = new Map(
+			rows.map((row) => [
+				row.id,
+				{ amountInCents: row.amountInCents, dueDate: row.dueDate },
+			]),
 		);
-		let valid = chain[0]?.beforeVersion === 1;
-		for (let index = 1; index < chain.length; index += 1) {
-			const previous = chain[index - 1];
-			const current = chain[index];
-			if (
-				!previous ||
-				!current ||
-				current.beforeVersion !== previous.afterVersion ||
-				current.beforeAmountInCents !== previous.amountInCents
-			) {
+		const versions = new Map(rows.map((row) => [row.id, row.version]));
+		const grouped = new Map<string, typeof adjustments>();
+		for (const adjustment of adjustments) {
+			const list = grouped.get(adjustment.invoiceId) ?? [];
+			list.push(adjustment);
+			grouped.set(adjustment.invoiceId, list);
+		}
+		const invalid = new Set<string>();
+		for (const [invoiceId, values] of grouped) {
+			const chain = values.sort(
+				(a, b) =>
+					a.createdAt.getTime() - b.createdAt.getTime() ||
+					a.afterVersion - b.afterVersion ||
+					a.id.localeCompare(b.id),
+			);
+			let valid = chain[0]?.beforeVersion === 1;
+			for (let index = 1; index < chain.length; index += 1) {
+				const previous = chain[index - 1];
+				const current = chain[index];
+				if (
+					!previous ||
+					!current ||
+					current.beforeVersion !== previous.afterVersion ||
+					current.beforeAmountInCents !== previous.amountInCents
+				) {
+					valid = false;
+					break;
+				}
+			}
+			if (chain.at(-1)?.afterVersion !== versions.get(invoiceId))
 				valid = false;
-				break;
+			if (!valid) {
+				invalid.add(invoiceId);
+				continue;
 			}
-		}
-		if (chain.at(-1)?.afterVersion !== versions.get(invoiceId)) valid = false;
-		if (!valid) {
-			invalid.add(invoiceId);
-			continue;
-		}
-		const first = chain[0];
-		if (first)
-			terms.set(invoiceId, {
-				amountInCents: first.beforeAmountInCents,
-				dueDate: first.beforeDueDate,
-			});
-		for (const adjustment of chain) {
-			if (adjustment.createdAt < input.snapshotAt) {
+			const first = chain[0];
+			if (first)
 				terms.set(invoiceId, {
-					amountInCents: adjustment.amountInCents,
-					dueDate: adjustment.dueDate,
+					amountInCents: first.beforeAmountInCents,
+					dueDate: first.beforeDueDate,
 				});
+			for (const adjustment of chain) {
+				if (adjustment.createdAt < input.snapshotAt) {
+					terms.set(invoiceId, {
+						amountInCents: adjustment.amountInCents,
+						dueDate: adjustment.dueDate,
+					});
+				}
 			}
 		}
-	}
-	for (const row of rows) {
-		if (row.version > 1 && !grouped.has(row.id)) invalid.add(row.id);
-	}
-	const settled = new Map<string, number>();
-	for (const row of payments)
-		settled.set(
-			row.invoiceId,
-			(settled.get(row.invoiceId) ?? 0) + row.amountInCents,
+		for (const row of rows) {
+			if (row.version > 1 && !grouped.has(row.id)) invalid.add(row.id);
+		}
+		const settled = new Map<string, number>();
+		for (const row of payments)
+			settled.set(
+				row.invoiceId,
+				(settled.get(row.invoiceId) ?? 0) + row.amountInCents,
+			);
+		for (const row of reversals)
+			settled.set(
+				row.invoiceId,
+				(settled.get(row.invoiceId) ?? 0) - row.amountInCents,
+			);
+		items.push(
+			...rows
+				.filter((row) => !invalid.has(row.id))
+				.map((row) => {
+					const term = terms.get(row.id);
+					const amount = term?.amountInCents ?? row.amountInCents;
+					const outstanding = amount - (settled.get(row.id) ?? 0);
+					return {
+						invoiceId: row.id,
+						occurredAt: row.issuedAt,
+						amountInCents: amount,
+						outstandingInCents: outstanding,
+						agingBucket: getFinancialAgingBucket(
+							term?.dueDate ?? row.dueDate,
+							input.snapshotAt,
+						),
+					};
+				})
+				.filter((item) => item.outstandingInCents > 0),
 		);
-	for (const row of reversals)
-		settled.set(
-			row.invoiceId,
-			(settled.get(row.invoiceId) ?? 0) - row.amountInCents,
-		);
-	const items = rows
-		.filter((row) => !invalid.has(row.id))
-		.map((row) => {
-			const term = terms.get(row.id);
-			const amount = term?.amountInCents ?? row.amountInCents;
-			const outstanding = amount - (settled.get(row.id) ?? 0);
-			return {
-				invoiceId: row.id,
-				occurredAt: row.issuedAt,
-				amountInCents: amount,
-				outstandingInCents: outstanding,
-				agingBucket: getFinancialAgingBucket(
-					term?.dueDate ?? row.dueDate,
-					input.snapshotAt,
-				),
-			};
-		})
-		.filter((item) => item.outstandingInCents > 0);
+	}
 	const page = items.slice(0, limit);
 	const last = page.at(-1);
 	return {
 		items: page,
 		nextCursor:
-			rows.length > limit && last
+			items.length > limit && last
 				? { occurredAt: last.occurredAt, id: last.invoiceId }
 				: null,
 	};

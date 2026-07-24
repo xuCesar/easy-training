@@ -40,6 +40,7 @@ import {
 	getBusinessMetricRenewalRecord,
 	getBusinessMetricSalesRecord,
 } from "../src/repositories/business-metrics";
+import { getFinancialAgingInvoicePage } from "../src/repositories/financial-metrics";
 import { getResourceUtilizationRecord } from "../src/repositories/resource-metrics";
 import {
 	attendance,
@@ -1095,6 +1096,88 @@ test("财务角色、校区范围和下钻不会泄露其他校区或未归属�
 					error instanceof Error && error.message.includes("财务经营指标"),
 			);
 		}
+	} finally {
+		await cleanupMetricFixture(ids);
+	}
+});
+
+test("账龄明细分页会跳过前置零余额账单并继续返回后续欠款", async () => {
+	const ids = createMetricFixtureIds();
+	try {
+		const { organizationA, campusA } = await seedMetricFixture(ids);
+		const invoiceIds = Array.from({ length: 6 }, () => randomUUID());
+		await db.insert(invoice).values(
+			invoiceIds.map((invoiceId, index) => ({
+				id: invoiceId,
+				organizationId: organizationA,
+				studentId: requiredAt(ids.students, index),
+				source: "manual" as const,
+				businessActivityType: "other" as const,
+				amountInCents: 10_000 + index,
+				dueDate: "2026-08-01",
+				issuedAt: new Date(
+					`2026-08-${String(index + 1).padStart(2, "0")}T02:00:00.000Z`,
+				),
+			})),
+		);
+		await db.insert(invoiceMetricFact).values(
+			invoiceIds.map((invoiceId, index) => ({
+				invoiceId,
+				organizationId: organizationA,
+				campusId: campusA,
+				campusAttributionKind: "linked" as const,
+				campusNameSnapshot: "A 校区",
+				courseAttributionKind: "not_applicable" as const,
+				source: "manual" as const,
+				provenance: "native" as const,
+				occurredAt: new Date(
+					`2026-08-${String(index + 1).padStart(2, "0")}T02:00:00.000Z`,
+				),
+			})),
+		);
+		await db.insert(payment).values(
+			invoiceIds.slice(0, 3).map((invoiceId, index) => ({
+				organizationId: organizationA,
+				invoiceId,
+				amountInCents: 10_000 + index,
+				receivedAt: new Date("2026-08-10T02:00:00.000Z"),
+				method: "bank_transfer" as const,
+				operatorUserId: ids.users.owner,
+				operatorName: "owner",
+				requestId: randomUUID(),
+			})),
+		);
+
+		const scope = {
+			organizationId: organizationA,
+			campusAccess: { kind: "selected" as const, campusIds: [campusA] },
+		};
+		const first = await getFinancialAgingInvoicePage({
+			scope,
+			snapshotAt: new Date("2026-09-01T04:00:00.000Z"),
+			limit: 2,
+			cursor: {
+				occurredAt: new Date("2026-07-31T23:59:59.000Z"),
+				id: "00000000-0000-0000-0000-000000000000",
+			},
+		});
+		assert.deepEqual(
+			first.items.map((item) => item.invoiceId),
+			invoiceIds.slice(3, 5),
+		);
+		assert.ok(first.nextCursor);
+
+		const second = await getFinancialAgingInvoicePage({
+			scope,
+			snapshotAt: new Date("2026-09-01T04:00:00.000Z"),
+			limit: 2,
+			cursor: first.nextCursor,
+		});
+		assert.deepEqual(
+			second.items.map((item) => item.invoiceId),
+			invoiceIds.slice(5),
+		);
+		assert.equal(second.nextCursor, null);
 	} finally {
 		await cleanupMetricFixture(ids);
 	}
