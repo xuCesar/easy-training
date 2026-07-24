@@ -12,6 +12,9 @@ import { queryClient } from "@/utils/orpc";
 
 import Loader from "./loader";
 
+const authPasswordMinLength = 10;
+const authPasswordMaxLength = 128;
+
 export default function SignUpForm({
 	isInvitation = false,
 	onSwitchToSignIn,
@@ -60,7 +63,10 @@ export default function SignUpForm({
 			onSubmit: z.object({
 				name: z.string().min(2, "姓名至少需要 2 个字符"),
 				email: z.email("请输入有效邮箱"),
-				password: z.string().min(8, "密码至少需要 8 个字符"),
+				password: z
+					.string()
+					.min(authPasswordMinLength, "密码至少需要 10 个字符")
+					.max(authPasswordMaxLength, "密码不能超过 128 个字符"),
 			}),
 		},
 	});

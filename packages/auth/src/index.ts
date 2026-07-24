@@ -4,8 +4,29 @@ import { env } from "@easy-training/env/server";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 
+const sensitiveAuthPaths = [
+	"/sign-in/*",
+	"/sign-up/*",
+	"/change-password",
+	"/change-email",
+	"/request-password-reset",
+	"/reset-password",
+	"/forget-password/*",
+	"/email-otp/request-password-reset",
+	"/email-otp/reset-password",
+] as const;
+
 export function createAuth() {
 	const db = createDb();
+	if (env.AUTH_PASSWORD_MIN_LENGTH > env.AUTH_PASSWORD_MAX_LENGTH) {
+		throw new Error(
+			"AUTH_PASSWORD_MIN_LENGTH must be less than or equal to AUTH_PASSWORD_MAX_LENGTH.",
+		);
+	}
+	const sensitiveRateLimitRule = {
+		window: env.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
+		max: env.AUTH_SENSITIVE_RATE_LIMIT_MAX,
+	};
 
 	return betterAuth({
 		database: drizzleAdapter(db, {
@@ -16,6 +37,17 @@ export function createAuth() {
 		trustedOrigins: [env.CORS_ORIGIN],
 		emailAndPassword: {
 			enabled: true,
+			minPasswordLength: env.AUTH_PASSWORD_MIN_LENGTH,
+			maxPasswordLength: env.AUTH_PASSWORD_MAX_LENGTH,
+		},
+		rateLimit: {
+			enabled: true,
+			window: env.AUTH_RATE_LIMIT_WINDOW_SECONDS,
+			max: env.AUTH_RATE_LIMIT_MAX,
+			storage: "memory",
+			customRules: Object.fromEntries(
+				sensitiveAuthPaths.map((path) => [path, sensitiveRateLimitRule]),
+			),
 		},
 		secret: env.BETTER_AUTH_SECRET,
 		baseURL: env.BETTER_AUTH_URL,

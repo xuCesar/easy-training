@@ -59,6 +59,14 @@ cp apps/web/.env.example apps/web/.env
 
 `BETTER_AUTH_SECRET` 必须替换为至少 32 个字符的随机值，不要提交真实密钥。
 
+认证安全相关服务端变量：
+
+- `AUTH_RATE_LIMIT_WINDOW_SECONDS` / `AUTH_RATE_LIMIT_MAX`：Better Auth 全局请求限流窗口与上限。
+- `AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS` / `AUTH_SENSITIVE_RATE_LIMIT_MAX`：登录、注册、改密和密码重置等敏感端点的更严格限流。
+- `AUTH_PASSWORD_MIN_LENGTH` / `AUTH_PASSWORD_MAX_LENGTH`：邮箱密码注册、改密和重置密码的服务端长度策略。
+
+当前限流使用 Better Auth 内存存储，适合单实例部署和本地验证；多实例生产环境应接入共享的 secondary storage 或数据库存储后再按流量调参。
+
 3. 启动 PostgreSQL 并应用 schema：
 
 ```bash
