@@ -123,6 +123,37 @@ export function AcademicWorkspace({
 	const [classStatus, setClassStatus] = useState<string>("all");
 	const canManageCatalog = role === "owner" || role === "admin";
 	const context = { organizationId, sessionUserId };
+	const isClassesTab = initialTab === "classes";
+	const isLessonsTab = initialTab === "lessons";
+	const isRoomsTab = initialTab === "rooms";
+	const isCoursesTab = initialTab === "courses";
+	const isTeachersTab = initialTab === "teachers";
+	const needsCampuses =
+		isClassesTab ||
+		isLessonsTab ||
+		isRoomsTab ||
+		(isTeachersTab && canManageCatalog) ||
+		editor?.kind === "class" ||
+		editor?.kind === "teacher";
+	const needsCourses =
+		isCoursesTab || editor?.kind === "class" || Boolean(initialCourseId);
+	const needsTeachers =
+		(isTeachersTab && canManageCatalog) ||
+		editor?.kind === "class" ||
+		bulkRescheduleTarget !== null;
+	const needsClassrooms =
+		isRoomsTab ||
+		editor?.kind === "lesson" ||
+		scheduleRulesTarget !== null ||
+		bulkRescheduleTarget !== null;
+	const needsBindableTeacherMembers =
+		canManageCatalog && editor?.kind === "teacher";
+	const needsClasses =
+		isClassesTab || editor?.kind === "lesson" || scheduleRulesTarget !== null;
+	const needsLessons =
+		isLessonsTab ||
+		makeupSourceLesson !== null ||
+		bulkRescheduleTarget !== null;
 	const campusesOptions = orpc.training.campuses.list.queryOptions({
 		input: { includeInactive: false },
 	});
@@ -155,23 +186,27 @@ export function AcademicWorkspace({
 	const campusesQuery = useQuery({
 		...campusesOptions,
 		queryKey: [...campusesOptions.queryKey, context],
+		enabled: needsCampuses,
 	});
 	const coursesQuery = useQuery({
 		...coursesOptions,
 		queryKey: [...coursesOptions.queryKey, context],
+		enabled: needsCourses,
 	});
 	const teachersQuery = useQuery({
 		...teachersOptions,
 		queryKey: [...teachersOptions.queryKey, context],
+		enabled: needsTeachers,
 	});
 	const classroomsQuery = useQuery({
 		...classroomsOptions,
 		queryKey: [...classroomsOptions.queryKey, context],
+		enabled: needsClassrooms,
 	});
 	const bindableTeacherMembersQuery = useQuery({
 		...bindableTeacherMembersOptions,
 		queryKey: [...bindableTeacherMembersOptions.queryKey, context],
-		enabled: canManageCatalog,
+		enabled: needsBindableTeacherMembers,
 	});
 	const classesQuery = useInfiniteQuery({
 		queryKey: [...classesOptions.queryKey, context, classesInput],
@@ -184,6 +219,7 @@ export function AcademicWorkspace({
 		initialPageParam: null as string | null,
 		getNextPageParam: (page) => page.nextCursor ?? undefined,
 		placeholderData: keepPreviousData,
+		enabled: needsClasses,
 	});
 	const lessonsQuery = useInfiniteQuery({
 		queryKey: [...lessonsOptions.queryKey, context, lessonsInput],
@@ -196,6 +232,7 @@ export function AcademicWorkspace({
 		initialPageParam: null as string | null,
 		getNextPageParam: (page) => page.nextCursor ?? undefined,
 		placeholderData: keepPreviousData,
+		enabled: needsLessons,
 	});
 	const classItems =
 		classesQuery.data?.pages.flatMap((page) => page.items) ?? [];
@@ -313,7 +350,8 @@ export function AcademicWorkspace({
 					campuses={campusesQuery.data?.items ?? []}
 					classes={classItems}
 					lessons={lessonItems}
-					isLessonsPending={lessonsQuery.isPending}
+					lessonsReady={lessonsQuery.isSuccess}
+					isLessonsPending={needsLessons && lessonsQuery.isPending}
 					isPending={classesQuery.isPending && !classesQuery.data}
 					isError={classesQuery.isError}
 					hasNextPage={classesQuery.hasNextPage}
@@ -525,6 +563,7 @@ function ClassesPanel({
 	campuses,
 	classes,
 	lessons,
+	lessonsReady,
 	isLessonsPending,
 	isPending,
 	isError,
@@ -546,6 +585,7 @@ function ClassesPanel({
 	campuses: Array<{ id: string; name: string }>;
 	classes: ClassGroup[];
 	lessons: Lesson[];
+	lessonsReady: boolean;
 	isLessonsPending: boolean;
 	isPending: boolean;
 	isError: boolean;
@@ -567,10 +607,12 @@ function ClassesPanel({
 	const [expandedClassId, setExpandedClassId] = useState<string | null>(null);
 	const now = new Date();
 	const lessonsByClassId = new Map<string, Lesson[]>();
-	for (const item of lessons) {
-		const current = lessonsByClassId.get(item.classGroupId) ?? [];
-		current.push(item);
-		lessonsByClassId.set(item.classGroupId, current);
+	if (lessonsReady) {
+		for (const item of lessons) {
+			const current = lessonsByClassId.get(item.classGroupId) ?? [];
+			current.push(item);
+			lessonsByClassId.set(item.classGroupId, current);
+		}
 	}
 
 	return (
@@ -635,7 +677,7 @@ function ClassesPanel({
 										<p className="mt-1 text-muted-foreground text-xs">
 											课次加载中…
 										</p>
-									) : (
+									) : lessonsReady ? (
 										<button
 											type="button"
 											className="mt-1 max-w-full cursor-pointer text-left text-muted-foreground text-xs hover:text-foreground"
@@ -652,7 +694,7 @@ function ClassesPanel({
 												? ` · 下次 ${formatDateTime(futureLessons[0].startsAt)}`
 												: ""}
 										</button>
-									)}
+									) : null}
 								</div>
 								<div className="flex gap-1">
 									<Button
