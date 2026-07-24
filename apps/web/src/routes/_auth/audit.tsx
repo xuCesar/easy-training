@@ -83,6 +83,19 @@ const actions = [
 	{ value: "makeup_lesson_needs_reschedule", label: "补课待重排" },
 	{ value: "lead_imported", label: "线索导入" },
 	{ value: "lead_exported", label: "线索导出" },
+	{ value: "student_imported", label: "学员导入" },
+	{ value: "student_exported", label: "学员导出" },
+	{ value: "students_bulk_updated", label: "批量更新学员" },
+	{ value: "operation_task_created", label: "新建任务" },
+	{ value: "operation_task_updated", label: "更新任务" },
+	{ value: "operation_task_claimed", label: "认领任务" },
+	{ value: "operation_task_completed", label: "完成任务" },
+	{ value: "operation_task_reopened", label: "重新打开任务" },
+	{ value: "operation_task_cancelled", label: "取消任务" },
+	{ value: "analytics_filter_saved", label: "保存经营分析筛选" },
+	{ value: "analytics_filter_updated", label: "更新经营分析筛选" },
+	{ value: "analytics_filter_deleted", label: "删除经营分析筛选" },
+	{ value: "analytics_exported", label: "导出经营分析" },
 	{ value: "notification_read", label: "通知已读" },
 	{ value: "notifications_marked_read", label: "通知全部已读" },
 ] as const;
@@ -113,6 +126,12 @@ const entityLabels: Record<string, string> = {
 	organization_notification: "站内通知",
 	lead_import_batch: "线索导入批次",
 	lead_export: "线索导出",
+	student_import_batch: "学员导入批次",
+	student_export: "学员导出",
+	student_bulk_operation_batch: "学员批量操作",
+	operation_task: "运营任务",
+	analyticsSavedFilter: "经营分析筛选",
+	analyticsExport: "经营分析导出",
 };
 
 function AuditRoute() {

@@ -196,7 +196,7 @@ export function FinanceAdjustments({
 							<Button
 								type="button"
 								variant={pausedWithoutResumeOnly ? "secondary" : "outline"}
-								size="xs"
+								className="h-10"
 								aria-pressed={pausedWithoutResumeOnly}
 								onClick={() =>
 									setPausedWithoutResumeOnly((current) => !current)

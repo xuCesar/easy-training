@@ -14,6 +14,13 @@ import {
 	DialogTitle,
 } from "@easy-training/ui/components/dialog";
 import { Input } from "@easy-training/ui/components/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@easy-training/ui/components/select";
 import { Skeleton } from "@easy-training/ui/components/skeleton";
 import { Textarea } from "@easy-training/ui/components/textarea";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
@@ -61,6 +68,7 @@ const allTaskModules: readonly TaskModule[] = [
 	"finance",
 	"student_service",
 ];
+const emptySelectValue = "__empty_task_select_value__";
 
 function getAssignableModules(role: string): readonly TaskModule[] {
 	if (managerRoles.has(role)) return allTaskModules;
@@ -166,8 +174,9 @@ export function OperationTaskWorkspace({ userId }: { userId: string }) {
 						</Button>
 					))}
 				</fieldset>
-				<div className="grid gap-2 sm:grid-cols-3">
-					<NativeSelect
+				<div className="grid grid-cols-6 gap-3">
+					<TaskSelect
+						className="w-full"
 						label="状态"
 						value={status}
 						onChange={(value) =>
@@ -180,13 +189,15 @@ export function OperationTaskWorkspace({ userId }: { userId: string }) {
 							["cancelled", "已取消"],
 						]}
 					/>
-					<NativeSelect
+					<TaskSelect
+						className="w-full"
 						label="模块"
 						value={module}
 						onChange={(value) => setModule(value as TaskModule | "all")}
 						options={[["all", "全部模块"], ...Object.entries(moduleLabels)]}
 					/>
-					<NativeSelect
+					<TaskSelect
+						className="w-full"
 						label="校区"
 						value={campusId}
 						onChange={setCampusId}
@@ -198,31 +209,38 @@ export function OperationTaskWorkspace({ userId }: { userId: string }) {
 							]) ?? []),
 						]}
 					/>
-				</div>
-				<div className="grid gap-2 sm:grid-cols-[minmax(0,12rem)_minmax(0,12rem)_minmax(12rem,1fr)]">
-					<label className="grid gap-1.5" htmlFor="task-due-from">
-						<span className="font-medium text-sm">截止起始日</span>
+					<label className="min-w-0" htmlFor="task-due-from">
+						<span className="mb-1 block text-muted-foreground text-xs">
+							截止起始日
+						</span>
 						<Input
 							id="task-due-from"
 							type="date"
+							className="h-10 w-full"
 							value={dueFrom}
 							onChange={(event) => setDueFrom(event.target.value)}
 						/>
 					</label>
-					<label className="grid gap-1.5" htmlFor="task-due-to">
-						<span className="font-medium text-sm">截止结束日</span>
+					<label className="min-w-0" htmlFor="task-due-to">
+						<span className="mb-1 block text-muted-foreground text-xs">
+							截止结束日
+						</span>
 						<Input
 							id="task-due-to"
 							type="date"
+							className="h-10 w-full"
 							min={dueFrom || undefined}
 							value={dueTo}
 							onChange={(event) => setDueTo(event.target.value)}
 						/>
 					</label>
-					<label className="grid gap-1.5" htmlFor="task-keyword">
-						<span className="font-medium text-sm">任务标题</span>
+					<label className="min-w-0" htmlFor="task-keyword">
+						<span className="mb-1 block text-muted-foreground text-xs">
+							任务标题
+						</span>
 						<Input
 							id="task-keyword"
+							className="h-10 w-full"
 							placeholder="搜索任务标题"
 							value={keyword}
 							onChange={(event) => setKeyword(event.target.value)}
@@ -556,9 +574,10 @@ function TaskDialog({
 				</DialogHeader>
 				<form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
 					<label className="grid gap-1.5 sm:col-span-2" htmlFor="task-title">
-						<span className="font-medium text-sm">任务标题</span>
+						<span className="text-muted-foreground text-xs">任务标题</span>
 						<Input
 							id="task-title"
+							className="h-10"
 							required
 							maxLength={200}
 							value={title}
@@ -569,7 +588,7 @@ function TaskDialog({
 						className="grid gap-1.5 sm:col-span-2"
 						htmlFor="task-description"
 					>
-						<span className="font-medium text-sm">任务说明</span>
+						<span className="text-muted-foreground text-xs">任务说明</span>
 						<Textarea
 							id="task-description"
 							maxLength={4000}
@@ -577,7 +596,8 @@ function TaskDialog({
 							onChange={(event) => setDescription(event.target.value)}
 						/>
 					</label>
-					<NativeSelect
+					<TaskSelect
+						className="w-full"
 						label="关联模块"
 						value={module}
 						onChange={(value) => setModule(value as TaskModule)}
@@ -586,19 +606,22 @@ function TaskDialog({
 							moduleLabels[value],
 						])}
 					/>
-					<NativeSelect
+					<TaskSelect
+						className="w-full"
 						label="优先级"
 						value={priority}
 						onChange={(value) => setPriority(value as TaskPriority)}
 						options={Object.entries(priorityLabels)}
 					/>
-					<NativeSelect
+					<TaskSelect
+						className="w-full"
 						label="校区"
 						value={campusId}
 						onChange={setCampusId}
 						options={campusOptions}
 					/>
-					<NativeSelect
+					<TaskSelect
+						className="w-full"
 						label="负责人"
 						value={ownerUserId}
 						onChange={setOwnerUserId}
@@ -606,16 +629,18 @@ function TaskDialog({
 						options={assigneeOptions}
 					/>
 					<label className="grid gap-1.5" htmlFor="task-due-at">
-						<span className="font-medium text-sm">截止时间</span>
+						<span className="text-muted-foreground text-xs">截止时间</span>
 						<Input
 							id="task-due-at"
 							type="datetime-local"
+							className="h-10"
 							required
 							value={dueAt}
 							onChange={(event) => setDueAt(event.target.value)}
 						/>
 					</label>
-					<NativeSelect
+					<TaskSelect
+						className="w-full"
 						label="提前提醒"
 						value={reminder}
 						onChange={setReminder}
@@ -652,13 +677,15 @@ function TaskDialog({
 	);
 }
 
-function NativeSelect({
+function TaskSelect({
+	className,
 	label,
 	value,
 	onChange,
 	options,
 	disabled = false,
 }: {
+	className?: string;
 	label: string;
 	value: string;
 	onChange: (value: string) => void;
@@ -666,21 +693,38 @@ function NativeSelect({
 	disabled?: boolean;
 }) {
 	return (
-		<label className="grid gap-1.5">
-			<span className="font-medium text-sm">{label}</span>
-			<select
-				className="h-9 w-full border bg-background px-3 text-sm"
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
+		<div className={className ?? "w-[200px] shrink-0"}>
+			<span className="mb-1 block text-muted-foreground text-xs">{label}</span>
+			<Select
+				value={value || emptySelectValue}
+				onValueChange={(next) =>
+					onChange(next === emptySelectValue ? "" : (next ?? ""))
+				}
 				disabled={disabled}
 			>
-				{options.map(([optionValue, optionLabel]) => (
-					<option key={optionValue || "empty"} value={optionValue}>
-						{optionLabel}
-					</option>
-				))}
-			</select>
-		</label>
+				<SelectTrigger
+					className="w-full data-[size=default]:h-10"
+					aria-label={label}
+				>
+					<SelectValue>
+						{() =>
+							options.find(([optionValue]) => optionValue === value)?.[1] ??
+							label
+						}
+					</SelectValue>
+				</SelectTrigger>
+				<SelectContent>
+					{options.map(([optionValue, optionLabel]) => (
+						<SelectItem
+							key={optionValue || emptySelectValue}
+							value={optionValue || emptySelectValue}
+						>
+							{optionLabel}
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
+		</div>
 	);
 }
 

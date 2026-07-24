@@ -246,11 +246,11 @@ function AuthLayout() {
 
 	return (
 		<TooltipProvider>
-			<div className="min-h-dvh bg-background lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]">
-				<aside className="hidden border-r bg-card lg:flex lg:flex-col">
+			<div className="min-h-dvh bg-background lg:grid lg:h-dvh lg:grid-cols-[15rem_minmax(0,1fr)] lg:overflow-hidden">
+				<aside className="hidden border-r bg-card lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden">
 					<Sidebar pathname={pathname} role={organization?.role} />
 				</aside>
-				<div className="min-w-0">
+				<div className="min-w-0 lg:flex lg:min-h-0 lg:flex-col">
 					<header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur lg:px-6">
 						<Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
 							<SheetTrigger
@@ -498,34 +498,36 @@ function AuthLayout() {
 						contextKey={`${organization?.id ?? ""}:${organization?.role ?? ""}`}
 						role={organization?.role}
 					/>
-					<main className="mx-auto w-full max-w-7xl p-4 lg:p-6">
-						{isSwitchingOrganization ? (
-							<OrganizationSwitchingState />
-						) : organizationQuery.isError ? (
-							<section className="grid min-h-72 place-items-center border">
-								<div className="flex flex-col items-center gap-3 text-center">
-									<h1 className="font-semibold text-lg">机构信息加载失败</h1>
-									<p className="text-muted-foreground text-sm">
-										{organizationQuery.error.message}
-									</p>
-									<Button onClick={() => organizationQuery.refetch()}>
-										重试
-									</Button>
-								</div>
-							</section>
-						) : organization && readyOrganizationId === organization.id ? (
-							<OrganizationProvider
-								value={{
-									organization,
-									isSwitching: isSwitchingOrganization,
-								}}
-							>
-								<Outlet />
-							</OrganizationProvider>
-						) : (
-							<OrganizationSwitchingState label="正在加载机构信息" />
-						)}
-					</main>
+					<div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+						<main className="mx-auto w-full max-w-7xl p-4 lg:p-6">
+							{isSwitchingOrganization ? (
+								<OrganizationSwitchingState />
+							) : organizationQuery.isError ? (
+								<section className="grid min-h-72 place-items-center border">
+									<div className="flex flex-col items-center gap-3 text-center">
+										<h1 className="font-semibold text-lg">机构信息加载失败</h1>
+										<p className="text-muted-foreground text-sm">
+											{organizationQuery.error.message}
+										</p>
+										<Button onClick={() => organizationQuery.refetch()}>
+											重试
+										</Button>
+									</div>
+								</section>
+							) : organization && readyOrganizationId === organization.id ? (
+								<OrganizationProvider
+									value={{
+										organization,
+										isSwitching: isSwitchingOrganization,
+									}}
+								>
+									<Outlet />
+								</OrganizationProvider>
+							) : (
+								<OrganizationSwitchingState label="正在加载机构信息" />
+							)}
+						</main>
+					</div>
 				</div>
 			</div>
 		</TooltipProvider>
@@ -577,65 +579,76 @@ function Sidebar({
 	mobile?: boolean;
 	onNavigate?: () => void;
 }) {
-	const content = (
-		<>
-			<div className="px-4 py-5">
-				<p className="font-semibold">Easy Training</p>
-				<p className="mt-1 text-muted-foreground text-xs">教培运营系统</p>
-			</div>
-			<nav className="grid gap-1 px-2" aria-label="主导航">
-				{navigation.map((item) => {
-					if (
-						"roles" in item &&
-						!item.roles.some((allowedRole) => allowedRole === role)
-					) {
-						return null;
-					}
-					const Icon = item.icon;
-					if (!item.available)
-						return (
-							<Tooltip key={item.label}>
-								<TooltipTrigger
-									render={
-										<Button
-											variant="ghost"
-											className="justify-start text-muted-foreground"
-											disabled
-										>
-											<Icon data-icon="inline-start" />
-											{item.label}
-											<span className="ml-auto text-[10px]">即将开放</span>
-										</Button>
-									}
-								/>
-								<TooltipContent>此模块即将开放</TooltipContent>
-							</Tooltip>
-						);
+	const header = (
+		<div className="shrink-0 px-4 py-5">
+			<p className="font-semibold">Easy Training</p>
+			<p className="mt-1 text-muted-foreground text-xs">教培运营系统</p>
+		</div>
+	);
+	const nav = (
+		<nav
+			className={
+				mobile
+					? "grid gap-1 px-2"
+					: "grid min-h-0 flex-1 content-start gap-1 overflow-y-auto px-2"
+			}
+			aria-label="主导航"
+		>
+			{navigation.map((item) => {
+				if (
+					"roles" in item &&
+					!item.roles.some((allowedRole) => allowedRole === role)
+				) {
+					return null;
+				}
+				const Icon = item.icon;
+				if (!item.available)
 					return (
-						<Link
-							key={item.to}
-							to={item.to}
-							className={buttonVariants({
-								variant: pathname === item.to ? "secondary" : "ghost",
-								className: "justify-start",
-							})}
-							aria-current={pathname === item.to ? "page" : undefined}
-							onClick={onNavigate}
-						>
-							<Icon data-icon="inline-start" />
-							{item.label}
-						</Link>
+						<Tooltip key={item.label}>
+							<TooltipTrigger
+								render={
+									<Button
+										variant="ghost"
+										className="justify-start text-muted-foreground"
+										disabled
+									>
+										<Icon data-icon="inline-start" />
+										{item.label}
+										<span className="ml-auto text-[10px]">即将开放</span>
+									</Button>
+								}
+							/>
+							<TooltipContent>此模块即将开放</TooltipContent>
+						</Tooltip>
 					);
-				})}
-			</nav>
-		</>
+				return (
+					<Link
+						key={item.to}
+						to={item.to}
+						className={buttonVariants({
+							variant: pathname === item.to ? "secondary" : "ghost",
+							className: "justify-start",
+						})}
+						aria-current={pathname === item.to ? "page" : undefined}
+						onClick={onNavigate}
+					>
+						<Icon data-icon="inline-start" />
+						{item.label}
+					</Link>
+				);
+			})}
+		</nav>
 	);
 	return mobile ? (
-		<div className="flex flex-col">{content}</div>
+		<div className="flex flex-col">
+			{header}
+			{nav}
+		</div>
 	) : (
-		<div className="flex h-dvh flex-col">
-			{content}
-			<p className="mt-auto px-4 pb-5 text-muted-foreground text-xs">
+		<div className="flex h-full min-h-0 flex-col">
+			{header}
+			{nav}
+			<p className="shrink-0 px-4 py-5 text-muted-foreground text-xs">
 				仅显示已开放功能
 			</p>
 		</div>

@@ -666,7 +666,7 @@ function FilterSelect({
 }) {
 	return (
 		<Select value={value} onValueChange={(next) => next && onValueChange(next)}>
-			<SelectTrigger aria-label={label}>
+			<SelectTrigger className="w-full" aria-label={label}>
 				<SelectValue>{() => getFilterLabel(items, value)}</SelectValue>
 			</SelectTrigger>
 			<SelectContent>
@@ -1042,6 +1042,7 @@ function LeadEditor({
 								>
 									<SelectTrigger
 										id="lead-stage"
+										className="w-full"
 										aria-invalid={Boolean(errors.stage)}
 									>
 										<SelectValue>

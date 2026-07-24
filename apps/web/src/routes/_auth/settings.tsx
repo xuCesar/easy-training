@@ -918,8 +918,12 @@ function InvitationEditor({
 						当前版本不会发送邮件。请复制链接并通过机构已有渠道发送；邮箱匹配不等同于邮箱控制权验证。
 					</DialogDescription>
 				</DialogHeader>
-				<form className="grid gap-4" onSubmit={submit} noValidate>
-					<Field>
+				<form
+					className="grid gap-4 sm:grid-cols-2"
+					onSubmit={submit}
+					noValidate
+				>
+					<Field className="sm:col-span-2">
 						<FieldLabel htmlFor="invitation-email">受邀邮箱</FieldLabel>
 						<Input
 							id="invitation-email"
@@ -936,6 +940,7 @@ function InvitationEditor({
 						allowOwner={false}
 					/>
 					<ScopeFields
+						className="sm:col-span-2"
 						mode={role === "admin" ? "all" : mode}
 						campusIds={campusIds}
 						campuses={campuses}
@@ -943,7 +948,7 @@ function InvitationEditor({
 						onModeChange={setMode}
 						onCampusIdsChange={setCampusIds}
 					/>
-					<DialogFooter className="flex-col-reverse sm:flex-row">
+					<DialogFooter className="flex-col-reverse sm:col-span-2 sm:flex-row">
 						<Button
 							type="button"
 							variant="outline"
@@ -1160,7 +1165,7 @@ function RoleField({
 				value={value}
 				onValueChange={(next) => next && onChange(next as Role)}
 			>
-				<SelectTrigger aria-label="选择机构角色">
+				<SelectTrigger className="w-full" aria-label="选择机构角色">
 					<SelectValue>{() => roleLabel(value)}</SelectValue>
 				</SelectTrigger>
 				<SelectContent>
@@ -1179,6 +1184,7 @@ function RoleField({
 	);
 }
 function ScopeFields({
+	className,
 	mode,
 	campusIds,
 	campuses,
@@ -1186,6 +1192,7 @@ function ScopeFields({
 	onModeChange,
 	onCampusIdsChange,
 }: {
+	className?: string;
 	mode: AccessMode;
 	campusIds: string[];
 	campuses: Campus[];
@@ -1194,14 +1201,14 @@ function ScopeFields({
 	onCampusIdsChange: (ids: string[]) => void;
 }) {
 	return (
-		<Field>
+		<Field className={className}>
 			<FieldLabel>校区访问范围</FieldLabel>
 			<Select
 				value={mode}
 				disabled={disabled}
 				onValueChange={(next) => next && onModeChange(next as AccessMode)}
 			>
-				<SelectTrigger aria-label="选择校区访问范围">
+				<SelectTrigger className="w-full" aria-label="选择校区访问范围">
 					<SelectValue>
 						{() => (mode === "all" ? "全部校区" : "指定校区")}
 					</SelectValue>
