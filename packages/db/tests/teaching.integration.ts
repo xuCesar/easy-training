@@ -661,6 +661,36 @@ test("校区负责人只能在授权校区开班，课次冲突和取消状态�
 			endsAt: new Date("2026-08-01T03:00:00.000Z"),
 		});
 		assert.equal(first.room, "A201");
+		const secondInstructor = await createTeacherRecord({
+			organizationId: ids.organizationId,
+			userId: ids.adminId,
+			name: "李老师",
+			phone: null,
+			subjects: ["英语"],
+			weeklyCapacityHours: 20,
+			campusIds: [ids.campusA],
+		});
+		const classB = await createClassGroupRecord({
+			organizationId: ids.organizationId,
+			userId: ids.managerId,
+			name: "周六并行班",
+			campusId: ids.campusA,
+			courseId: trainingCourse.id,
+			teacherId: secondInstructor.id,
+			capacity: 12,
+			startDate: "2026-08-01",
+		});
+		await expectError(
+			createLessonRecord({
+				organizationId: ids.organizationId,
+				userId: ids.managerId,
+				classGroupId: classB.id,
+				room: "Ａ２０１",
+				startsAt: new Date("2026-08-01T02:30:00.000Z"),
+				endsAt: new Date("2026-08-01T03:30:00.000Z"),
+			}),
+			"LESSON_CONFLICT",
+		);
 		await expectError(
 			createLessonRecord({
 				organizationId: ids.organizationId,
@@ -2150,15 +2180,41 @@ test("补课校验来源资格、合并点名名单并按考勤结果恰好一�
 			"MAKEUP_LESSON_INVALID",
 		);
 
-		const requestId = randomUUID();
-		const created = await createMakeupLessonRecord({
-			organizationId: ids.organizationId,
-			userId: ids.adminId,
-			sourceLessonId,
-			sourceEnrollmentId: sourceEnrollment.enrollmentId,
-			targetLessonId: targetLesson.id,
-			requestId,
-		});
+		const requestIds = [randomUUID(), randomUUID()];
+		const concurrentMakeups = await Promise.allSettled(
+			requestIds.map((requestId) =>
+				createMakeupLessonRecord({
+					organizationId: ids.organizationId,
+					userId: ids.adminId,
+					sourceLessonId,
+					sourceEnrollmentId: sourceEnrollment.enrollmentId,
+					targetLessonId: targetLesson.id,
+					requestId,
+				}),
+			),
+		);
+		assert.equal(
+			concurrentMakeups.filter((result) => result.status === "fulfilled")
+				.length,
+			1,
+		);
+		const createdResult = concurrentMakeups.find(
+			(
+				result,
+			): result is PromiseFulfilledResult<
+				Awaited<ReturnType<typeof createMakeupLessonRecord>>
+			> => result.status === "fulfilled",
+		);
+		if (!createdResult)
+			throw new Error("Expected one scheduled makeup lesson.");
+		const created = createdResult.value;
+		const requestId = requestIds[concurrentMakeups.indexOf(createdResult)];
+		if (!requestId) throw new Error("Expected the successful request ID.");
+		const rejectedMakeup = concurrentMakeups.find(
+			(result): result is PromiseRejectedResult => result.status === "rejected",
+		);
+		assert.ok(rejectedMakeup?.reason instanceof TeachingRepositoryError);
+		assert.equal(rejectedMakeup.reason.code, "MAKEUP_LESSON_DUPLICATE");
 		assert.equal(created.replayed, false);
 		assert.equal(created.makeupLesson.status, "scheduled");
 		const waitingSameStudentEnrollmentId = randomUUID();

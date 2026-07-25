@@ -1,0 +1,30 @@
+{
+  "id": "issue-30-academic-workspace",
+  "name": "issue-30-academic-workspace",
+  "title": "Issue 30 教务排课体验、可访问性与模块化",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "xuCesar",
+  "assignee": "xuCesar",
+  "createdAt": "2026-07-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "develop",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-25-issue-30-teaching-data-safety",
+    "07-25-issue-30-academic-workspace-split",
+    "07-25-issue-30-academic-ux-a11y"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
