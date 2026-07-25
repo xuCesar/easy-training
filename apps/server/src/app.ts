@@ -19,6 +19,8 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 
+import { isShuttingDown } from "./shutdown";
+
 const REQUEST_ID_HEADER = "X-Request-Id";
 const REQUEST_ID_CONTEXT_KEY = "requestId";
 const MAX_REQUEST_ID_LENGTH = 128;
@@ -44,6 +46,7 @@ type StructuredLogger = (event: StructuredLogEvent) => void;
 
 type CreateAppDependencies = {
 	readinessCheck?: () => Promise<unknown>;
+	isReady?: () => boolean;
 	log?: StructuredLogger;
 };
 
@@ -149,6 +152,7 @@ export function createApp(dependencies: CreateAppDependencies = {}) {
 	const app = new Hono<AppEnvironment>();
 	const log = dependencies.log ?? logStructuredEvent;
 	const readinessCheck = dependencies.readinessCheck ?? checkReadiness;
+	const isReady = dependencies.isReady ?? (() => !isShuttingDown());
 	const apiHandler = createApiHandler(log);
 	const rpcHandler = createRpcHandler(log);
 
@@ -195,6 +199,9 @@ export function createApp(dependencies: CreateAppDependencies = {}) {
 		}),
 	);
 	app.get("/readyz", async (c) => {
+		if (!isReady()) {
+			return c.text("Service Unavailable", 503);
+		}
 		try {
 			await readinessCheck();
 			return c.text("OK");

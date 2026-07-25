@@ -236,6 +236,7 @@ test("并发首次访问只创建一个初始机构并为两个 session 建立�
 					userId,
 					userName: "并发用户",
 					sessionId: index % 2 === 0 ? sessionA : sessionB,
+					allowAutoCreateOrganization: true,
 				}),
 			),
 		);
@@ -270,5 +271,30 @@ test("并发首次访问只创建一个初始机构并为两个 session 建立�
 		);
 	} finally {
 		await cleanup([userId], createdOrganizationIds.filter(Boolean));
+	}
+});
+
+test("关闭自动建机构时无 membership 用户会收到 ORGANIZATION_MEMBERSHIP_REQUIRED", async () => {
+	const prefix = createPrefix();
+	const userId = `${prefix}-user`;
+	const sessionId = `${prefix}-session`;
+
+	try {
+		await insertUser(userId, "无机构用户");
+		await insertSession(sessionId, userId);
+
+		await assert.rejects(
+			getOrCreateCurrentOrganization({
+				userId,
+				userName: "无机构用户",
+				sessionId,
+				allowAutoCreateOrganization: false,
+			}),
+			(error: unknown) =>
+				error instanceof OrganizationContextError &&
+				error.code === "ORGANIZATION_MEMBERSHIP_REQUIRED",
+		);
+	} finally {
+		await cleanup([userId], []);
 	}
 });

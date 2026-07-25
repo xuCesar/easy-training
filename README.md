@@ -67,6 +67,14 @@ cp apps/web/.env.example apps/web/.env
 
 当前限流使用 Better Auth 内存存储，适合单实例部署和本地验证；多实例生产环境应接入共享的 secondary storage 或数据库存储后再按流量调参。
 
+生产试运行相关服务端变量：
+
+- `DATABASE_POOL_MAX` / `DATABASE_POOL_IDLE_TIMEOUT_MS` / `DATABASE_POOL_CONNECTION_TIMEOUT_MS` / `DATABASE_STATEMENT_TIMEOUT_MS`：PostgreSQL 连接池与语句超时；单机试运行建议保持默认或按内存余量下调 `DATABASE_POOL_MAX`。
+- `ALLOW_PUBLIC_SIGNUP`：是否允许公开注册并自动创建机构。本地开发可设为 `true`；生产试运行应设为 `false`，新成员仅能通过邀请链接注册。首个机构可在受控窗口临时设为 `true` 完成初始化后再关闭。
+- `SHUTDOWN_TIMEOUT_MS`：收到 SIGTERM/SIGINT 后等待在途请求完成的最长时间。
+
+Web 端需同步设置 `VITE_ALLOW_PUBLIC_SIGNUP`，与 `ALLOW_PUBLIC_SIGNUP` 保持一致。
+
 3. 启动 PostgreSQL 并应用 schema：
 
 ```bash
@@ -84,7 +92,7 @@ pnpm dev
 - API：<http://localhost:3000>
 - OpenAPI：<http://localhost:3000/api-reference>
 
-首次使用可在登录页创建本地管理员账号。
+首次使用可在登录页创建本地管理员账号（需 `ALLOW_PUBLIC_SIGNUP=true`）。
 
 ## 常用命令
 

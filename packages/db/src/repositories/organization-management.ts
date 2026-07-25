@@ -86,6 +86,30 @@ function normalizeEmail(value: string): string {
 	return value.trim().toLocaleLowerCase("en-US");
 }
 
+export function normalizeInvitationEmail(value: string): string {
+	return normalizeEmail(value);
+}
+
+export async function hasActiveInvitationForEmail(
+	emailNormalized: string,
+): Promise<boolean> {
+	const now = new Date();
+	const [invitation] = await db
+		.select({ id: organizationInvitation.id })
+		.from(organizationInvitation)
+		.where(
+			and(
+				eq(organizationInvitation.emailNormalized, emailNormalized),
+				isNull(organizationInvitation.revokedAt),
+				isNull(organizationInvitation.claimedAt),
+				gt(organizationInvitation.expiresAt, now),
+			),
+		)
+		.limit(1);
+
+	return Boolean(invitation);
+}
+
 function maskEmail(email: string): string {
 	const [local = "", domain = ""] = email.split("@");
 	if (!domain) return "***";

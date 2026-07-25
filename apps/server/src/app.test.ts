@@ -126,6 +126,17 @@ test("readiness returns 503 when the database check fails", async () => {
 	assert.equal(await response.text(), "Service Unavailable");
 });
 
+test("readiness returns 503 while shutdown is in progress", async () => {
+	const app = createApp({
+		isReady: () => false,
+		log: () => undefined,
+	});
+	const response = await app.fetch(new Request("http://localhost/readyz"));
+
+	assert.equal(response.status, 503);
+	assert.equal(await response.text(), "Service Unavailable");
+});
+
 test("business metric month range uses Shanghai calendar and capped comparison", () => {
 	const result = resolveBusinessMetricWindow(
 		{ preset: "month" },

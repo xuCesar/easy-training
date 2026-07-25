@@ -1,10 +1,30 @@
 import { env } from "@easy-training/env/server";
 import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 
 import * as schema from "./schema";
 
+let pool: Pool | undefined;
+
+export function createDbPool() {
+	return new Pool({
+		connectionString: env.DATABASE_URL,
+		max: env.DATABASE_POOL_MAX,
+		idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT_MS,
+		connectionTimeoutMillis: env.DATABASE_POOL_CONNECTION_TIMEOUT_MS,
+		options: `-c statement_timeout=${env.DATABASE_STATEMENT_TIMEOUT_MS}`,
+	});
+}
+
 export function createDb() {
-	return drizzle(env.DATABASE_URL, { schema });
+	pool ??= createDbPool();
+	return drizzle(pool, { schema });
+}
+
+export async function closeDb() {
+	if (!pool) return;
+	await pool.end();
+	pool = undefined;
 }
 
 export const db = createDb();

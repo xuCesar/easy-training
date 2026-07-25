@@ -13,8 +13,10 @@ import { queryClient } from "@/utils/orpc";
 import Loader from "./loader";
 
 export default function SignInForm({
+	allowPublicSignup = true,
 	onSwitchToSignUp,
 }: {
+	allowPublicSignup?: boolean;
 	onSwitchToSignUp: () => void;
 }) {
 	const navigate = useNavigate({
@@ -142,15 +144,21 @@ export default function SignInForm({
 				</form.Subscribe>
 			</form>
 
-			<div className="mt-4 text-center">
-				<Button
-					variant="link"
-					onClick={onSwitchToSignUp}
-					className="text-indigo-600 hover:text-indigo-800"
-				>
-					还没有账号？注册
-				</Button>
-			</div>
+			{allowPublicSignup ? (
+				<div className="mt-4 text-center">
+					<Button
+						variant="link"
+						onClick={onSwitchToSignUp}
+						className="text-indigo-600 hover:text-indigo-800"
+					>
+						还没有账号？注册
+					</Button>
+				</div>
+			) : (
+				<p className="mt-4 text-center text-muted-foreground text-sm">
+					新成员请通过机构邀请链接注册。
+				</p>
+			)}
 		</div>
 	);
 }

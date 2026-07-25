@@ -43,6 +43,32 @@ export const env = createEnv({
 		NODE_ENV: z
 			.enum(["development", "production", "test"])
 			.default("development"),
+		DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+		DATABASE_POOL_IDLE_TIMEOUT_MS: z.coerce
+			.number()
+			.int()
+			.min(1_000)
+			.max(3_600_000)
+			.default(30_000),
+		DATABASE_POOL_CONNECTION_TIMEOUT_MS: z.coerce
+			.number()
+			.int()
+			.min(1_000)
+			.max(300_000)
+			.default(5_000),
+		DATABASE_STATEMENT_TIMEOUT_MS: z.coerce
+			.number()
+			.int()
+			.min(1_000)
+			.max(3_600_000)
+			.default(15_000),
+		ALLOW_PUBLIC_SIGNUP: z.coerce.boolean().default(false),
+		SHUTDOWN_TIMEOUT_MS: z.coerce
+			.number()
+			.int()
+			.min(1_000)
+			.max(300_000)
+			.default(10_000),
 	},
 	runtimeEnv: process.env,
 	skipValidation: !!process.env.SKIP_ENV_VALIDATION,

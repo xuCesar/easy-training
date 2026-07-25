@@ -14,6 +14,7 @@ type ReminderWorkerLogEvent =
 type ReminderWorkerOptions = {
 	intervalMs?: number;
 	log?: (event: ReminderWorkerLogEvent) => void;
+	isStopped?: () => boolean;
 };
 
 /** 服务进程内的单一轮询器；实际互斥由数据库租约和幂等键保证。 */
@@ -22,10 +23,11 @@ export function startOperationTaskReminderWorker(
 ) {
 	const intervalMs = options.intervalMs ?? POLL_INTERVAL_MS;
 	const log = options.log ?? ((event) => console.log(JSON.stringify(event)));
+	const isStopped = options.isStopped ?? (() => false);
 	let running = false;
 
 	const run = async () => {
-		if (running) return;
+		if (isStopped() || running) return;
 		running = true;
 		try {
 			const result = await processDueOperationTaskReminders();
@@ -60,5 +62,8 @@ export function startOperationTaskReminderWorker(
 	void run();
 	const timer = setInterval(() => void run(), intervalMs);
 	timer.unref();
-	return () => clearInterval(timer);
+
+	return () => {
+		clearInterval(timer);
+	};
 }

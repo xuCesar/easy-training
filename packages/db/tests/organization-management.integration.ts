@@ -10,8 +10,10 @@ import {
 import {
 	claimInvitationRecord,
 	createInvitationRecord,
+	hasActiveInvitationForEmail,
 	listCampusRecords,
 	listInvitationRecords,
+	normalizeInvitationEmail,
 	OrganizationManagementError,
 	previewMemberOwnerImpactRecord,
 	removeMemberRecord,
@@ -725,6 +727,41 @@ test("校区范围阻止越权写入，停用校区拒绝新的线索写入", as
 			.from(lead)
 			.where(eq(lead.organizationId, ids.organizationA));
 		assert.equal(persistedLeads.length, 0);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("hasActiveInvitationForEmail 仅匹配未撤销、未领取且未过期的邀请", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seedFixture(ids);
+		const email = `${ids.prefix}-invitee@example.invalid`;
+		const invitation = await createInvitationRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			email,
+			role: "consultant",
+			campusAccessMode: "all",
+			campusIds: [],
+			requestId: randomUUID(),
+		});
+		const emailNormalized = normalizeInvitationEmail(email);
+
+		assert.equal(await hasActiveInvitationForEmail(emailNormalized), true);
+		assert.equal(
+			await hasActiveInvitationForEmail(
+				`${ids.prefix}-missing@example.invalid`,
+			),
+			false,
+		);
+
+		await revokeInvitationRecord({
+			organizationId: ids.organizationA,
+			actorUserId: ids.owner,
+			id: invitation.invitation.id,
+		});
+		assert.equal(await hasActiveInvitationForEmail(emailNormalized), false);
 	} finally {
 		await cleanupFixture(ids);
 	}

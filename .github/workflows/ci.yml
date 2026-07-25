@@ -12,6 +12,9 @@ jobs:
       BETTER_AUTH_SECRET: ci-test-secret-do-not-use-in-production
       BETTER_AUTH_URL: http://localhost:3000
       CORS_ORIGIN: http://localhost:3001
+      ALLOW_PUBLIC_SIGNUP: "true"
+      VITE_SERVER_URL: http://localhost:3000
+      VITE_ALLOW_PUBLIC_SIGNUP: "true"
       NODE_ENV: test
     services:
       postgres:

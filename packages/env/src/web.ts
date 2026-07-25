@@ -5,6 +5,7 @@ export const env = createEnv({
 	clientPrefix: "VITE_",
 	client: {
 		VITE_SERVER_URL: z.url(),
+		VITE_ALLOW_PUBLIC_SIGNUP: z.coerce.boolean().default(false),
 	},
 	runtimeEnv: (
 		import.meta as ImportMeta & {

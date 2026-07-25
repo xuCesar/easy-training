@@ -1,5 +1,5 @@
+import { env } from "@easy-training/env/server";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-
 import { db } from "../index";
 import {
 	organization,
@@ -222,6 +222,7 @@ export async function getOrCreateCurrentOrganization(input: {
 	userId: string;
 	userName: string;
 	sessionId: string;
+	allowAutoCreateOrganization?: boolean;
 }): Promise<CurrentOrganizationRecord> {
 	const current = await readCurrentOrganization(input);
 	if (current) return current;
@@ -232,6 +233,7 @@ async function getOrCreateCurrentOrganizationWithLock(input: {
 	userId: string;
 	userName: string;
 	sessionId: string;
+	allowAutoCreateOrganization?: boolean;
 }): Promise<CurrentOrganizationRecord> {
 	return db.transaction(async (tx) => {
 		await tx.execute(
@@ -303,6 +305,12 @@ async function getOrCreateCurrentOrganizationWithLock(input: {
 			throw new OrganizationContextError("SESSION_NOT_FOUND");
 		}
 		if (userRecord.organizationInitializedAt) {
+			throw new OrganizationContextError("ORGANIZATION_MEMBERSHIP_REQUIRED");
+		}
+
+		const allowAutoCreate =
+			input.allowAutoCreateOrganization ?? env.ALLOW_PUBLIC_SIGNUP;
+		if (!allowAutoCreate) {
 			throw new OrganizationContextError("ORGANIZATION_MEMBERSHIP_REQUIRED");
 		}
 
