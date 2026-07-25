@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 30
-- **Last Active**: 2026-07-24
+- **Total Sessions**: 31
+- **Last Active**: 2026-07-25
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1073 | Active |
+| `journal-1.md` | ~1107 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-07-25 | Issue 30 教学仓储并发保障 | `dc6e76e` | `develop` |
 | 30 | 2026-07-24 | 完成 P2 当前研发阶段验收与归档 | `2f6ba31`, `4aef344` | `develop` |
 | 29 | 2026-07-24 | 完成经营分析保存筛选与即时导出 | `d4422a0` | `develop` |
 | 28 | 2026-07-24 | 完成 P2 多维经营对比页面 | `5333ea1` | `develop` |

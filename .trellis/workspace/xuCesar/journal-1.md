@@ -1071,3 +1071,37 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: Issue 30 教学仓储并发保障
+
+**Date**: 2026-07-25
+**Task**: Issue 30 教学仓储并发保障
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+为全角/半角历史教室冲突与同一来源补课并发竞争补充 PostgreSQL 集成回归；完整集成测试 87 项通过。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dc6e76e` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
