@@ -1,4 +1,5 @@
 import { Button } from "@easy-training/ui/components/button";
+import { Checkbox } from "@easy-training/ui/components/checkbox";
 import {
 	Empty,
 	EmptyDescription,
@@ -7,6 +8,7 @@ import {
 	EmptyTitle,
 } from "@easy-training/ui/components/empty";
 import { MailPlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { useState } from "react";
 import { formatDateTime } from "@/features/training/format";
 import { InvitationStatus } from "./settings-form-fields";
 import { FailureState, SectionSkeleton } from "./settings-states";
@@ -32,6 +34,11 @@ export function InvitationSection({
 	onResend: (invitation: Invitation) => void;
 	onRevoke: (invitation: Invitation) => void;
 }) {
+	const [showRevoked, setShowRevoked] = useState(false);
+	const invitations = data?.filter(
+		(invitation) => showRevoked || invitation.revokedAt === null,
+	);
+
 	return (
 		<section className="space-y-3" aria-labelledby="invitations-heading">
 			<div className="flex flex-wrap items-center justify-between gap-3">
@@ -48,6 +55,17 @@ export function InvitationSection({
 					创建邀请
 				</Button>
 			</div>
+			<label
+				htmlFor="show-revoked-invitations"
+				className="flex w-fit cursor-pointer items-center gap-2 text-sm"
+			>
+				<Checkbox
+					id="show-revoked-invitations"
+					checked={showRevoked}
+					onCheckedChange={setShowRevoked}
+				/>
+				显示已撤销邀请
+			</label>
 			{isPending ? <SectionSkeleton /> : null}
 			{isError ? (
 				<FailureState
@@ -56,7 +74,7 @@ export function InvitationSection({
 					onRetry={onRetry}
 				/>
 			) : null}
-			{!isPending && !isError && data?.length === 0 ? (
+			{!isPending && !isError && invitations?.length === 0 ? (
 				<Empty className="min-h-48 border">
 					<EmptyHeader>
 						<EmptyMedia variant="icon">
@@ -69,9 +87,9 @@ export function InvitationSection({
 					</EmptyHeader>
 				</Empty>
 			) : null}
-			{data && data.length > 0 ? (
+			{invitations && invitations.length > 0 ? (
 				<div className="divide-y border">
-					{data.map((invitation) => (
+					{invitations.map((invitation) => (
 						<article
 							key={invitation.id}
 							className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
