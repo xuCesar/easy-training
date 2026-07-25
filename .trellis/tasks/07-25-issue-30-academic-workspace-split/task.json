@@ -3,7 +3,7 @@
   "name": "issue-30-academic-workspace-split",
   "title": "Issue 30 教务工作区渐进拆分",
   "description": "将 academic-workspace 拆分为稳定的 feature 组件，保持行为与 ORPC 合同不变。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "server",
