@@ -11,7 +11,7 @@
 
 **Date**: 2026-07-18
 **Task**: 完成学员档案阶段验收与权限加固
-**Package**: server
+**Package**: web
 **Branch**: `develop`
 
 ### Summary
@@ -20,7 +20,10 @@
 
 ### Main Changes
 
-- Detailed change bullets were not supplied; see the summary above.
+- 将教务查询的加载、错误和空态明确分离，并为错误态提供重试入口。
+- 危险 mutation 提交期间阻止对话框关闭或内部编辑会话卸载。
+- 同一确认/编辑会话复用 `requestId`，成功或放弃会话后轮换。
+- 为教务 Select 补齐可访问名称，并同步前端交互规范。
 
 ### Git Commits
 
@@ -32,7 +35,10 @@
 
 ### Testing
 
-- Validation was not recorded for this session.
+- `pnpm check`
+- `pnpm check-types`
+- `pnpm build`
+- `pnpm test:integration`（87 项通过）
 
 ### Status
 
@@ -1093,6 +1099,40 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 | Hash | Message |
 |------|---------|
 | `dc6e76e` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 32: 完成 Issue 30 教务交互可靠性与无障碍
+
+**Date**: 2026-07-25
+**Task**: 完成 Issue 30 教务交互可靠性与无障碍
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+补齐教务查询错误与重试状态、危险写入提交关闭保护、会话级 requestId 复用和 Select 可访问名称；完成全仓构建、类型、Biome 与 87 项集成测试，并归档 Issue 30 父子任务。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `eced1c2` | (see git log) |
 
 ### Testing
 
