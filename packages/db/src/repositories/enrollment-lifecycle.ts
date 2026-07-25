@@ -19,7 +19,7 @@ import {
 	assertWritableCampus,
 	getCurrentWriteCampusAccess,
 	type Transaction,
-} from "./teaching";
+} from "./teaching-foundation";
 
 type EnrollmentStatus = (typeof enrollment.$inferSelect)["status"];
 type LifecycleKind = (typeof enrollmentLifecycleEvent.$inferSelect)["kind"];

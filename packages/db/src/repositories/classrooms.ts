@@ -16,7 +16,7 @@ import {
 	normalizeRoom,
 	TeachingRepositoryError,
 	type Transaction,
-} from "./teaching";
+} from "./teaching-foundation";
 
 export type ClassroomRepositoryErrorCode =
 	| "CLASSROOM_NOT_FOUND"

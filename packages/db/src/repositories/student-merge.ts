@@ -27,7 +27,7 @@ import {
 	assertWritableCampus,
 	getCurrentWriteCampusAccess,
 	type Transaction,
-} from "./teaching";
+} from "./teaching-foundation";
 
 type StudentStatus = (typeof student.$inferSelect)["status"];
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];

@@ -4,6 +4,12 @@
 
 适用于课程、教师、班级、报名归属和课次的读取与写入。教学领域以 `course -> classGroup -> lesson` 为稳定主链，`lesson` 是唯一排课事实来源，`classGroup.scheduleText` 仅用于兼容展示。
 
+### Repository 模块边界
+
+- `repositories/teaching.ts` 与 `repositories/scheduling.ts` 是兼容 façade，只维护原公开导出；业务实现分别位于 `teaching-*` 与 `scheduling-*` 领域模块。
+- `TeachingRepositoryError`、写权限、校区/课程/教师/教室校验由 `teaching-foundation.ts` 单一定义。仓储内部直接依赖 foundation，不通过 façade 反向导入，避免 ESM 循环和 `instanceof` 身份分裂。
+- 移动教学实现时必须保持 façade 的导出名称、事务回调、机构锁/行锁顺序和幂等指纹不变；`packages/db/src/index.ts` 继续只导出 façade。
+
 ## 2. Signatures
 
 - 课程：`list/create/update/setActiveCourseRecord`，机构级目录，仅 `owner/admin` 可写。

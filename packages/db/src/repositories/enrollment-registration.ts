@@ -39,7 +39,7 @@ import {
 	getCurrentWriteCampusAccess,
 	TeachingRepositoryError,
 	type Transaction,
-} from "./teaching";
+} from "./teaching-foundation";
 
 type MemberRole = (typeof organizationMember.$inferSelect)["role"];
 
