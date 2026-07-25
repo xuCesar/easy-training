@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 32
+- **Total Sessions**: 33
 - **Last Active**: 2026-07-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1141 | Active |
+| `journal-1.md` | ~1181 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-07-25 | 补齐 Issue 30 教学仓储模块拆分 | `5dfdd84` | `develop` |
 | 32 | 2026-07-25 | 完成 Issue 30 教务交互可靠性与无障碍 | `eced1c2` | `develop` |
 | 31 | 2026-07-25 | Issue 30 教学仓储并发保障 | `dc6e76e` | `develop` |
 | 30 | 2026-07-24 | 完成 P2 当前研发阶段验收与归档 | `2f6ba31`, `4aef344` | `develop` |

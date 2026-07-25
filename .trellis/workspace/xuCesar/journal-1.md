@@ -1117,16 +1117,19 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 
 **Date**: 2026-07-25
 **Task**: 完成 Issue 30 教务交互可靠性与无障碍
-**Package**: server
+**Package**: web
 **Branch**: `develop`
 
 ### Summary
 
-补齐教务查询错误与重试状态、危险写入提交关闭保护、会话级 requestId 复用和 Select 可访问名称；完成全仓构建、类型、Biome 与 87 项集成测试，并归档 Issue 30 父子任务。
+补齐教务查询错误与重试状态、危险写入提交关闭保护、会话级 requestId 复用和 Select 可访问名称；完成全仓构建、类型、Biome 与 87 项集成测试。
 
 ### Main Changes
 
-- Detailed change bullets were not supplied; see the summary above.
+- 将教务查询的加载、错误和空态明确分离，并为错误态提供重试入口。
+- 危险 mutation 提交期间阻止对话框关闭或内部编辑会话卸载。
+- 同一确认/编辑会话复用 `requestId`，成功或放弃会话后轮换。
+- 为教务 Select 补齐可访问名称，并同步前端交互规范。
 
 ### Git Commits
 
@@ -1136,7 +1139,52 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 
 ### Testing
 
-- Validation was not recorded for this session.
+- `pnpm check`
+- `pnpm check-types`
+- `pnpm build`
+- `pnpm test:integration`（87 项通过）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 33: 补齐 Issue 30 教学仓储模块拆分
+
+**Date**: 2026-07-25
+**Task**: 补齐 Issue 30 教学仓储模块拆分
+**Package**: db, api
+**Branch**: `develop`
+
+### Summary
+
+恢复误归档的 Issue 30 父任务，按兼容 façade 拆分 DB teaching/scheduling 与 API teaching repository；公开导出和 172 个实现声明保持一致，完成全仓类型、Biome、构建及 87 项集成测试。
+
+### Main Changes
+
+- 以兼容 façade 保留 DB 和 API 原 repository 导入路径与公开符号。
+- 按 foundation、catalog、classes、lessons、makeups、attendance、scheduling rules/bulk 拆分 DB 实现。
+- 按 support、catalog、scheduling、classes、lessons 拆分 API adapter。
+- 仓储内部直接依赖 foundation，保持唯一错误类、权限校验和锁顺序。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5dfdd84` | (see git log) |
+
+### Testing
+
+- 拆分前后公开导出：DB teaching 47、scheduling 20、API teaching 37，集合一致。
+- 拆分前后实现声明：DB teaching 73、scheduling 43、API teaching 56，AST 打印一致。
+- `pnpm check`
+- `pnpm check-types`
+- `pnpm build`
+- `pnpm test:integration`（87 项通过）
 
 ### Status
 
