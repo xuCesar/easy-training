@@ -21,7 +21,7 @@ import {
 } from "@easy-training/ui/components/select";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { LoaderCircleIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { orpc, queryClient } from "@/utils/orpc";
 import { formatDateTime } from "./format";
@@ -40,6 +40,7 @@ export function MakeupLessonDialog({
 	const [sourceEnrollmentId, setSourceEnrollmentId] = useState("");
 	const [targetLessonId, setTargetLessonId] = useState("");
 	const [cancelTarget, setCancelTarget] = useState<MakeupLesson | null>(null);
+	const createRequestId = useRef(crypto.randomUUID());
 	const attendanceOptions =
 		orpc.training.teaching.lessons.attendance.queryOptions({
 			input: { id: sourceLesson.id },
@@ -100,10 +101,11 @@ export function MakeupLessonDialog({
 				sourceLessonId: sourceLesson.id,
 				sourceEnrollmentId,
 				targetLessonId,
-				requestId: crypto.randomUUID(),
+				requestId: createRequestId.current,
 			})
 			.then(async () => {
 				toast.success("补课已安排到目标课次");
+				createRequestId.current = crypto.randomUUID();
 				setSourceEnrollmentId("");
 				setTargetLessonId("");
 				await refresh();
@@ -157,7 +159,7 @@ export function MakeupLessonDialog({
 										value && setSourceEnrollmentId(value)
 									}
 								>
-									<SelectTrigger>
+									<SelectTrigger aria-label="补课学员">
 										<SelectValue placeholder={memberPlaceholder} />
 									</SelectTrigger>
 									<SelectContent>
@@ -191,7 +193,7 @@ export function MakeupLessonDialog({
 									disabled={targetLessons.length === 0}
 									onValueChange={(value) => value && setTargetLessonId(value)}
 								>
-									<SelectTrigger>
+									<SelectTrigger aria-label="目标课次">
 										<SelectValue placeholder={targetPlaceholder} />
 									</SelectTrigger>
 									<SelectContent>

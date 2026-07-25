@@ -1537,6 +1537,7 @@ function ClassMembersDialog({
 	const [pendingAction, setPendingAction] = useState<{
 		item: ClassEnrollment;
 		kind: "freeze" | "resume" | "withdrawClass" | "assignClass";
+		requestId: string;
 	} | null>(null);
 	const [reason, setReason] = useState("");
 	const items = query.data?.items ?? [];
@@ -1551,11 +1552,11 @@ function ClassMembersDialog({
 		kind: "freeze" | "resume" | "withdrawClass" | "assignClass",
 	) {
 		setReason("");
-		setPendingAction({ item, kind });
+		setPendingAction({ item, kind, requestId: crypto.randomUUID() });
 	}
 	function submitAction() {
 		if (!pendingAction) return;
-		const { item, kind } = pendingAction;
+		const { item, kind, requestId } = pendingAction;
 		if (kind !== "assignClass" && !reason.trim()) return;
 		const action =
 			kind === "assignClass"
@@ -1565,7 +1566,7 @@ function ClassMembersDialog({
 			.mutateAsync({
 				enrollmentId: item.enrollmentId,
 				expectedVersion: item.version,
-				requestId: crypto.randomUUID(),
+				requestId,
 				action,
 			})
 			.then(async () => {
@@ -2049,7 +2050,7 @@ function SelectField({
 				}}
 				disabled={disabled}
 			>
-				<SelectTrigger>
+				<SelectTrigger aria-label={label}>
 					<SelectValue placeholder={`选择${label}`}>
 						{() =>
 							items.find((item) => item.value === value)?.label ??

@@ -28,7 +28,7 @@ import {
 	EllipsisIcon,
 	RefreshCwIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { orpc } from "@/utils/orpc";
@@ -72,6 +72,7 @@ export function BulkRescheduleDialog({
 	const [offsetMinutes, setOffsetMinutes] = useState(0);
 	const [bulkTeacherId, setBulkTeacherId] = useState("");
 	const [bulkRoomId, setBulkRoomId] = useState("");
+	const requestId = useRef(crypto.randomUUID());
 	const commonCampusId = lessons.every(
 		(lesson) => lesson.campusId === lessons[0]?.campusId,
 	)
@@ -153,7 +154,7 @@ export function BulkRescheduleDialog({
 		}
 		void updateMutation
 			.mutateAsync({
-				requestId: crypto.randomUUID(),
+				requestId: requestId.current,
 				items: requestItems,
 			})
 			.then(async (result) => {
@@ -229,7 +230,7 @@ export function BulkRescheduleDialog({
 								);
 							}}
 						>
-							<SelectTrigger className="min-w-40">
+							<SelectTrigger className="min-w-40" aria-label="统一教室">
 								<SelectValue placeholder="选择教室" />
 							</SelectTrigger>
 							<SelectContent>
@@ -302,7 +303,10 @@ export function BulkRescheduleDialog({
 											})
 										}
 									>
-										<SelectTrigger aria-invalid={hasTeacherConflict}>
+										<SelectTrigger
+											aria-label={`${lesson?.className ?? "课次"}教师`}
+											aria-invalid={hasTeacherConflict}
+										>
 											<SelectValue>
 												{() =>
 													eligible.find(
@@ -336,7 +340,10 @@ export function BulkRescheduleDialog({
 												});
 										}}
 									>
-										<SelectTrigger aria-invalid={hasRoomConflict}>
+										<SelectTrigger
+											aria-label={`${lesson?.className ?? "课次"}教室`}
+											aria-invalid={hasRoomConflict}
+										>
 											<SelectValue
 												placeholder={
 													item.roomId ? "选择教室" : `历史教室：${item.room}`
@@ -428,7 +435,7 @@ function BulkTeacherSelect({
 		<div className="grid gap-1 text-sm">
 			<span>统一教师</span>
 			<Select value={value} onValueChange={(next) => next && onSelect(next)}>
-				<SelectTrigger className="min-w-40">
+				<SelectTrigger className="min-w-40" aria-label="统一教师">
 					<SelectValue>
 						{() =>
 							teachers.find((teacher) => teacher.id === value)?.name ??

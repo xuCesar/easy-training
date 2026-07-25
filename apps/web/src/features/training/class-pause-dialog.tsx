@@ -11,7 +11,7 @@ import {
 import { Textarea } from "@easy-training/ui/components/textarea";
 import { useMutation } from "@tanstack/react-query";
 import { LoaderCircleIcon } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import { orpc } from "@/utils/orpc";
 
@@ -29,6 +29,7 @@ export function ClassPauseDialog({
 	const [futureLessonPolicy, setFutureLessonPolicy] = useState<
 		"keep" | "cancel"
 	>("keep");
+	const requestId = useRef(crypto.randomUUID());
 	const pauseMutation = useMutation(
 		orpc.training.teaching.classes.pause.mutationOptions(),
 	);
@@ -52,12 +53,12 @@ export function ClassPauseDialog({
 						id: classGroup.id,
 						reason,
 						futureLessonPolicy,
-						requestId: crypto.randomUUID(),
+						requestId: requestId.current,
 					})
 				: resumeMutation.mutateAsync({
 						id: classGroup.id,
 						reason,
-						requestId: crypto.randomUUID(),
+						requestId: requestId.current,
 					});
 
 		void request

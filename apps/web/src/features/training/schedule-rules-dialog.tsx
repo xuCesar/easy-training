@@ -72,11 +72,14 @@ export function ScheduleRulesDialog({
 	const [rulePendingDeletion, setRulePendingDeletion] =
 		useState<ScheduleRule | null>(null);
 	const [editingRule, setEditingRule] = useState<ScheduleRule | null>(null);
+	const [isUpdatingRule, setIsUpdatingRule] = useState(false);
 	const [futureLessonCount, setFutureLessonCount] = useState<number | null>(
 		null,
 	);
 	const [isCreatingRule, setIsCreatingRule] = useState(false);
 	const isCreatingRuleRef = useRef(false);
+	const generateRequestId = useRef(crypto.randomUUID());
+	const deactivateRequestId = useRef(crypto.randomUUID());
 	const eligibleRooms = classrooms.filter(
 		(item) => item.isActive && item.campusId === classGroup.campusId,
 	);
@@ -232,12 +235,13 @@ export function ScheduleRulesDialog({
 				ruleId: selectedRule.id,
 				expectedRevision: selectedRule.revision,
 				...range,
-				requestId: crypto.randomUUID(),
+				requestId: generateRequestId.current,
 				overrides: [],
 				candidates: generatedCandidates,
 			})
 			.then(async (result) => {
 				toast.success(`已生成 ${result.lessonIds.length} 节课次`);
+				generateRequestId.current = crypto.randomUUID();
 				setCandidates([]);
 				setSelectedRule(null);
 				await refresh();
@@ -249,6 +253,7 @@ export function ScheduleRulesDialog({
 		void previewDeactivateMutation
 			.mutateAsync({ ruleId: rule.id })
 			.then((result) => {
+				deactivateRequestId.current = crypto.randomUUID();
 				setDeactivateRule(rule);
 				setFutureLessonCount(result.futureLessonIds.length);
 			})
@@ -266,9 +271,10 @@ export function ScheduleRulesDialog({
 				expectedRevision: deactivateRule.revision,
 				cancelFuture,
 				reason: cancelFuture ? String(data.get("reason") ?? "") : null,
-				requestId: crypto.randomUUID(),
+				requestId: deactivateRequestId.current,
 			})
 			.then(async (result) => {
+				deactivateRequestId.current = crypto.randomUUID();
 				toast.success(
 					result.cancelledLessonIds.length > 0
 						? `规则已停用，已取消 ${result.cancelledLessonIds.length} 节未来课次`
@@ -308,6 +314,7 @@ export function ScheduleRulesDialog({
 					!generateMutation.isPending &&
 					!deactivateMutation.isPending &&
 					!deleteMutation.isPending &&
+					!isUpdatingRule &&
 					onClose()
 				}
 			>
@@ -370,73 +377,100 @@ export function ScheduleRulesDialog({
 					</form>
 
 					<div className="grid gap-2">
-						{rulesQuery.data?.items.map((rule) => (
-							<article
-								key={rule.id}
-								className="flex flex-wrap items-center justify-between gap-3 border p-3"
-							>
-								<div>
-									<p className="font-medium">
-										{rule.weekdays
-											.map(
-												(day) =>
-													weekdayLabels.find((item) => item.value === day)
-														?.label,
-											)
-											.join("、")}
-										· {minuteLabel(rule.startMinuteOfDay)} · {rule.room}
-									</p>
-									<p className="text-muted-foreground text-xs">
-										{rule.validFrom} 至 {rule.validUntil} · 版本 {rule.revision}
-									</p>
-								</div>
-								<div className="flex gap-2">
-									<Badge
-										variant={rule.isActive ? "default" : "outline"}
-										className="h-7 px-2.5"
-									>
-										{rule.isActive ? "启用" : "已停用"}
-									</Badge>
-									{rule.isActive ? (
-										<Button
-											size="sm"
-											variant="outline"
-											onClick={() => setEditingRule(rule)}
+						{rulesQuery.isPending ? (
+							<p className="border p-3 text-muted-foreground text-sm">
+								正在加载周期规则…
+							</p>
+						) : rulesQuery.isError ? (
+							<div className="grid place-items-center gap-3 border p-6 text-center">
+								<p className="text-muted-foreground text-sm">
+									周期规则加载失败
+								</p>
+								<Button
+									type="button"
+									variant="outline"
+									onClick={() => void rulesQuery.refetch()}
+								>
+									重试
+								</Button>
+							</div>
+						) : rulesQuery.data.items.length === 0 ? (
+							<p className="border p-6 text-center text-muted-foreground text-sm">
+								还没有周期规则
+							</p>
+						) : (
+							rulesQuery.data.items.map((rule) => (
+								<article
+									key={rule.id}
+									className="flex flex-wrap items-center justify-between gap-3 border p-3"
+								>
+									<div>
+										<p className="font-medium">
+											{rule.weekdays
+												.map(
+													(day) =>
+														weekdayLabels.find((item) => item.value === day)
+															?.label,
+												)
+												.join("、")}
+											· {minuteLabel(rule.startMinuteOfDay)} · {rule.room}
+										</p>
+										<p className="text-muted-foreground text-xs">
+											{rule.validFrom} 至 {rule.validUntil} · 版本{" "}
+											{rule.revision}
+										</p>
+									</div>
+									<div className="flex gap-2">
+										<Badge
+											variant={rule.isActive ? "default" : "outline"}
+											className="h-7 px-2.5"
 										>
-											修改
-										</Button>
-									) : null}
-									{!rule.hasGeneratedLessons ? (
-										<Button
-											size="sm"
-											variant="ghost"
-											onClick={() => deleteRule(rule)}
-											disabled={deleteMutation.isPending}
-										>
-											删除
-										</Button>
-									) : null}
-									{rule.isActive ? (
-										<Button
-											size="sm"
-											variant="outline"
-											onClick={() => preview(rule, [])}
-										>
-											生成课次
-										</Button>
-									) : null}
-									{rule.isActive ? (
-										<Button
-											size="sm"
-											variant="ghost"
-											onClick={() => openDeactivate(rule)}
-										>
-											停用
-										</Button>
-									) : null}
-								</div>
-							</article>
-						))}
+											{rule.isActive ? "启用" : "已停用"}
+										</Badge>
+										{rule.isActive ? (
+											<Button
+												size="sm"
+												variant="outline"
+												onClick={() => setEditingRule(rule)}
+											>
+												修改
+											</Button>
+										) : null}
+										{!rule.hasGeneratedLessons ? (
+											<Button
+												size="sm"
+												variant="ghost"
+												onClick={() => deleteRule(rule)}
+												disabled={deleteMutation.isPending}
+											>
+												删除
+											</Button>
+										) : null}
+										{rule.isActive ? (
+											<Button
+												size="sm"
+												variant="outline"
+												onClick={() => {
+													generateRequestId.current = crypto.randomUUID();
+													preview(rule, []);
+												}}
+											>
+												生成课次
+											</Button>
+										) : null}
+										{rule.isActive ? (
+											<Button
+												size="sm"
+												variant="ghost"
+												onClick={() => openDeactivate(rule)}
+											>
+												停用
+											</Button>
+										) : null}
+									</div>
+								</article>
+							))
+						)}
 					</div>
 
 					{selectedRule ? (
@@ -544,6 +578,7 @@ export function ScheduleRulesDialog({
 							rule={editingRule}
 							rooms={eligibleRooms}
 							onClose={() => setEditingRule(null)}
+							onPendingChange={setIsUpdatingRule}
 							onSaved={async () => {
 								setEditingRule(null);
 								await refresh();
@@ -578,7 +613,11 @@ export function ScheduleRulesDialog({
 								<Button
 									type="button"
 									variant="outline"
-									onClick={() => setDeactivateRule(null)}
+									disabled={deactivateMutation.isPending}
+									onClick={() => {
+										deactivateRequestId.current = crypto.randomUUID();
+										setDeactivateRule(null);
+									}}
 								>
 									返回
 								</Button>
@@ -597,7 +636,9 @@ export function ScheduleRulesDialog({
 			<RuleDeletionConfirmationDialog
 				rule={rulePendingDeletion}
 				pending={deleteMutation.isPending}
-				onOpenChange={(open) => !open && setRulePendingDeletion(null)}
+				onOpenChange={(open) =>
+					!open && !deleteMutation.isPending && setRulePendingDeletion(null)
+				}
 				onConfirm={confirmDeleteRule}
 			/>
 		</>
@@ -675,11 +716,13 @@ function ScheduleRuleUpdatePanel({
 	rule,
 	rooms,
 	onClose,
+	onPendingChange,
 	onSaved,
 }: {
 	rule: ScheduleRule;
 	rooms: Classroom[];
 	onClose: () => void;
+	onPendingChange: (pending: boolean) => void;
 	onSaved: () => Promise<unknown>;
 }) {
 	const [weekdays, setWeekdays] = useState(rule.weekdays);
@@ -693,6 +736,7 @@ function ScheduleRuleUpdatePanel({
 	const [effectiveFrom, setEffectiveFrom] = useState(todayInShanghai());
 	const [reapplyIds, setReapplyIds] = useState<string[]>([]);
 	const [items, setItems] = useState<RuleUpdatePreviewItem[]>([]);
+	const updateRequestId = useRef(crypto.randomUUID());
 	const previewMutation = useMutation(
 		orpc.training.teaching.scheduleRules.previewUpdate.mutationOptions(),
 	);
@@ -731,6 +775,7 @@ function ScheduleRuleUpdatePanel({
 			toast.error("请先调整规则并重新预览，消除全部冲突");
 			return;
 		}
+		onPendingChange(true);
 		void updateMutation
 			.mutateAsync({
 				ruleId: rule.id,
@@ -738,13 +783,15 @@ function ScheduleRuleUpdatePanel({
 				data,
 				effectiveFrom,
 				reapplyOverrideLessonIds: reapplyIds,
-				requestId: crypto.randomUUID(),
+				requestId: updateRequestId.current,
 			})
 			.then(async (result) => {
+				updateRequestId.current = crypto.randomUUID();
 				toast.success(`规则已更新，处理 ${result.lessonIds.length} 节未来课次`);
 				await onSaved();
 			})
-			.catch((error: Error) => toast.error(error.message));
+			.catch((error: Error) => toast.error(error.message))
+			.finally(() => onPendingChange(false));
 	}
 	return (
 		<section className="grid gap-3 border border-primary/30 p-3">
@@ -755,7 +802,12 @@ function ScheduleRuleUpdatePanel({
 						指定生效日期；人工例外默认保留，可逐节选择重新套用。
 					</p>
 				</div>
-				<Button size="sm" variant="ghost" onClick={onClose}>
+				<Button
+					size="sm"
+					variant="ghost"
+					disabled={updateMutation.isPending}
+					onClick={onClose}
+				>
 					关闭
 				</Button>
 			</div>
@@ -955,7 +1007,7 @@ function RoomSelectField({
 				defaultValue={defaultValue}
 				onValueChange={(next) => next && onValueChange?.(next)}
 			>
-				<SelectTrigger>
+				<SelectTrigger aria-label="教室">
 					<SelectValue
 						placeholder={
 							fallbackLabel ? `历史教室：${fallbackLabel}` : "选择教室"

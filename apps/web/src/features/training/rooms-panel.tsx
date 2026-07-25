@@ -227,7 +227,7 @@ function RoomEditorDialog({
 								value={campusId}
 								onValueChange={(value) => value && setCampusId(value)}
 							>
-								<SelectTrigger>
+								<SelectTrigger aria-label="所属校区">
 									<SelectValue placeholder="选择校区">
 										{() =>
 											campuses.find((campus) => campus.id === campusId)?.name ??
