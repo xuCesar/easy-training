@@ -1193,3 +1193,38 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 34: 修复邀请领取与撤销筛选
+
+**Date**: 2026-07-25
+**Task**: 修复邀请领取与撤销筛选
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+移除邀请领取的邮箱验证前置条件，保留邮箱匹配等领域约束；邀请列表默认隐藏已撤销记录并提供显示复选框。已通过全仓类型检查、Biome 和机构管理集成测试。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `466fcd3` | (see git log) |
+| `52c0030` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

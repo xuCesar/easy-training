@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 33
+- **Total Sessions**: 34
 - **Last Active**: 2026-07-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1181 | Active |
+| `journal-1.md` | ~1230 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 34 | 2026-07-25 | 修复邀请领取与撤销筛选 | `466fcd3`, `52c0030` | `develop` |
 | 33 | 2026-07-25 | 补齐 Issue 30 教学仓储模块拆分 | `5dfdd84` | `develop` |
 | 32 | 2026-07-25 | 完成 Issue 30 教务交互可靠性与无障碍 | `eced1c2` | `develop` |
 | 31 | 2026-07-25 | Issue 30 教学仓储并发保障 | `dc6e76e` | `develop` |
