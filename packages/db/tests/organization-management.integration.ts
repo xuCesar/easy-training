@@ -203,7 +203,6 @@ test("重发会撤销旧邀请，撤销后的 token 不能领取", async () => {
 				token: resent.token,
 				userId: ids.invitee,
 				userEmail: email,
-				userEmailVerified: true,
 				sessionId: sessionId(ids.invitee),
 			}),
 			"INVITATION_INVALID",
@@ -217,10 +216,6 @@ test("邀请只允许目标邮箱领取一次，并把当前 session 切换到�
 	const ids = createFixtureIds();
 	try {
 		await seedFixture(ids);
-		await db
-			.update(user)
-			.set({ emailVerified: true })
-			.where(inArray(user.id, [ids.invitee, ids.mismatchUser]));
 		const invitation = await createInvitationRecord({
 			organizationId: ids.organizationA,
 			actorUserId: ids.owner,
@@ -236,7 +231,6 @@ test("邀请只允许目标邮箱领取一次，并把当前 session 切换到�
 				token: invitation.token,
 				userId: ids.mismatchUser,
 				userEmail: `${ids.prefix}-mismatch@example.invalid`,
-				userEmailVerified: true,
 				sessionId: sessionId(ids.mismatchUser),
 			}),
 			"INVITATION_EMAIL_MISMATCH",
@@ -246,7 +240,6 @@ test("邀请只允许目标邮箱领取一次，并把当前 session 切换到�
 			token: invitation.token,
 			userId: ids.invitee,
 			userEmail: ` ${ids.prefix.toUpperCase()}-INVITEE@EXAMPLE.INVALID `,
-			userEmailVerified: true,
 			sessionId: sessionId(ids.invitee),
 		});
 		assert.equal(claimed.organizationId, ids.organizationA);
@@ -271,7 +264,6 @@ test("邀请只允许目标邮箱领取一次，并把当前 session 切换到�
 				token: invitation.token,
 				userId: ids.invitee,
 				userEmail: `${ids.prefix}-invitee@example.invalid`,
-				userEmailVerified: true,
 				sessionId: sessionId(ids.invitee),
 			}),
 			"INVITATION_INVALID",
@@ -281,7 +273,7 @@ test("邀请只允许目标邮箱领取一次，并把当前 session 切换到�
 	}
 });
 
-test("未验证邮箱不能领取邀请，也不会留下成员、会话或审计副作用", async () => {
+test("未验证邮箱可领取邀请并更新成员、会话和审计记录", async () => {
 	const ids = createFixtureIds();
 	try {
 		await seedFixture(ids);
@@ -294,16 +286,12 @@ test("未验证邮箱不能领取邀请，也不会留下成员、会话或审�
 			campusIds: [ids.campusA],
 			requestId: randomUUID(),
 		});
-		await expectManagementError(
-			claimInvitationRecord({
-				token: invitation.token,
-				userId: ids.invitee,
-				userEmail: `${ids.prefix}-invitee@example.invalid`,
-				userEmailVerified: false,
-				sessionId: sessionId(ids.invitee),
-			}),
-			"INVITATION_EMAIL_UNVERIFIED",
-		);
+		await claimInvitationRecord({
+			token: invitation.token,
+			userId: ids.invitee,
+			userEmail: `${ids.prefix}-invitee@example.invalid`,
+			sessionId: sessionId(ids.invitee),
+		});
 		const [membership, persistedSession, claimAudit] = await Promise.all([
 			db
 				.select({ id: organizationMember.id })
@@ -331,9 +319,9 @@ test("未验证邮箱不能领取邀请，也不会留下成员、会话或审�
 				)
 				.then(([record]) => record),
 		]);
-		assert.equal(membership, undefined);
-		assert.equal(persistedSession?.activeOrganizationId, null);
-		assert.equal(claimAudit, undefined);
+		assert.ok(membership);
+		assert.equal(persistedSession?.activeOrganizationId, ids.organizationA);
+		assert.ok(claimAudit);
 	} finally {
 		await cleanupFixture(ids);
 	}

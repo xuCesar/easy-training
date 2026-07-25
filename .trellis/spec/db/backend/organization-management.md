@@ -119,3 +119,57 @@ const campusAccess = await getCurrentWriteCampusAccess(tx, {
 });
 await assertWritableCampus(tx, { campusAccess, campusId });
 ```
+
+## 场景：邀请领取与邮箱验证状态
+
+### 1. Scope / Trigger
+
+- 触发：修改机构邀请领取、登录注册或邮箱验证能力时。
+- 目的：避免在没有可用验证邮件投递流程时，因 `user.emailVerified` 永远为 `false` 而阻断受邀用户加入机构。
+
+### 2. Signatures
+
+- 邀请领取保持 `claimInvitationRecord({ token, userId, userEmail, sessionId })`。
+- 领取流程不接收或检查 `userEmailVerified`。
+
+### 3. Contracts
+
+- 领取资格由有效邀请 token、邀请目标邮箱与当前登录邮箱的归一化匹配，以及现有成员/领取状态共同决定。
+- `emailVerified` 可用于独立的认证安全能力，但不是机构邀请领取的前置条件，除非同一版本已提供可用的验证邮件投递与重发流程。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 数据库领域错误 | API 语义 |
+| --- | --- | --- |
+| 当前登录邮箱与邀请邮箱不匹配 | `INVITATION_EMAIL_MISMATCH` | `FORBIDDEN` |
+| 邀请撤销、过期或已领取 | `INVITATION_INVALID` | `CONFLICT` |
+| 当前用户的 `emailVerified = false`，但邮箱匹配 | 无错误 | 成功领取 |
+
+### 5. Good / Base / Bad Cases
+
+- Good: 未验证但邮箱匹配的受邀用户领取成功，成员关系、当前 session 机构和审计事件在同一事务写入。
+- Base: 已验证用户按同样规则领取，验证状态不改变邀请结果。
+- Bad: 只在前端解除禁用按钮，服务端仍检查 `emailVerified`，导致直接调用 API 仍失败。
+
+### 6. Tests Required
+
+- PostgreSQL 集成测试覆盖 `emailVerified = false` 的匹配邮箱可领取，并断言成员关系、session 当前机构和 `invitation_claimed` 审计事件均已写入。
+- 保留邮箱不匹配、撤销/过期/已领取邀请的拒绝测试。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+if (!input.userEmailVerified) {
+	throw new OrganizationManagementError("INVITATION_EMAIL_UNVERIFIED");
+}
+```
+
+#### Correct
+
+```ts
+if (normalizeEmail(input.userEmail) !== invitation.emailNormalized) {
+	throw new OrganizationManagementError("INVITATION_EMAIL_MISMATCH");
+}
+```
