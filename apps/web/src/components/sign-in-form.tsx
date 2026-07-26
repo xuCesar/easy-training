@@ -2,7 +2,7 @@ import { Button } from "@easy-training/ui/components/button";
 import { Input } from "@easy-training/ui/components/input";
 import { Label } from "@easy-training/ui/components/label";
 import { useForm } from "@tanstack/react-form";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import z from "zod";
 
@@ -107,7 +107,15 @@ export default function SignInForm({
 					<form.Field name="password">
 						{(field) => (
 							<div className="space-y-2">
-								<Label htmlFor={field.name}>密码</Label>
+								<div className="flex items-center justify-between">
+									<Label htmlFor={field.name}>密码</Label>
+									<Link
+										to="/forgot-password"
+										className="text-indigo-600 text-sm hover:text-indigo-800 hover:underline"
+									>
+										忘记密码？
+									</Link>
+								</div>
 								<Input
 									id={field.name}
 									name={field.name}

@@ -85,6 +85,7 @@ export const campusesRouter = {
 			listCampuses(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},
@@ -98,6 +99,7 @@ export const campusesRouter = {
 			createCampus(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},
@@ -111,6 +113,7 @@ export const campusesRouter = {
 			updateCampus(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},
@@ -124,6 +127,7 @@ export const campusesRouter = {
 			setCampusActive(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},
@@ -138,6 +142,7 @@ export const membersRouter = {
 		.handler(({ context }) =>
 			listMembers({
 				organizationId: context.organization.id,
+				organizationName: context.organization.name,
 				userId: context.session.user.id,
 				campusAccess: context.campusAccess,
 			}),
@@ -148,6 +153,7 @@ export const membersRouter = {
 			updateMember(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},
@@ -161,6 +167,7 @@ export const membersRouter = {
 			previewMemberOwnerImpact(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},
@@ -173,6 +180,7 @@ export const membersRouter = {
 			removeMember(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},
@@ -187,6 +195,7 @@ export const invitationsRouter = {
 		.handler(({ context }) =>
 			listInvitations({
 				organizationId: context.organization.id,
+				organizationName: context.organization.name,
 				userId: context.session.user.id,
 				campusAccess: context.campusAccess,
 			}),
@@ -198,6 +207,7 @@ export const invitationsRouter = {
 			createInvitation(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},
@@ -210,6 +220,7 @@ export const invitationsRouter = {
 			revokeInvitation(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},
@@ -223,6 +234,7 @@ export const invitationsRouter = {
 			resendInvitation(
 				{
 					organizationId: context.organization.id,
+					organizationName: context.organization.name,
 					userId: context.session.user.id,
 					campusAccess: context.campusAccess,
 				},

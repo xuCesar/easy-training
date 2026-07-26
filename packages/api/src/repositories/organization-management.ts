@@ -14,6 +14,7 @@ import {
 	updateCampusRecord,
 	updateMemberRecord,
 } from "@easy-training/db";
+import { dispatchInvitationEmail, formatMemberRole } from "@easy-training/mail";
 import { ORPCError } from "@orpc/server";
 
 import type {
@@ -39,6 +40,7 @@ import type {
 
 type OrganizationScope = {
 	organizationId: string;
+	organizationName: string;
 	userId: string;
 	campusAccess: Parameters<typeof listCampusRecords>[0]["campusAccess"];
 };
@@ -285,13 +287,18 @@ export async function createInvitation(
 	input: CreateInvitationInput,
 ): Promise<CreateInvitationResult> {
 	try {
-		return toCreateInvitationResult(
-			await createInvitationRecord({
-				organizationId: scope.organizationId,
-				actorUserId: scope.userId,
-				...input,
-			}),
-		);
+		const result = await createInvitationRecord({
+			organizationId: scope.organizationId,
+			actorUserId: scope.userId,
+			...input,
+		});
+		void dispatchInvitationEmail({
+			to: input.email,
+			organizationName: scope.organizationName,
+			role: formatMemberRole(input.role),
+			token: result.token,
+		});
+		return toCreateInvitationResult(result);
 	} catch (error) {
 		return throwRepositoryError(error);
 	}
@@ -317,13 +324,18 @@ export async function resendInvitation(
 	input: ResendInvitationInput,
 ): Promise<CreateInvitationResult> {
 	try {
-		return toCreateInvitationResult(
-			await resendInvitationRecord({
-				organizationId: scope.organizationId,
-				actorUserId: scope.userId,
-				...input,
-			}),
-		);
+		const result = await resendInvitationRecord({
+			organizationId: scope.organizationId,
+			actorUserId: scope.userId,
+			...input,
+		});
+		void dispatchInvitationEmail({
+			to: result.emailNormalized,
+			organizationName: scope.organizationName,
+			role: formatMemberRole(result.invitation.role),
+			token: result.token,
+		});
+		return toCreateInvitationResult(result);
 	} catch (error) {
 		return throwRepositoryError(error);
 	}

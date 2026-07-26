@@ -8,7 +8,7 @@
 		"compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
 		"dev": "tsx watch src/index.ts",
 		"start": "node dist/index.mjs",
-		"test:integration": "tsc -p ../../packages/db/tests/tsconfig.json --noEmit && tsx --test src/app.test.ts ../../packages/db/tests/*.integration.ts"
+		"test:integration": "tsc -p ../../packages/db/tests/tsconfig.json --noEmit && EMAIL_ENABLED=false tsx --test src/app.test.ts ../../packages/db/tests/*.integration.ts"
 	},
 	"dependencies": {
 		"@easy-training/api": "workspace:*",

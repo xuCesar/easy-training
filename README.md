@@ -38,6 +38,7 @@ packages/
   auth/      Better Auth 配置
   db/        Drizzle schema、数据库脚本和 Docker Compose
   env/       服务端与客户端环境变量校验
+  mail/      腾讯云 SES 邮件发送封装
   ui/        跨应用共享的 UI 基础组件
   config/    TypeScript 共享配置
 ```
@@ -74,6 +75,34 @@ cp apps/web/.env.example apps/web/.env
 - `SHUTDOWN_TIMEOUT_MS`：收到 SIGTERM/SIGINT 后等待在途请求完成的最长时间。
 
 Web 端需同步设置 `VITE_ALLOW_PUBLIC_SIGNUP`，与 `ALLOW_PUBLIC_SIGNUP` 保持一致。
+
+邮件服务（腾讯云 SES，Issue #59）：
+
+- `EMAIL_ENABLED`：是否启用发信。本地开发与 CI 保持 `false`；生产设为 `true` 并补齐下方密钥。
+- `APP_PUBLIC_NAME`：邮件标题与应用名展示，默认 `Easy Training`。
+- `TENCENT_SES_SECRET_ID` / `TENCENT_SES_SECRET_KEY`：腾讯云 API 密钥。
+- `TENCENT_SES_REGION`：`ap-guangzhou` 或 `ap-hongkong`。
+- `TENCENT_SES_FROM_ADDRESS`：已验证发信地址，格式如 `Easy Training <noreply@yourdomain.com>`。
+- `TENCENT_SES_TEMPLATE_ID_PASSWORD_RESET` / `TENCENT_SES_TEMPLATE_ID_INVITATION` / `TENCENT_SES_TEMPLATE_ID_EMAIL_VERIFICATION`（可选）：控制台模板 ID。未配置时使用 Simple HTML/Text 发信。
+- 密码重置模板变量：`appName`、`userName`、`link`。
+- 邀请模板变量：`appName`、`organizationName`、`role`、`link`。
+- 邮箱验证模板变量：`appName`、`userName`、`link`。
+- 发信失败会写入结构化日志（`email.failed`），不会阻塞邀请创建、注册或密码重置请求。
+
+腾讯云账户默认可能未开通自定义（Simple）发送权限，此时发信会返回「未开通自定义发送权限，必须使用模版发送」。可用脚本一次性创建三个模板并把返回的 ID 填入上述变量：
+
+```bash
+cd apps/server && pnpm exec tsx ../../packages/mail/scripts/create-templates.ts
+```
+
+脚本按模板名幂等，已存在的模板会跳过。新建模板需经腾讯云人工审核，审核期间发信会返回「模板ID无效或者不可用」。用以下脚本查看审核状态；附带收件邮箱参数时会真实发送三封测试邮件：
+
+```bash
+cd apps/server && pnpm exec tsx ../../packages/mail/scripts/smoke.ts
+cd apps/server && pnpm exec tsx ../../packages/mail/scripts/smoke.ts you@example.com
+```
+
+邮箱验证在注册时自动发送（`sendOnSignUp`），但不强制验证后才能登录，因此不会阻断邀请领取流程。
 
 3. 启动 PostgreSQL 并应用 schema：
 

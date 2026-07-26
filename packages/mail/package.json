@@ -1,25 +1,21 @@
 {
-	"name": "@easy-training/auth",
+	"name": "@easy-training/mail",
 	"type": "module",
 	"exports": {
 		".": {
 			"default": "./src/index.ts"
-		},
-		"./*": {
-			"default": "./src/*.ts"
 		}
 	},
 	"scripts": {
 		"check-types": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@easy-training/db": "workspace:*",
 		"@easy-training/env": "workspace:*",
-		"@easy-training/mail": "workspace:*",
-		"better-auth": "catalog:"
+		"tencentcloud-sdk-nodejs-ses": "^4.1.271"
 	},
 	"devDependencies": {
 		"@easy-training/config": "workspace:*",
+		"@types/node": "catalog:",
 		"typescript": "catalog:"
 	}
 }

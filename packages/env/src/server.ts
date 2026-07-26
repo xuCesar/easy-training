@@ -69,6 +69,29 @@ export const env = createEnv({
 			.min(1_000)
 			.max(300_000)
 			.default(10_000),
+		EMAIL_ENABLED: z.coerce.boolean().default(false),
+		APP_PUBLIC_NAME: z.string().min(1).default("Easy Training"),
+		TENCENT_SES_SECRET_ID: z.string().min(1).optional(),
+		TENCENT_SES_SECRET_KEY: z.string().min(1).optional(),
+		TENCENT_SES_REGION: z
+			.enum(["ap-guangzhou", "ap-hongkong"])
+			.default("ap-guangzhou"),
+		TENCENT_SES_FROM_ADDRESS: z.string().min(3).optional(),
+		TENCENT_SES_TEMPLATE_ID_PASSWORD_RESET: z.coerce
+			.number()
+			.int()
+			.positive()
+			.optional(),
+		TENCENT_SES_TEMPLATE_ID_INVITATION: z.coerce
+			.number()
+			.int()
+			.positive()
+			.optional(),
+		TENCENT_SES_TEMPLATE_ID_EMAIL_VERIFICATION: z.coerce
+			.number()
+			.int()
+			.positive()
+			.optional(),
 	},
 	runtimeEnv: process.env,
 	skipValidation: !!process.env.SKIP_ENV_VALIDATION,

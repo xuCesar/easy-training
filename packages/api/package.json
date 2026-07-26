@@ -15,6 +15,7 @@
 	"dependencies": {
 		"@easy-training/auth": "workspace:*",
 		"@easy-training/db": "workspace:*",
+		"@easy-training/mail": "workspace:*",
 		"@orpc/server": "catalog:",
 		"zod": "catalog:"
 	},

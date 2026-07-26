@@ -781,7 +781,11 @@ async function insertInvitation(
 		campusIds: string[];
 		requestId: string;
 	},
-): Promise<{ invitation: InvitationRecord; token: string }> {
+): Promise<{
+	invitation: InvitationRecord;
+	token: string;
+	emailNormalized: string;
+}> {
 	if (input.role === "owner") {
 		throw new OrganizationManagementError("MEMBER_FORBIDDEN");
 	}
@@ -887,6 +891,7 @@ async function insertInvitation(
 			createdAt: created.createdAt,
 		},
 		token,
+		emailNormalized: created.emailNormalized,
 	};
 }
 
@@ -898,7 +903,11 @@ export async function createInvitationRecord(input: {
 	campusAccessMode: AccessMode;
 	campusIds: string[];
 	requestId: string;
-}): Promise<{ invitation: InvitationRecord; token: string }> {
+}): Promise<{
+	invitation: InvitationRecord;
+	token: string;
+	emailNormalized: string;
+}> {
 	return db.transaction(async (tx) => {
 		await lockOrganization(tx, input.organizationId);
 		return insertInvitation(tx, {
@@ -1006,7 +1015,11 @@ export async function resendInvitationRecord(input: {
 	actorUserId: string;
 	id: string;
 	requestId: string;
-}): Promise<{ invitation: InvitationRecord; token: string }> {
+}): Promise<{
+	invitation: InvitationRecord;
+	token: string;
+	emailNormalized: string;
+}> {
 	return db.transaction(async (tx) => {
 		await lockOrganization(tx, input.organizationId);
 		const [existing] = await tx

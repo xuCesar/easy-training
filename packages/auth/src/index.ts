@@ -5,6 +5,10 @@ import {
 } from "@easy-training/db/repositories/organization-management";
 import * as schema from "@easy-training/db/schema/auth";
 import { env } from "@easy-training/env/server";
+import {
+	sendEmailVerificationEmail,
+	sendPasswordResetEmail,
+} from "@easy-training/mail";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
@@ -19,6 +23,7 @@ const sensitiveAuthPaths = [
 	"/forget-password/*",
 	"/email-otp/request-password-reset",
 	"/email-otp/reset-password",
+	"/send-verification-email",
 ] as const;
 
 const publicSignupDisabledMessage = "当前不接受公开注册，请通过机构邀请加入。";
@@ -45,6 +50,26 @@ export function createAuth() {
 			enabled: true,
 			minPasswordLength: env.AUTH_PASSWORD_MIN_LENGTH,
 			maxPasswordLength: env.AUTH_PASSWORD_MAX_LENGTH,
+			resetPasswordTokenExpiresIn: 60 * 60,
+			sendResetPassword: async ({ user, url }) => {
+				await sendPasswordResetEmail({
+					to: user.email,
+					userName: user.name,
+					resetUrl: url,
+				});
+			},
+		},
+		emailVerification: {
+			sendOnSignUp: true,
+			autoSignInAfterVerification: true,
+			expiresIn: 60 * 60 * 24,
+			sendVerificationEmail: async ({ user, url }) => {
+				await sendEmailVerificationEmail({
+					to: user.email,
+					userName: user.name,
+					verificationUrl: url,
+				});
+			},
 		},
 		rateLimit: {
 			enabled: true,

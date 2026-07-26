@@ -50,7 +50,7 @@ export function InvitationEditor({
 	const mutation = useMutation({
 		...orpc.training.invitations.create.mutationOptions(),
 		onSuccess: async (result) => {
-			toast.success("邀请已创建，请复制链接发送");
+			toast.success("邀请已创建，邮件已发送（若已启用邮件服务）");
 			await onCreated(toInvitationUrl(result.token));
 		},
 		onError: showMutationError,
@@ -77,7 +77,7 @@ export function InvitationEditor({
 				<DialogHeader>
 					<DialogTitle>创建成员邀请</DialogTitle>
 					<DialogDescription>
-						当前版本不会发送邮件。请复制链接并通过机构已有渠道发送；邮箱匹配不等同于邮箱控制权验证。
+						系统会向受邀邮箱发送邀请链接；若未收到邮件，可在创建后复制链接手动发送。邮箱匹配不等同于邮箱控制权验证。
 					</DialogDescription>
 				</DialogHeader>
 				<form
