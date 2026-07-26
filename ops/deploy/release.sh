@@ -36,11 +36,16 @@ sudo -n -u deploy ln -sfn "$RELEASE" "$APP_ROOT/current"
 sudo -n rsync -a --delete /home/ops/et-upload/web/ "$WEB_ROOT/"
 sudo -n chown -R www:www "$WEB_ROOT"
 
-if sudo -n -u deploy bash -lc 'pm2 describe easy-training' > /dev/null 2>&1; then
-	sudo -n -u deploy bash -lc "pm2 restart easy-training --update-env"
-else
-	sudo -n -u deploy bash -lc "cd '$APP_ROOT/current' && pm2 start dist/index.mjs --name easy-training && pm2 save"
-fi
+# PM2 会把首次 start 时解析到的物理路径钉死,restart 不跟随 current 软链
+# (2026-07-26 事故:多次"发布"后实际仍在跑首个版本)。
+# 因此每次发布都 delete 后以新版本的物理路径重新 start。
+sudo -n -u deploy bash -lc 'pm2 delete easy-training' > /dev/null 2>&1 || true
+sudo -n -u deploy bash -lc "cd '$RELEASE' && pm2 start dist/index.mjs --name easy-training && pm2 save" > /dev/null
 
 sleep 3
-curl -sf -m 5 http://127.0.0.1:3010/readyz && echo " readyz-ok release=$RELEASE"
+RUNNING=$(sudo -n -u deploy bash -lc 'pm2 describe easy-training' | grep 'script path' | grep -o '/home/[^ ]*index.mjs')
+if [ "$RUNNING" != "$RELEASE/dist/index.mjs" ]; then
+	echo "PM2 script path mismatch: running $RUNNING, expected $RELEASE/dist/index.mjs" >&2
+	exit 1
+fi
+curl -sf -m 5 http://127.0.0.1:3010/readyz && echo " readyz-ok release=$RELEASE running=$RUNNING"

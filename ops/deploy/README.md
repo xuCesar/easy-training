@@ -74,8 +74,12 @@ ssh ops@150.158.75.37 'bash /home/ops/release.sh'
 ssh ops@150.158.75.37
 ls /home/deploy/apps/easy_training/releases          # 找到上一版本
 sudo -u deploy ln -sfn /home/deploy/apps/easy_training/releases/<上一版本> /home/deploy/apps/easy_training/current
-sudo -u deploy bash -lc 'pm2 restart easy-training'
+# 注意:必须 delete 后以物理路径重新 start——PM2 会钉死首次启动时解析的路径,
+# 仅 restart 不会跟随软链(2026-07-26 事故教训,详见 release.sh 注释)
+sudo -u deploy bash -lc 'pm2 delete easy-training'
+sudo -u deploy bash -lc 'cd /home/deploy/apps/easy_training/releases/<上一版本> && pm2 start dist/index.mjs --name easy-training && pm2 save'
 curl -sf http://127.0.0.1:3010/readyz
+sudo -u deploy bash -lc 'pm2 describe easy-training' | grep 'script path'   # 必须指向目标版本
 ```
 
 前端如需回滚,重新 rsync 旧产物到 `/www/wwwroot/et.eztime-lab.com`。
