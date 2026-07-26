@@ -148,6 +148,40 @@ export const organizationInvitation = pgTable(
 	],
 );
 
+// 平台级"机构开通邀请"(#66):不隶属任何机构,受邀邮箱注册后
+// 自动创建指定名称的新机构并授予 owner。
+export const organizationOnboardingInvitation = pgTable(
+	"organization_onboarding_invitation",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		emailNormalized: text("email_normalized").notNull(),
+		tokenHash: text("token_hash").notNull(),
+		organizationName: text("organization_name").notNull(),
+		note: text("note"),
+		expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+		revokedAt: timestamp("revoked_at", { withTimezone: true }),
+		claimedAt: timestamp("claimed_at", { withTimezone: true }),
+		claimedByUserId: text("claimed_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		createdOrganizationId: uuid("created_organization_id").references(
+			() => organization.id,
+			{ onDelete: "set null" },
+		),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("organization_onboarding_invitation_token_hash_uidx").on(
+			table.tokenHash,
+		),
+		index("organization_onboarding_invitation_email_idx").on(
+			table.emailNormalized,
+		),
+	],
+);
+
 export const organizationInvitationCampus = pgTable(
 	"organization_invitation_campus",
 	{

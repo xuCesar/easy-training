@@ -3,6 +3,7 @@ import {
 	hasActiveInvitationForEmail,
 	normalizeInvitationEmail,
 } from "@easy-training/db/repositories/organization-management";
+import { hasActiveOnboardingInvitationForEmail } from "@easy-training/db/repositories/organization-onboarding";
 import * as schema from "@easy-training/db/schema/auth";
 import { env } from "@easy-training/env/server";
 import {
@@ -98,7 +99,16 @@ export function createAuth() {
 				const invited = await hasActiveInvitationForEmail(
 					normalizeInvitationEmail(email),
 				);
-				if (!invited) {
+				if (invited) return;
+
+				// 机构开通邀请(#66):要求请求头携带开通 token 并与该邮箱的
+				// 有效邀请匹配,防止仅知邮箱者抢注。
+				const onboardingToken = ctx.headers?.get("x-onboarding-token");
+				const onboarding = await hasActiveOnboardingInvitationForEmail(
+					email,
+					onboardingToken,
+				);
+				if (!onboarding) {
 					throw APIError.from("FORBIDDEN", {
 						code: "PUBLIC_SIGNUP_DISABLED",
 						message: publicSignupDisabledMessage,

@@ -27,9 +27,17 @@ function RouteComponent() {
 	const isInvitation =
 		typeof window !== "undefined" &&
 		Boolean(window.sessionStorage.getItem("easy-training:invitation-token"));
+	const isOnboarding =
+		typeof window !== "undefined" &&
+		Boolean(window.sessionStorage.getItem("easy-training:onboarding-token"));
 	const [showSignIn, setShowSignIn] = useState(mode !== "sign-up");
 
-	if (!showSignIn && !env.VITE_ALLOW_PUBLIC_SIGNUP && !isInvitation) {
+	if (
+		!showSignIn &&
+		!env.VITE_ALLOW_PUBLIC_SIGNUP &&
+		!isInvitation &&
+		!isOnboarding
+	) {
 		return (
 			<main className="mx-auto grid min-h-dvh w-full max-w-lg place-items-center p-4">
 				<Empty className="w-full border">
@@ -52,12 +60,15 @@ function RouteComponent() {
 
 	return showSignIn ? (
 		<SignInForm
-			allowPublicSignup={env.VITE_ALLOW_PUBLIC_SIGNUP || isInvitation}
+			allowPublicSignup={
+				env.VITE_ALLOW_PUBLIC_SIGNUP || isInvitation || isOnboarding
+			}
 			onSwitchToSignUp={() => setShowSignIn(false)}
 		/>
 	) : (
 		<SignUpForm
 			isInvitation={isInvitation}
+			isOnboarding={isOnboarding}
 			onSwitchToSignIn={() => setShowSignIn(true)}
 		/>
 	);

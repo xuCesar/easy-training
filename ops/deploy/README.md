@@ -96,8 +96,8 @@ curl -sf http://127.0.0.1:3010/readyz
   凭据并置 `EMAIL_ENABLED=true`,再 `pm2 restart easy-training --update-env`
 - `ALLOW_PUBLIC_SIGNUP` 未设置(默认关闭):受邀注册制(#58)
 - `API_REFERENCE_ENABLED` 未设置:生产默认关闭(#62)
-- 首个机构账号引导(2026-07-26 已完成):注册流程会自动为新用户创建
-  "<姓名>的机构" 并授予 owner(见 `packages/db/src/repositories/organization.ts`),
-  无需种子脚本。操作步骤:后端临时置 `ALLOW_PUBLIC_SIGNUP=true` 并重启,
-  前端用 `VITE_ALLOW_PUBLIC_SIGNUP=true` 重建换上 → 注册 → 立即关回两端并重建前端,
-  校验 sign-up 探针返回 403、`user` 表无多余账号。机构/校区名称可在界面或 SQL 中更正
+- 新机构开通(#66,2026-07-26 起):在服务器执行
+  `bash /home/ops/create-onboarding-link.sh <邮箱> <机构名称> [备注]`
+  生成 7 天有效的开通链接发给客户;客户用受邀邮箱注册后自动创建指定名称的机构
+  并成为 owner,全程无需改 env、无注册窗口。同邮箱重发会撤销旧链接。
+  (历史方式"临时开放注册"仅作应急备份,见 git 历史)

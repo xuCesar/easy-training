@@ -246,6 +246,7 @@ export function createApp(dependencies: CreateAppDependencies = {}) {
 				"Authorization",
 				REQUEST_ID_HEADER,
 				EXPECTED_ORGANIZATION_HEADER,
+				"X-Onboarding-Token",
 			],
 			exposeHeaders: [REQUEST_ID_HEADER],
 			credentials: true,

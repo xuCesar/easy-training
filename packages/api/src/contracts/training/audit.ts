@@ -68,6 +68,7 @@ const auditActionSchema = z.enum([
 	"analytics_filter_deleted",
 	"analytics_exported",
 	"student_erased",
+	"organization_onboarded",
 ]);
 
 export const auditEventListInputSchema = z.object({

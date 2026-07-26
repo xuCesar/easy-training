@@ -17,9 +17,11 @@ const authPasswordMaxLength = 128;
 
 export default function SignUpForm({
 	isInvitation = false,
+	isOnboarding = false,
 	onSwitchToSignIn,
 }: {
 	isInvitation?: boolean;
+	isOnboarding?: boolean;
 	onSwitchToSignIn: () => void;
 }) {
 	const navigate = useNavigate({
@@ -34,6 +36,9 @@ export default function SignUpForm({
 			name: "",
 		},
 		onSubmit: async ({ value }) => {
+			const onboardingToken = window.sessionStorage.getItem(
+				"easy-training:onboarding-token",
+			);
 			await authClient.signUp.email(
 				{
 					email: value.email,
@@ -42,7 +47,11 @@ export default function SignUpForm({
 					callbackURL: `${window.location.origin}/dashboard`,
 				},
 				{
+					headers: onboardingToken
+						? { "x-onboarding-token": onboardingToken }
+						: undefined,
 					onSuccess: () => {
+						window.sessionStorage.removeItem("easy-training:onboarding-token");
 						queryClient.clear();
 						notifyAuthChange();
 						navigate({
@@ -79,7 +88,11 @@ export default function SignUpForm({
 	return (
 		<div className="mx-auto mt-10 w-full max-w-md p-6">
 			<h1 className="mb-6 text-center font-bold text-3xl">
-				{isInvitation ? "创建账号并加入机构" : "创建账号"}
+				{isOnboarding
+					? "创建机构账号"
+					: isInvitation
+						? "创建账号并加入机构"
+						: "创建账号"}
 			</h1>
 
 			<form

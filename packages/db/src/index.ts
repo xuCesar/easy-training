@@ -44,6 +44,7 @@ export * from "./repositories/operation-tasks";
 export * from "./repositories/operations";
 export * from "./repositories/organization";
 export * from "./repositories/organization-management";
+export * from "./repositories/organization-onboarding";
 export * from "./repositories/payment-reversals";
 export * from "./repositories/receipt-documents";
 export * from "./repositories/refund-approval";

@@ -8,6 +8,11 @@ import {
 	session,
 	user,
 } from "../schema";
+import { writeOrganizationAuditEvent } from "./audit";
+import {
+	lockActiveOnboardingInvitation,
+	markOnboardingInvitationClaimed,
+} from "./organization-onboarding";
 
 export type OrganizationContextErrorCode =
 	| "SESSION_NOT_FOUND"
@@ -295,7 +300,10 @@ async function getOrCreateCurrentOrganizationWithLock(input: {
 		}
 
 		const [userRecord] = await tx
-			.select({ organizationInitializedAt: user.organizationInitializedAt })
+			.select({
+				organizationInitializedAt: user.organizationInitializedAt,
+				email: user.email,
+			})
 			.from(user)
 			.where(eq(user.id, input.userId))
 			.limit(1)
@@ -308,15 +316,26 @@ async function getOrCreateCurrentOrganizationWithLock(input: {
 			throw new OrganizationContextError("ORGANIZATION_MEMBERSHIP_REQUIRED");
 		}
 
+		// 机构开通邀请(#66)优先于公开注册开关:持有效邀请的邮箱
+		// 即便 ALLOW_PUBLIC_SIGNUP=false 也可创建指定名称的新机构。
+		const onboardingInvitation = await lockActiveOnboardingInvitation(
+			tx,
+			userRecord.email,
+		);
 		const allowAutoCreate =
-			input.allowAutoCreateOrganization ?? env.ALLOW_PUBLIC_SIGNUP;
+			onboardingInvitation !== null ||
+			(input.allowAutoCreateOrganization ?? env.ALLOW_PUBLIC_SIGNUP);
 		if (!allowAutoCreate) {
 			throw new OrganizationContextError("ORGANIZATION_MEMBERSHIP_REQUIRED");
 		}
 
 		const [createdOrganization] = await tx
 			.insert(organization)
-			.values({ name: `${input.userName.trim() || "我的"}的机构` })
+			.values({
+				name:
+					onboardingInvitation?.organizationName ??
+					`${input.userName.trim() || "我的"}的机构`,
+			})
 			.returning({ id: organization.id, name: organization.name });
 
 		if (!createdOrganization) {
@@ -340,6 +359,22 @@ async function getOrCreateCurrentOrganizationWithLock(input: {
 
 		if (!createdMember) {
 			throw new Error("Organization member creation did not return a record.");
+		}
+
+		if (onboardingInvitation) {
+			await markOnboardingInvitationClaimed(tx, {
+				invitationId: onboardingInvitation.id,
+				userId: input.userId,
+				organizationId: createdOrganization.id,
+			});
+			await writeOrganizationAuditEvent(tx, {
+				organizationId: createdOrganization.id,
+				action: "organization_onboarded",
+				entityType: "organization",
+				entityId: createdOrganization.id,
+				actorUserId: input.userId,
+				after: { onboardingInvitationId: onboardingInvitation.id },
+			});
 		}
 
 		await tx
