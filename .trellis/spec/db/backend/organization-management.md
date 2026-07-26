@@ -125,50 +125,54 @@ await assertWritableCampus(tx, { campusAccess, campusId });
 ### 1. Scope / Trigger
 
 - 触发：修改机构邀请领取、登录注册或邮箱验证能力时。
-- 目的：避免在没有可用验证邮件投递流程时，因 `user.emailVerified` 永远为 `false` 而阻断受邀用户加入机构。
+- 目的：邀请领取以已验证的邮箱控制权为前提（#18 试运行 P0 门禁），防止仅凭同名邮箱字符串冒领邀请。
 
 ### 2. Signatures
 
-- 邀请领取保持 `claimInvitationRecord({ token, userId, userEmail, sessionId })`。
-- 领取流程不接收或检查 `userEmailVerified`。
+- 邀请领取为 `claimInvitationRecord({ token, userId, userEmail, userEmailVerified, sessionId })`。
+- API 层从会话上下文传入 `session.user.emailVerified`，不接受客户端自报的验证状态。
 
 ### 3. Contracts
 
-- 领取资格由有效邀请 token、邀请目标邮箱与当前登录邮箱的归一化匹配，以及现有成员/领取状态共同决定。
-- `emailVerified` 可用于独立的认证安全能力，但不是机构邀请领取的前置条件，除非同一版本已提供可用的验证邮件投递与重发流程。
+- 领取资格由有效邀请 token、`userEmailVerified === true`、邀请目标邮箱与当前登录邮箱的归一化匹配，以及现有成员/领取状态共同决定。
+- 未验证用户被拒绝时，不创建成员、不切换 session 当前机构、不写领取审计事件。
+- 验证邮件投递依赖 Better Auth `sendVerificationEmail`（Tencent SES）；投递通道不可用只影响用户完成验证的路径，不放宽服务端拒绝。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 数据库领域错误 | API 语义 |
 | --- | --- | --- |
+| 当前用户 `emailVerified = false` | `INVITATION_EMAIL_UNVERIFIED` | `FORBIDDEN` |
 | 当前登录邮箱与邀请邮箱不匹配 | `INVITATION_EMAIL_MISMATCH` | `FORBIDDEN` |
 | 邀请撤销、过期或已领取 | `INVITATION_INVALID` | `CONFLICT` |
-| 当前用户的 `emailVerified = false`，但邮箱匹配 | 无错误 | 成功领取 |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: 未验证但邮箱匹配的受邀用户领取成功，成员关系、当前 session 机构和审计事件在同一事务写入。
-- Base: 已验证用户按同样规则领取，验证状态不改变邀请结果。
-- Bad: 只在前端解除禁用按钮，服务端仍检查 `emailVerified`，导致直接调用 API 仍失败。
+- Good: 已验证且邮箱匹配的受邀用户领取成功，成员关系、当前 session 机构和审计事件在同一事务写入。
+- Base: 未验证用户在邀请页看到禁用按钮与提示；直接调用 API 同样被服务端拒绝。
+- Bad: 只在前端禁用按钮而服务端不检查 `emailVerified`，或以"邮件投递未就绪"为由移除服务端拒绝（历史回归：`466fcd3`）。
 
 ### 6. Tests Required
 
-- PostgreSQL 集成测试覆盖 `emailVerified = false` 的匹配邮箱可领取，并断言成员关系、session 当前机构和 `invitation_claimed` 审计事件均已写入。
-- 保留邮箱不匹配、撤销/过期/已领取邀请的拒绝测试。
+- PostgreSQL 集成测试覆盖 `emailVerified = false` 的匹配邮箱被拒（`INVITATION_EMAIL_UNVERIFIED`），并断言成员关系、session 当前机构和领取审计事件均未写入。
+- 保留已验证用户的成功领取，以及邮箱不匹配、撤销/过期/已领取邀请的拒绝测试。
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```ts
-if (!input.userEmailVerified) {
-	throw new OrganizationManagementError("INVITATION_EMAIL_UNVERIFIED");
+if (normalizeEmail(input.userEmail) === invitation.emailNormalized) {
+	// 未验证邮箱也允许领取
 }
 ```
 
 #### Correct
 
 ```ts
+if (!input.userEmailVerified) {
+	throw new OrganizationManagementError("INVITATION_EMAIL_UNVERIFIED");
+}
 if (normalizeEmail(input.userEmail) !== invitation.emailNormalized) {
 	throw new OrganizationManagementError("INVITATION_EMAIL_MISMATCH");
 }
