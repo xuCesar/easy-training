@@ -278,6 +278,7 @@ export async function findDuplicateStudentCandidates(input: {
 			and(
 				eq(student.organizationId, input.organizationId),
 				isNull(student.mergedIntoStudentId),
+				isNull(student.anonymizedAt),
 				campusAccessCondition(student.campusId, input.campusAccess),
 				input.excludeStudentId
 					? sql`${student.id} <> ${input.excludeStudentId}`
@@ -533,6 +534,7 @@ export async function listStudentRecords(input: {
 	const baseFilters = [
 		eq(student.organizationId, input.organizationId),
 		isNull(student.mergedIntoStudentId),
+		isNull(student.anonymizedAt),
 		campusAccessCondition(student.campusId, input.campusAccess),
 	];
 	if (input.campusId) baseFilters.push(eq(student.campusId, input.campusId));

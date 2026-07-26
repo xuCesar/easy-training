@@ -53,8 +53,10 @@
    `guardianPhone`/`guardianPhoneNormalized` → `''`;`birthDate` → NULL;
    `anonymizedAt` → now()
 2. `student_contact`:该学员全部行物理删除
-3. `organization_audit_event`:`entityType='student' AND entityId=<id>` 的行,
-   `before`/`after` 置 `{"anonymized": true}`(保留事件骨架供操作审计)
+3. `organization_audit_event`:`entityType='student' AND entityId=<id>` 的行
+   **物理删除**——该表有 BEFORE UPDATE 触发器保证不可变,无法就地改写 payload;
+   数据主体删除权优先于内部审计留存(审计另有 180 天保留策略),
+   擦除动作以新的 `student_erased` 事件留痕
 4. `receipt_document.studentName`:重写为匿名化姓名(金额、编号、时间不动)
 5. `student_import_batch.errors`:含该学员电话/姓名的错误行按批次
    整体置 `[]`(试运行期批次少,可全量清理超过保留期的批次代替精准匹配)

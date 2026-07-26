@@ -100,6 +100,7 @@ async function planStudentBulkOperation(
 			and(
 				eq(student.organizationId, input.organizationId),
 				isNull(student.mergedIntoStudentId),
+				isNull(student.anonymizedAt),
 				inArray(
 					student.id,
 					targets.map((target) => target.studentId),

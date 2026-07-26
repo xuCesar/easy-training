@@ -81,6 +81,7 @@ export const organizationAuditAction = pgEnum("organization_audit_action", [
 	"analytics_filter_updated",
 	"analytics_filter_deleted",
 	"analytics_exported",
+	"student_erased",
 ]);
 
 export const organizationNotificationType = pgEnum(

@@ -43,6 +43,7 @@ export const student = pgTable(
 		version: integer("version").default(1).notNull(),
 		mergedIntoStudentId: uuid("merged_into_student_id"),
 		mergedAt: timestamp("merged_at", { withTimezone: true }),
+		anonymizedAt: timestamp("anonymized_at", { withTimezone: true }),
 		createdAt: timestamp("created_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),

@@ -51,6 +51,7 @@ export * from "./repositories/scheduling";
 export * from "./repositories/student-bulk-operations";
 export * from "./repositories/student-enrollment-bulk";
 export * from "./repositories/student-import-export";
+export * from "./repositories/student-erasure";
 export * from "./repositories/student-merge";
 export * from "./repositories/student-ownership";
 export * from "./repositories/student-timeline";

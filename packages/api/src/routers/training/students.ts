@@ -9,6 +9,8 @@ import {
 	createStudentTagInputSchema,
 	duplicateStudentCandidatesInputSchema,
 	duplicateStudentCandidatesResultSchema,
+	eraseStudentInputSchema,
+	eraseStudentResultSchema,
 	exportStudentsInputSchema,
 	exportStudentsResultSchema,
 	mergeStudentsInputSchema,
@@ -44,6 +46,7 @@ import {
 	studentExportProcedure,
 	studentProcedure,
 } from "../../index";
+import { eraseStudent } from "../../repositories/student-erasure";
 import {
 	getStudentMergePreview,
 	mergeStudents,
@@ -223,6 +226,18 @@ export const studentsRouter = {
 		.output(mergeStudentsResultSchema)
 		.handler(({ context, input }) =>
 			mergeStudents(
+				{
+					organizationId: context.organization.id,
+					userId: context.session.user.id,
+				},
+				input,
+			),
+		),
+	erase: organizationManagementProcedure
+		.input(eraseStudentInputSchema)
+		.output(eraseStudentResultSchema)
+		.handler(({ context, input }) =>
+			eraseStudent(
 				{
 					organizationId: context.organization.id,
 					userId: context.session.user.id,

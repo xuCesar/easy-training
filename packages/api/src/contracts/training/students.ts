@@ -325,6 +325,15 @@ export const exportStudentsResultSchema = z.object({
 	fileName: z.string(),
 	csv: z.string(),
 });
+export const eraseStudentInputSchema = z.object({
+	studentId: z.uuid(),
+	confirmName: z.string().min(1).max(100),
+});
+export const eraseStudentResultSchema = z.object({
+	mode: z.enum(["deleted", "anonymized"]),
+});
+export type EraseStudentInput = z.infer<typeof eraseStudentInputSchema>;
+export type EraseStudentResult = z.infer<typeof eraseStudentResultSchema>;
 
 const studentBulkTargetsSchema = z
 	.array(

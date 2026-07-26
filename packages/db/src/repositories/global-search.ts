@@ -143,6 +143,7 @@ async function searchStudents(
 			and(
 				eq(student.organizationId, input.organizationId),
 				sql`${student.mergedIntoStudentId} is null`,
+				sql`${student.anonymizedAt} is null`,
 				campusAccessCondition(student.campusId, input.campusAccess),
 				or(ilike(student.name, query), contactMatch),
 			),

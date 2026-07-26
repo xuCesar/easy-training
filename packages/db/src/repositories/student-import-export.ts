@@ -393,6 +393,7 @@ async function resolveStudentImport(
 						and(
 							eq(student.organizationId, input.organizationId),
 							isNull(student.mergedIntoStudentId),
+							isNull(student.anonymizedAt),
 							or(
 								inArray(student.guardianPhoneNormalized, phones),
 								inArray(studentContact.phoneNormalized, phones),
@@ -729,6 +730,7 @@ export async function exportStudentRecords(input: {
 			const filters = [
 				eq(student.organizationId, input.organizationId),
 				isNull(student.mergedIntoStudentId),
+				isNull(student.anonymizedAt),
 				campusAccessCondition(student.campusId, campusAccess),
 			];
 			if (input.campusId) filters.push(eq(student.campusId, input.campusId));
