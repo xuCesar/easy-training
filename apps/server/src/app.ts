@@ -18,6 +18,7 @@ import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
+import { secureHeaders } from "hono/secure-headers";
 
 import { isShuttingDown } from "./shutdown";
 
@@ -48,6 +49,8 @@ type CreateAppDependencies = {
 	readinessCheck?: () => Promise<unknown>;
 	isReady?: () => boolean;
 	log?: StructuredLogger;
+	isProduction?: boolean;
+	apiReferenceEnabled?: boolean;
 };
 
 type AppEnvironment = {
@@ -133,6 +136,37 @@ const rpcBodyLimit = bodyLimit({
 		c.json({ error: { message: LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE } }, 413),
 });
 
+export const AUTH_BODY_LIMIT_BYTES = 64 * 1024;
+const AUTH_REQUEST_TOO_LARGE_MESSAGE = "请求体超出限制。";
+
+const authBodyLimit = bodyLimit({
+	maxSize: AUTH_BODY_LIMIT_BYTES,
+	onError: (c) =>
+		c.json({ error: { message: AUTH_REQUEST_TOO_LARGE_MESSAGE } }, 413),
+});
+
+const HSTS_HEADER_VALUE = "max-age=15552000; includeSubDomains";
+
+function createSecurityHeaders(options: {
+	isProduction: boolean;
+	allowDocumentContent: boolean;
+}): MiddlewareHandler {
+	return secureHeaders({
+		xFrameOptions: "DENY",
+		strictTransportSecurity: options.isProduction ? HSTS_HEADER_VALUE : false,
+		// API 响应不包含可执行文档内容;/api-reference 文档页需要内联脚本与样式,
+		// 仅在非生产启用时放开 CSP,其余安全响应头保持一致。
+		contentSecurityPolicy: options.allowDocumentContent
+			? undefined
+			: {
+					defaultSrc: ["'none'"],
+					baseUri: ["'none'"],
+					formAction: ["'none'"],
+					frameAncestors: ["'none'"],
+				},
+	});
+}
+
 const requireTrustedOrigin: MiddlewareHandler = async (c, next) => {
 	if (c.req.method === "GET" || c.req.method === "OPTIONS") {
 		return next();
@@ -153,8 +187,22 @@ export function createApp(dependencies: CreateAppDependencies = {}) {
 	const log = dependencies.log ?? logStructuredEvent;
 	const readinessCheck = dependencies.readinessCheck ?? checkReadiness;
 	const isReady = dependencies.isReady ?? (() => !isShuttingDown());
+	const isProduction =
+		dependencies.isProduction ?? env.NODE_ENV === "production";
+	const apiReferenceEnabled =
+		dependencies.apiReferenceEnabled ??
+		env.API_REFERENCE_ENABLED ??
+		!isProduction;
 	const apiHandler = createApiHandler(log);
 	const rpcHandler = createRpcHandler(log);
+	const apiSecurityHeaders = createSecurityHeaders({
+		isProduction,
+		allowDocumentContent: false,
+	});
+	const apiReferenceSecurityHeaders = createSecurityHeaders({
+		isProduction,
+		allowDocumentContent: true,
+	});
 
 	app.use("/*", async (c, next) => {
 		const requestId = getRequestId(c.req.header(REQUEST_ID_HEADER));
@@ -183,6 +231,11 @@ export function createApp(dependencies: CreateAppDependencies = {}) {
 			});
 		}
 	});
+	app.use("/*", (c, next) =>
+		apiReferenceEnabled && c.req.path.startsWith("/api-reference")
+			? apiReferenceSecurityHeaders(c, next)
+			: apiSecurityHeaders(c, next),
+	);
 	app.use(
 		"/*",
 		cors({
@@ -210,9 +263,13 @@ export function createApp(dependencies: CreateAppDependencies = {}) {
 		}
 	});
 	app.use("/rpc/*", rpcBodyLimit);
-	app.use("/api-reference/*", rpcBodyLimit);
 	app.use("/rpc/*", requireTrustedOrigin);
-	app.use("/api-reference/*", requireTrustedOrigin);
+	if (apiReferenceEnabled) {
+		app.use("/api-reference/*", rpcBodyLimit);
+		app.use("/api-reference/*", requireTrustedOrigin);
+	}
+	app.use("/api/auth/*", authBodyLimit);
+	app.use("/api/auth/*", requireTrustedOrigin);
 	app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 	app.use("/*", async (c, next) => {
 		const context = {
@@ -229,13 +286,15 @@ export function createApp(dependencies: CreateAppDependencies = {}) {
 			return c.newResponse(rpcResult.response.body, rpcResult.response);
 		}
 
-		const apiResult = await apiHandler.handle(c.req.raw, {
-			prefix: "/api-reference",
-			context,
-		});
+		if (apiReferenceEnabled) {
+			const apiResult = await apiHandler.handle(c.req.raw, {
+				prefix: "/api-reference",
+				context,
+			});
 
-		if (apiResult.matched) {
-			return c.newResponse(apiResult.response.body, apiResult.response);
+			if (apiResult.matched) {
+				return c.newResponse(apiResult.response.body, apiResult.response);
+			}
 		}
 
 		await next();

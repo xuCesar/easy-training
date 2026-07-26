@@ -63,6 +63,7 @@ export const env = createEnv({
 			.max(3_600_000)
 			.default(15_000),
 		ALLOW_PUBLIC_SIGNUP: z.stringbool().default(false),
+		API_REFERENCE_ENABLED: z.stringbool().optional(),
 		SHUTDOWN_TIMEOUT_MS: z.coerce
 			.number()
 			.int()

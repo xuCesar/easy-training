@@ -10,7 +10,7 @@ import {
 	resolveBusinessMetricWindow,
 } from "@easy-training/api/repositories/business-metrics-time";
 
-import { createApp } from "./app";
+import { AUTH_BODY_LIMIT_BYTES, createApp } from "./app";
 
 type LoggedEvent = {
 	event: string;
@@ -135,6 +135,76 @@ test("readiness returns 503 while shutdown is in progress", async () => {
 
 	assert.equal(response.status, 503);
 	assert.equal(await response.text(), "Service Unavailable");
+});
+
+test("responses carry security headers, production adds HSTS", async () => {
+	const devApp = createApp({ log: () => undefined, isProduction: false });
+	const devResponse = await devApp.fetch(new Request("http://localhost/"));
+
+	assert.equal(devResponse.headers.get("X-Content-Type-Options"), "nosniff");
+	assert.equal(devResponse.headers.get("X-Frame-Options"), "DENY");
+	assert.equal(devResponse.headers.get("Referrer-Policy"), "no-referrer");
+	assert.equal(
+		devResponse.headers.get("Content-Security-Policy"),
+		"default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+	);
+	assert.equal(devResponse.headers.get("Strict-Transport-Security"), null);
+
+	const prodApp = createApp({ log: () => undefined, isProduction: true });
+	const prodResponse = await prodApp.fetch(new Request("http://localhost/"));
+
+	assert.equal(
+		prodResponse.headers.get("Strict-Transport-Security"),
+		"max-age=15552000; includeSubDomains",
+	);
+	assert.equal(
+		prodResponse.headers.get("Content-Security-Policy"),
+		"default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+	);
+});
+
+test("auth routes reject untrusted origins and oversized bodies", async () => {
+	const app = createApp({ log: () => undefined });
+
+	const untrustedResponse = await app.fetch(
+		new Request("http://localhost/api/auth/sign-in/email", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Origin: "http://untrusted.invalid",
+			},
+			body: JSON.stringify({ email: "a@example.invalid", password: "x" }),
+		}),
+	);
+	assert.equal(untrustedResponse.status, 403);
+
+	const oversizedResponse = await app.fetch(
+		new Request("http://localhost/api/auth/sign-in/email", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "a".repeat(AUTH_BODY_LIMIT_BYTES + 1),
+		}),
+	);
+	assert.equal(oversizedResponse.status, 413);
+});
+
+test("api reference is disabled in production unless explicitly enabled", async () => {
+	const prodApp = createApp({ log: () => undefined, isProduction: true });
+	const disabledResponse = await prodApp.fetch(
+		new Request("http://localhost/api-reference"),
+	);
+	assert.equal(disabledResponse.status, 404);
+
+	const enabledApp = createApp({
+		log: () => undefined,
+		isProduction: true,
+		apiReferenceEnabled: true,
+	});
+	const enabledResponse = await enabledApp.fetch(
+		new Request("http://localhost/api-reference"),
+	);
+	assert.equal(enabledResponse.status, 200);
+	assert.equal(enabledResponse.headers.get("Content-Security-Policy"), null);
 });
 
 test("business metric month range uses Shanghai calendar and capped comparison", () => {
