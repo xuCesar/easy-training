@@ -62,14 +62,14 @@ export const env = createEnv({
 			.min(1_000)
 			.max(3_600_000)
 			.default(15_000),
-		ALLOW_PUBLIC_SIGNUP: z.coerce.boolean().default(false),
+		ALLOW_PUBLIC_SIGNUP: z.stringbool().default(false),
 		SHUTDOWN_TIMEOUT_MS: z.coerce
 			.number()
 			.int()
 			.min(1_000)
 			.max(300_000)
 			.default(10_000),
-		EMAIL_ENABLED: z.coerce.boolean().default(false),
+		EMAIL_ENABLED: z.stringbool().default(false),
 		APP_PUBLIC_NAME: z.string().min(1).default("Easy Training"),
 		TENCENT_SES_SECRET_ID: z.string().min(1).optional(),
 		TENCENT_SES_SECRET_KEY: z.string().min(1).optional(),
