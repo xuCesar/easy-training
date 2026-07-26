@@ -103,7 +103,11 @@ export function createAuth() {
 
 				// 机构开通邀请(#66):要求请求头携带开通 token 并与该邮箱的
 				// 有效邀请匹配,防止仅知邮箱者抢注。
-				const onboardingToken = ctx.headers?.get("x-onboarding-token");
+				// 注意:钩子上下文里 HTTP 请求头在 ctx.request.headers(ctx.headers
+				// 仅在服务端直调 auth.api 时由调用方传入)。
+				const onboardingToken =
+					ctx.request?.headers.get("x-onboarding-token") ??
+					ctx.headers?.get("x-onboarding-token");
 				const onboarding = await hasActiveOnboardingInvitationForEmail(
 					email,
 					onboardingToken,

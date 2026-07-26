@@ -152,8 +152,6 @@ test("持有效开通邀请的用户首次进入即创建指定名称机构,既�
 			organizationName: "小星星艺术学校",
 		});
 
-		const before = await db.select({ id: organization.id }).from(organization);
-
 		const current = await getOrCreateCurrentOrganization({
 			userId: ids.newUserId,
 			userName: "开通受邀人",
@@ -186,14 +184,21 @@ test("持有效开通邀请的用户首次进入即创建指定名称机构,既�
 			);
 		assert.equal(audit?.action, "organization_onboarded");
 
-		// 既有机构未受影响:名称、成员数不变
+		// 既有机构未受影响:名称与成员保持原样,且新机构是独立的一行
+		assert.notEqual(current.organization.id, ids.existingOrganizationId);
 		const [existing] = await db
 			.select({ name: organization.name })
 			.from(organization)
 			.where(eq(organization.id, ids.existingOrganizationId));
 		assert.equal(existing?.name, `${ids.prefix} 既有机构`);
-		const after = await db.select({ id: organization.id }).from(organization);
-		assert.equal(after.length, before.length + 1);
+		const existingMembers = await db
+			.select({ userId: organizationMember.userId })
+			.from(organizationMember)
+			.where(eq(organizationMember.organizationId, ids.existingOrganizationId));
+		assert.deepEqual(
+			existingMembers.map((row) => row.userId),
+			[ids.existingOwnerId],
+		);
 
 		// 无邀请且注册关闭时,新用户不能自动建机构
 		const [claimedInvitation] = await db

@@ -281,3 +281,49 @@ test("business metric custom range rejects invalid and oversized windows", () =>
 			error.code === "RANGE_TOO_LARGE",
 	);
 });
+
+test("机构开通邀请:携带匹配 token 的注册经完整 HTTP 栈放行,缺失或错误 token 拒绝", async () => {
+	const { createOnboardingInvitationRecord, db } = await import(
+		"@easy-training/db"
+	);
+	const { env } = await import("@easy-training/env/server");
+	const email = `onboarding-e2e-${Date.now()}@example.invalid`;
+	const app = createApp({ log: () => undefined });
+	const signUp = (headers: Record<string, string>) =>
+		app.fetch(
+			new Request("http://localhost/api/auth/sign-up/email", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Origin: env.CORS_ORIGIN,
+					...headers,
+				},
+				body: JSON.stringify({
+					email,
+					name: "开通端到端",
+					password: "Xx12345678901",
+				}),
+			}),
+		);
+
+	try {
+		const created = await createOnboardingInvitationRecord({
+			email,
+			organizationName: "端到端开通机构",
+		});
+
+		const missingToken = await signUp({});
+		assert.equal(missingToken.status, 403);
+		const wrongToken = await signUp({ "x-onboarding-token": "wrong" });
+		assert.equal(wrongToken.status, 403);
+
+		const accepted = await signUp({ "x-onboarding-token": created.token });
+		assert.equal(accepted.status, 200);
+	} finally {
+		await db.$client.query('DELETE FROM "user" WHERE email = $1', [email]);
+		await db.$client.query(
+			"DELETE FROM organization_onboarding_invitation WHERE email_normalized = $1",
+			[email],
+		);
+	}
+});
