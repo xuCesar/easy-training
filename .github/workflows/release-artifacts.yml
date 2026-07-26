@@ -1,0 +1,57 @@
+name: Release Artifacts
+
+# 构建生产发布产物,使发布与任何开发机解耦:
+# server-bundle(dist + 生产 node_modules)与 web-dist(生产静态资源)。
+# 发布流程:下载两个 artifact → rsync 到 /home/ops/et-upload/{server,web} →
+# 服务器执行 release.sh(见 ops/deploy/README.md)。
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+env:
+  VITE_SERVER_URL: https://et.eztime-lab.com
+  VITE_ALLOW_PUBLIC_SIGNUP: "false"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build server bundle
+        env:
+          SKIP_ENV_VALIDATION: "1"
+        run: pnpm --filter server build
+      - name: Build web assets
+        run: pnpm --filter web build
+      - name: Create pruned server deploy directory
+        run: |
+          pnpm --filter=server deploy --prod --legacy out/server
+          cp -R apps/server/dist out/server/dist
+      - name: Pack artifacts
+        run: |
+          tar -C out/server -czf server-bundle.tar.gz .
+          tar -C apps/web/dist -czf web-dist.tar.gz .
+          ls -lh server-bundle.tar.gz web-dist.tar.gz
+      - name: Upload server bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-bundle-${{ github.sha }}
+          path: server-bundle.tar.gz
+          retention-days: 14
+      - name: Upload web dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist-${{ github.sha }}
+          path: web-dist.tar.gz
+          retention-days: 14

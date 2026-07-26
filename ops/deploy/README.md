@@ -20,9 +20,30 @@
 数据库角色分离(`setup-db.sh` 创建):`et_migrator` 为库 owner、只用于迁移;`et_app`
 仅有 DML(默认权限授予),为应用运行账号。
 
-## 发布流程(本地构建,服务器只跑运行时)
+## 发布流程
 
 服务器内存有限(4G,与其他项目共享),**禁止在服务器上执行 pnpm install / build**。
+
+### 方式 A:CI 产物(推荐,与开发机解耦)
+
+develop 每次 push 会触发 `Release Artifacts` 工作流(也可手动 dispatch),
+产出 `server-bundle-<sha>` 与 `web-dist-<sha>` 两个 artifact(保留 14 天):
+
+```bash
+# 1. 下载并解包指定提交的产物
+gh run download --name server-bundle-<sha> --name web-dist-<sha> -D /tmp/et-release
+mkdir -p /tmp/et-release/server /tmp/et-release/web
+tar -C /tmp/et-release/server -xzf /tmp/et-release/server-bundle-<sha>/server-bundle.tar.gz
+tar -C /tmp/et-release/web -xzf /tmp/et-release/web-dist-<sha>/web-dist.tar.gz
+
+# 2. 上传
+rsync -az --delete /tmp/et-release/server/ ops@150.158.75.37:/home/ops/et-upload/server/
+rsync -az --delete /tmp/et-release/web/ ops@150.158.75.37:/home/ops/et-upload/web/
+
+# 3. 迁移(如有)与发布,同方式 B 的第 4、5 步
+```
+
+### 方式 B:本地构建
 
 ```bash
 # 1. 本地构建
