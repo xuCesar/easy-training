@@ -43,11 +43,13 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Run migrations
         run: pnpm --filter @easy-training/db db:migrate
+      # Build 先于 check-types:vite build 生成 routeTree.gen.ts(gitignored),
+      # 否则 web 的 tsc 在全新 checkout 上必然失败
+      - name: Build
+        run: pnpm build
       - name: Check types
         run: pnpm check-types
       - name: Check formatting and linting
         run: pnpm check
       - name: Run integration tests
         run: pnpm test:integration
-      - name: Build
-        run: pnpm build
