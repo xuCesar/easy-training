@@ -66,5 +66,8 @@ curl -sf http://127.0.0.1:3010/readyz
   凭据并置 `EMAIL_ENABLED=true`,再 `pm2 restart easy-training --update-env`
 - `ALLOW_PUBLIC_SIGNUP` 未设置(默认关闭):受邀注册制(#58)
 - `API_REFERENCE_ENABLED` 未设置:生产默认关闭(#62)
-- 首个机构账号引导:公开注册关闭且无邀请来源时,需临时置
-  `ALLOW_PUBLIC_SIGNUP=true` 注册首个 owner 账号后立即关回,或另行提供种子脚本
+- 首个机构账号引导(2026-07-26 已完成):注册流程会自动为新用户创建
+  "<姓名>的机构" 并授予 owner(见 `packages/db/src/repositories/organization.ts`),
+  无需种子脚本。操作步骤:后端临时置 `ALLOW_PUBLIC_SIGNUP=true` 并重启,
+  前端用 `VITE_ALLOW_PUBLIC_SIGNUP=true` 重建换上 → 注册 → 立即关回两端并重建前端,
+  校验 sign-up 探针返回 403、`user` 表无多余账号。机构/校区名称可在界面或 SQL 中更正
