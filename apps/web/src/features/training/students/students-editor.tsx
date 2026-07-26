@@ -213,7 +213,7 @@ export function StudentEditor({
 					<DialogDescription>
 						{isEditing
 							? "校区归属创建后不可直接修改。"
-							: "请填写基础资料并指定一位主要联系人。"}
+							: "请填写基础资料并指定一位主要联系人。录入前请确认已按《学员个人信息处理告知同意书》取得监护人同意;不满十四周岁学员须取得监护人单独同意。"}
 					</DialogDescription>
 				</DialogHeader>
 				{detailLoading ? (
