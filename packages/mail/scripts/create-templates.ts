@@ -1,8 +1,14 @@
+import { env } from "@easy-training/env/server";
+
 import { getSesClient } from "../src/client";
 
 function encodeBase64(value: string): string {
 	return Buffer.from(value, "utf8").toString("base64");
 }
+
+// 腾讯云 SES 不允许用变量填充完整超链接。模板创建时固定生产域名，
+// 发送时只替换不带前导斜杠的路径、查询参数和 hash（{{linkPath}}）。
+const templateOrigin = new URL(env.CORS_ORIGIN).origin;
 
 const passwordResetHtml = `<!doctype html>
 <html lang="zh-CN">
@@ -12,9 +18,9 @@ const passwordResetHtml = `<!doctype html>
 			<p style="margin:0 0 16px;font-size:14px;line-height:1.6;">您好，{{userName}}：</p>
 			<p style="margin:0 0 16px;font-size:14px;line-height:1.6;">您正在重置 {{appName}} 账号密码。请点击下方按钮完成重置，链接 1 小时内有效。</p>
 			<p style="margin:0 0 24px;">
-				<a href="{{link}}" style="display:inline-block;padding:10px 20px;background:#1f2328;color:#ffffff;text-decoration:none;font-size:14px;">重置密码</a>
+				<a href="${templateOrigin}/{{linkPath}}" style="display:inline-block;padding:10px 20px;background:#1f2328;color:#ffffff;text-decoration:none;font-size:14px;">重置密码</a>
 			</p>
-			<p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:#57606a;">若按钮无法点击，请复制以下链接到浏览器打开：<br />{{link}}</p>
+			<p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:#57606a;">若按钮无法点击，请复制以下链接到浏览器打开：<br />${templateOrigin}/{{linkPath}}</p>
 			<p style="margin:0;font-size:13px;line-height:1.6;color:#57606a;">如非本人操作，请忽略此邮件，您的密码不会发生变化。</p>
 		</div>
 	</body>
@@ -23,7 +29,7 @@ const passwordResetHtml = `<!doctype html>
 const passwordResetText = `您好，{{userName}}：
 
 您正在重置 {{appName}} 账号密码。请打开以下链接完成重置（链接 1 小时内有效）：
-{{link}}
+${templateOrigin}/{{linkPath}}
 
 如非本人操作，请忽略此邮件，您的密码不会发生变化。`;
 
@@ -35,9 +41,9 @@ const invitationHtml = `<!doctype html>
 			<p style="margin:0 0 16px;font-size:14px;line-height:1.6;">您好：</p>
 			<p style="margin:0 0 16px;font-size:14px;line-height:1.6;">您已被邀请加入「{{organizationName}}」，角色为 {{role}}。请点击下方按钮创建账号或登录后加入机构，链接 7 天内有效。</p>
 			<p style="margin:0 0 24px;">
-				<a href="{{link}}" style="display:inline-block;padding:10px 20px;background:#1f2328;color:#ffffff;text-decoration:none;font-size:14px;">接受邀请</a>
+				<a href="${templateOrigin}/{{linkPath}}" style="display:inline-block;padding:10px 20px;background:#1f2328;color:#ffffff;text-decoration:none;font-size:14px;">接受邀请</a>
 			</p>
-			<p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:#57606a;">若按钮无法点击，请复制以下链接到浏览器打开：<br />{{link}}</p>
+			<p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:#57606a;">若按钮无法点击，请复制以下链接到浏览器打开：<br />${templateOrigin}/{{linkPath}}</p>
 			<p style="margin:0;font-size:13px;line-height:1.6;color:#57606a;">如非本人操作，请忽略此邮件。</p>
 		</div>
 	</body>
@@ -47,7 +53,7 @@ const invitationText = `您好：
 
 您已被邀请加入「{{organizationName}}」，角色为 {{role}}。
 请打开以下链接创建账号或登录后加入机构（链接 7 天内有效）：
-{{link}}
+${templateOrigin}/{{linkPath}}
 
 如非本人操作，请忽略此邮件。`;
 
@@ -59,9 +65,9 @@ const emailVerificationHtml = `<!doctype html>
 			<p style="margin:0 0 16px;font-size:14px;line-height:1.6;">您好，{{userName}}：</p>
 			<p style="margin:0 0 16px;font-size:14px;line-height:1.6;">请验证您的邮箱以完成 {{appName}} 账号激活。点击下方按钮即可完成验证，链接 24 小时内有效。</p>
 			<p style="margin:0 0 24px;">
-				<a href="{{link}}" style="display:inline-block;padding:10px 20px;background:#1f2328;color:#ffffff;text-decoration:none;font-size:14px;">验证邮箱</a>
+				<a href="${templateOrigin}/{{linkPath}}" style="display:inline-block;padding:10px 20px;background:#1f2328;color:#ffffff;text-decoration:none;font-size:14px;">验证邮箱</a>
 			</p>
-			<p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:#57606a;">若按钮无法点击，请复制以下链接到浏览器打开：<br />{{link}}</p>
+			<p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:#57606a;">若按钮无法点击，请复制以下链接到浏览器打开：<br />${templateOrigin}/{{linkPath}}</p>
 			<p style="margin:0;font-size:13px;line-height:1.6;color:#57606a;">如非本人操作，请忽略此邮件。</p>
 		</div>
 	</body>
@@ -70,7 +76,7 @@ const emailVerificationHtml = `<!doctype html>
 const emailVerificationText = `您好，{{userName}}：
 
 请验证您的邮箱以完成 {{appName}} 账号激活。请打开以下链接完成验证（链接 24 小时内有效）：
-{{link}}
+${templateOrigin}/{{linkPath}}
 
 如非本人操作，请忽略此邮件。`;
 
@@ -96,24 +102,43 @@ async function main() {
 	const client = getSesClient();
 
 	const existing = await client.ListEmailTemplates({ Limit: 100, Offset: 0 });
-	const existingNames = new Set(
-		(existing.TemplatesMetadata ?? []).map((item) => item.TemplateName),
+	const existingByName = new Map(
+		(existing.TemplatesMetadata ?? [])
+			.filter(
+				(item): item is typeof item & { TemplateName: string } =>
+					typeof item.TemplateName === "string",
+			)
+			.map((item) => [item.TemplateName, item]),
 	);
 
 	for (const template of templates) {
-		if (existingNames.has(template.name)) {
-			console.log(`skip ${template.name}: already exists`);
-			continue;
-		}
+		const templateContent = {
+			Html: encodeBase64(template.html),
+			Text: encodeBase64(template.text),
+		};
 		try {
-			const created = await client.CreateEmailTemplate({
-				TemplateName: template.name,
-				TemplateContent: {
-					Html: encodeBase64(template.html),
-					Text: encodeBase64(template.text),
-				},
-			});
-			console.log(`created ${template.name}:`, JSON.stringify(created));
+			const existingTemplate = existingByName.get(template.name);
+			if (
+				existingTemplate?.TemplateID &&
+				existingTemplate.TemplateStatus === 2
+			) {
+				const updated = await client.UpdateEmailTemplate({
+					TemplateID: existingTemplate.TemplateID,
+					TemplateName: template.name,
+					TemplateContent: templateContent,
+				});
+				console.log(`updated ${template.name}:`, JSON.stringify(updated));
+			} else if (existingTemplate) {
+				console.log(
+					`skip ${template.name}: existing template status ${existingTemplate.TemplateStatus ?? "unknown"}`,
+				);
+			} else {
+				const created = await client.CreateEmailTemplate({
+					TemplateName: template.name,
+					TemplateContent: templateContent,
+				});
+				console.log(`created ${template.name}:`, JSON.stringify(created));
+			}
 		} catch (error) {
 			console.error(
 				`create ${template.name} failed:`,

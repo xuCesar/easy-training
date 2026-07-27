@@ -30,7 +30,7 @@ export function buildPasswordResetContent(input: {
 		templateData: {
 			appName,
 			userName: input.userName || "用户",
-			link: input.resetUrl,
+			linkPath: getTemplateLinkPath(input.resetUrl),
 		},
 		simple: {
 			Html: encodeBase64(html),
@@ -65,7 +65,7 @@ export function buildEmailVerificationContent(input: {
 		templateData: {
 			appName,
 			userName: input.userName || "用户",
-			link: input.verificationUrl,
+			linkPath: getTemplateLinkPath(input.verificationUrl),
 		},
 		simple: {
 			Html: encodeBase64(html),
@@ -104,13 +104,18 @@ export function buildInvitationContent(input: {
 			appName,
 			organizationName: input.organizationName,
 			role: input.role,
-			link: input.invitationUrl,
+			linkPath: getTemplateLinkPath(input.invitationUrl),
 		},
 		simple: {
 			Html: encodeBase64(html),
 			Text: encodeBase64(text),
 		},
 	};
+}
+
+function getTemplateLinkPath(link: string): string {
+	const url = new URL(link);
+	return `${url.pathname.slice(1)}${url.search}${url.hash}`;
 }
 
 function escapeHtml(value: string): string {
