@@ -71,7 +71,7 @@ cp apps/web/.env.example apps/web/.env
 生产试运行相关服务端变量：
 
 - `DATABASE_POOL_MAX` / `DATABASE_POOL_IDLE_TIMEOUT_MS` / `DATABASE_POOL_CONNECTION_TIMEOUT_MS` / `DATABASE_STATEMENT_TIMEOUT_MS`：PostgreSQL 连接池与语句超时；单机试运行建议保持默认或按内存余量下调 `DATABASE_POOL_MAX`。
-- `ALLOW_PUBLIC_SIGNUP`：是否允许公开注册并自动创建机构。本地开发可设为 `true`；生产试运行应设为 `false`，新成员仅能通过邀请链接注册。首个机构可在受控窗口临时设为 `true` 完成初始化后再关闭。
+- `ALLOW_PUBLIC_SIGNUP`：是否允许公开注册。本地开发可设为 `true`；生产试运行应设为 `false`。既有机构成员只能通过邀请链接注册；新机构必须使用平台签发的受控 onboarding 邀请链接开通，不能依赖公开注册初始化。
 - `SHUTDOWN_TIMEOUT_MS`：收到 SIGTERM/SIGINT 后等待在途请求完成的最长时间。
 
 Web 端需同步设置 `VITE_ALLOW_PUBLIC_SIGNUP`，与 `ALLOW_PUBLIC_SIGNUP` 保持一致。
@@ -84,9 +84,10 @@ Web 端需同步设置 `VITE_ALLOW_PUBLIC_SIGNUP`，与 `ALLOW_PUBLIC_SIGNUP` �
 - `TENCENT_SES_REGION`：`ap-guangzhou` 或 `ap-hongkong`。
 - `TENCENT_SES_FROM_ADDRESS`：已验证发信地址，格式如 `Easy Training <noreply@yourdomain.com>`。
 - `TENCENT_SES_TEMPLATE_ID_PASSWORD_RESET` / `TENCENT_SES_TEMPLATE_ID_INVITATION` / `TENCENT_SES_TEMPLATE_ID_EMAIL_VERIFICATION`（可选）：控制台模板 ID。未配置时使用 Simple HTML/Text 发信。
-- 密码重置模板变量：`appName`、`userName`、`link`。
-- 邀请模板变量：`appName`、`organizationName`、`role`、`link`。
-- 邮箱验证模板变量：`appName`、`userName`、`link`。
+- 模板内的超链接必须保留静态域名和域名后的 `/`；创建脚本会以运行时的 `CORS_ORIGIN` 写入 `https://域名/{{linkPath}}`，发送时仅传不带前导 `/` 的路径、查询参数和 hash，避免腾讯云 SES 拒绝“变量填充完整链接”。
+- 密码重置模板变量：`appName`、`userName`、`linkPath`。
+- 邀请模板变量：`appName`、`organizationName`、`role`、`linkPath`。
+- 邮箱验证模板变量：`appName`、`userName`、`linkPath`。
 - 发信失败会写入结构化日志（`email.failed`），不会阻塞邀请创建、注册或密码重置请求。
 
 腾讯云账户默认可能未开通自定义（Simple）发送权限，此时发信会返回「未开通自定义发送权限，必须使用模版发送」。可用脚本一次性创建三个模板并把返回的 ID 填入上述变量：
@@ -95,14 +96,14 @@ Web 端需同步设置 `VITE_ALLOW_PUBLIC_SIGNUP`，与 `ALLOW_PUBLIC_SIGNUP` �
 cd apps/server && pnpm exec tsx ../../packages/mail/scripts/create-templates.ts
 ```
 
-脚本按模板名幂等，已存在的模板会跳过。新建模板需经腾讯云人工审核，审核期间发信会返回「模板ID无效或者不可用」。用以下脚本查看审核状态；附带收件邮箱参数时会真实发送三封测试邮件：
+脚本按模板名安全处理：不存在时创建；仅当同名模板处于“审核拒绝”状态时更新内容并重新提交审核；已通过和审核中的模板只输出状态。因此可直接修复审核拒绝的同名模板，不需要删除模板或更换环境变量中的模板 ID。新建或更新模板需经腾讯云人工审核，审核期间发信会返回「模板ID无效或者不可用」。用以下脚本查看审核状态；附带收件邮箱参数时会真实发送三封测试邮件：
 
 ```bash
 cd apps/server && pnpm exec tsx ../../packages/mail/scripts/smoke.ts
 cd apps/server && pnpm exec tsx ../../packages/mail/scripts/smoke.ts you@example.com
 ```
 
-邮箱验证在注册时自动发送（`sendOnSignUp`），但不强制验证后才能登录，因此不会阻断邀请领取流程。
+邮箱验证在注册时自动发送（`sendOnSignUp`）。既有机构邀请领取前必须完成邮箱验证；新机构 onboarding 则由平台签发的、与目标邮箱绑定的开通 token 授权。
 
 3. 启动 PostgreSQL 并应用 schema：
 
@@ -173,12 +174,12 @@ pnpm --filter @easy-training/db db:migrate
 
 ### 生产发布前置条件
 
-发布负责人必须在开始前逐项确认；下列能力目前未随本仓库配置或验证，缺少任一项时不得把本 Runbook 视为已完成的生产保障：
+发布负责人必须在开始前逐项确认。以下是当前试运行状态：备份、恢复演练和主机资源告警已有外部执行记录；应用级告警、就绪探针拨测和责任人证据索引仍需补齐，不能仅凭仓库文件宣称生产保障已完成。
 
-- 外部备份存储已启用加密、访问控制与保留策略，且生产数据库备份已成功上传；备份位置和对象标识由运维记录保存，不能提交到仓库。
+- 外部备份存储已启用加密、访问控制与保留策略，生产数据库备份已成功上传；当前证据和保留策略见 `ops/backup/README.md`，备份位置和对象标识不能提交到仓库。
 - 发布器具有最小权限的数据库迁移凭据、应用部署/流量切换权限，以及从密钥管理系统注入 `DATABASE_URL` 的方式；不得使用开发数据库或个人凭据。
-- 已确定并记录业务认可的 RPO（可接受数据丢失窗口）与 RTO（恢复目标时长），并据此确认备份频率、保留期和演练频率。
-- 有网络和凭据均与生产隔离的恢复环境；恢复演练绝不能将 dump 恢复到生产数据库，也不能让隔离环境连接生产服务、队列或第三方写入端点。
+- 已确定试运行期 RPO ≤ 24 小时，并记录当前数据量下实测 RTO；数据量上升后需重新评估 WAL 归档和演练频率。
+- 已完成一次网络、凭据和外部副作用均与生产隔离的恢复演练；后续变更恢复流程、备份配置或达到演练周期时仍必须重复演练。
 - 本次 migration 已完成代码审查、在预发/隔离数据库验证，并确认锁表、长事务、数据回填、磁盘容量及兼容发布顺序的影响；应用构建产物和上一稳定版本均可取得。
 
 ### 受控发布与备份步骤
@@ -220,7 +221,7 @@ Drizzle migration 在本项目中是向前应用的流程，`db:migrate` 不提�
 
 ### 告警接入与恢复演练证据
 
-服务端会输出带 `requestId` 的 `http.access` 和 `http.unexpected_error` JSON 事件，并提供 `/readyz` 作为数据库就绪探针。接入日志或监控平台时，必须由部署环境补充 `environment`、`service` 与版本信息；仓库当前**没有**配置告警平台、接收人或通知渠道。
+服务端会输出带 `requestId` 的 `http.access` 和 `http.unexpected_error` JSON 事件，并提供 `/readyz` 作为数据库就绪探针。腾讯云云监控已完成主机 CPU、内存和磁盘告警短信演练；应用事件、`/readyz`/TLS 外部拨测、整机失联检测和责任人证据索引仍需由部署环境补齐。
 
 最小告警策略如下：
 
@@ -238,7 +239,7 @@ Drizzle migration 在本项目中是向前应用的流程，`db:migrate` 不提�
 | RPO / RTO | 已批准目标、实际恢复点和实际耗时，以及是否达标 |
 | 后续动作 | 发现的问题、责任人、截止时间和下次演练日期 |
 
-告警投递验证与恢复演练依赖外部日志/监控平台、备份存储、RPO/RTO、隔离环境和部署权限；这些资源未由仓库提供，首次真实执行后应把证据链接回 Issue #23。
+应用告警投递验证仍依赖外部日志/监控平台、通知接收人和部署权限；备份与首次隔离恢复演练证据已记录在 `ops/backup/README.md`，后续外部告警和责任人证据应继续回链 Issue #23。
 
 ## Trellis AI 开发工作流
 
@@ -275,9 +276,9 @@ hooks = true
 
 ## 当前数据边界
 
-认证数据和教培领域 schema 已接入 PostgreSQL。认证用户首次进入业务系统时，会自动创建一个机构并成为 `owner`；后续业务接口只使用服务端解析出的机构上下文，不接受客户端传入的机构 ID。
+认证数据和教培领域 schema 已接入 PostgreSQL。生产环境关闭公开注册：既有机构通过受邀邮箱加入，新机构通过平台签发的 onboarding 邀请链接创建并成为 `owner`；本地开发仍可显式开启公开注册。后续业务接口只使用服务端解析出的机构上下文，不接受客户端传入的机构 ID。
 
-机构上下文解析区分读写路径：稳态只读 RPC 通过普通查询读取当前 session、成员关系与校区范围，不持有用户级 advisory lock；首次自动建机构、修正 session 当前机构或补齐历史初始化标记时才进入加锁事务。领域写入仍必须在各自 repository 事务内重新读取成员角色与校区范围，并保留机构级锁或行锁防止 TOCTOU。
+机构上下文解析区分读写路径：稳态只读 RPC 通过普通查询读取当前 session、成员关系与校区范围，不持有用户级 advisory lock；首次受控 onboarding 建机构、修正 session 当前机构或补齐历史初始化标记时才进入加锁事务。领域写入仍必须在各自 repository 事务内重新读取成员角色与校区范围，并保留机构级锁或行锁防止 TOCTOU。
 
 招生线索已使用真实 PostgreSQL 数据，支持列表、搜索、阶段筛选、新增、编辑和阶段流转。线索读取与写入仅允许 `owner`、`admin`、`campus_manager`、`consultant`，并按当前机构隔离；`teacher`、`finance` 无权访问线索隐私数据。
 
@@ -291,6 +292,6 @@ hooks = true
 
 前端金额输入统一使用 `finance-form-utils.ts` 解析人民币金额：报名、线索转化和续费允许 0 元应收但最高不超过 1,000,000 元；收款、退款、冲正、手工开单和账单金额调整要求大于 0 元，并使用相同上限与最多两位小数规则。
 
-当前仍未覆盖隔周/自定义间隔和节假日例外排课、学员批量导入导出与附件档案、全局搜索和运营任务 CRUD、经营分析、在线支付与自动对账、外部通知、家长端、原生教师移动端，以及生产告警实际投递和真实灾备演练。
+当前仍未覆盖隔周/自定义间隔和节假日例外排课、附件档案、在线支付与自动对账、完整外部通知、家长端、原生教师移动端。生产运行方面，备份/隔离恢复演练和主机资源告警已有记录，但应用事件告警、`/readyz`/TLS 外部拨测、整机失联检测及责任人证据索引仍待完成。容量性能验收和多实例共享限流也尚未完成，因此不承诺规模化容量或 SLA。
 
 本地联调时请统一使用 `http://localhost:3001` 访问 Web。服务端会严格校验带 Cookie 的 RPC 请求来源与 `CORS_ORIGIN`，使用 `127.0.0.1` 和 `localhost` 混用会被浏览器视为不同来源。
