@@ -1,0 +1,15 @@
+[Unit]
+Description=Easy Training production application log check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/easy-training-app-log-check
+User=root
+Group=root
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadOnlyPaths=/home/deploy/.pm2/logs
+ReadWritePaths=/var/lib/easy-training-monitoring

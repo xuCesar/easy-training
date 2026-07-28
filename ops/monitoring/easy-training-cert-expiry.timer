@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Easy Training TLS certificate expiry check twice daily
+
+[Timer]
+OnCalendar=*-*-* 00,12:00:00
+RandomizedDelaySec=15min
+Persistent=true
+Unit=easy-training-cert-expiry.service
+
+[Install]
+WantedBy=timers.target

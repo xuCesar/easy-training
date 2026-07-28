@@ -1,0 +1,11 @@
+/home/deploy/.pm2/logs/easy-training-out.log /home/deploy/.pm2/logs/easy-training-error.log {
+    su deploy deploy
+    daily
+    rotate 14
+    maxsize 10M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

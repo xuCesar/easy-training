@@ -12,6 +12,41 @@ LOCAL_DIR="/home/ops/et-backups"
 REMOTE_DIR="/mnt/cos-backup/easy-training"
 LOCAL_RETENTION_DAYS=7
 REMOTE_RETENTION_DAYS=30
+RESULT_DIR="${BACKUP_RESULT_DIR:-/var/lib/easy-training-monitoring}"
+RESULT_FILE="${BACKUP_RESULT_FILE:-$RESULT_DIR/backup-last-result}"
+backup_succeeded=false
+
+write_result() {
+	local result="$1"
+	local backup_name="${2:-}"
+	local temp_file
+
+	install -d -m 0755 "$RESULT_DIR"
+	temp_file="$(mktemp "${RESULT_FILE}.tmp.XXXXXX")"
+	if [ -n "$backup_name" ]; then
+		printf '%s %s %s\n' "$result" "$(date +%s)" "$backup_name" > "$temp_file"
+	else
+		printf '%s %s\n' "$result" "$(date +%s)" > "$temp_file"
+	fi
+	chmod 0600 "$temp_file"
+	mv -f "$temp_file" "$RESULT_FILE"
+}
+
+record_result() {
+	local exit_code=$?
+
+	trap - EXIT
+	if [ "$exit_code" -eq 0 ] && [ "$backup_succeeded" = "true" ]; then
+		write_result "OK" "$(basename "$OUT")"
+	else
+		write_result "ALERT" || true
+		if [ "$exit_code" -eq 0 ]; then
+			exit_code=1
+		fi
+	fi
+	exit "$exit_code"
+}
+trap record_result EXIT
 
 DB_URL=$(grep '^MIGRATOR_DATABASE_URL=' /home/ops/.easy-training-db.env | cut -d= -f2-)
 STAMP=$(date +%Y%m%d-%H%M%S)
@@ -49,5 +84,8 @@ if mountpoint -q /mnt/cos-backup; then
 	find "$REMOTE_DIR" -name 'easy_training-*.dump.enc' -mtime "+$REMOTE_RETENTION_DAYS" -delete
 	echo "backup ok: $OUT ($SIZE bytes), uploaded to COS"
 else
-	echo "backup ok: $OUT ($SIZE bytes); COS not mounted — LOCAL ONLY" >&2
+	echo "backup retained locally but COS is not mounted" >&2
+	exit 1
 fi
+
+backup_succeeded=true

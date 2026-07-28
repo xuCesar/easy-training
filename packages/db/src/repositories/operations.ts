@@ -805,9 +805,14 @@ export async function confirmLeadImport(input: {
 				idempotencyKey: `lead-import:${result.batchId}`,
 			}),
 		);
-	} catch (error) {
+	} catch {
 		// 通知是导入后的附属投递，失败不能回滚已完成的业务写入。
-		console.error("Lead import notification delivery failed.", error);
+		console.log(
+			JSON.stringify({
+				event: "lead_import_notification.failed",
+				error: "Unexpected notification error",
+			}),
+		);
 	}
 	return result;
 }

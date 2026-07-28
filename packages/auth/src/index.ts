@@ -123,6 +123,10 @@ export function createAuth() {
 		secret: env.BETTER_AUTH_SECRET,
 		baseURL: env.BETTER_AUTH_URL,
 		advanced: {
+			ipAddress: {
+				// 生产 nginx 使用 $remote_addr 覆盖该请求头，避免信任客户端伪造的转发链。
+				ipAddressHeaders: ["x-real-ip"],
+			},
 			defaultCookieAttributes: {
 				sameSite: env.NODE_ENV === "production" ? "none" : "lax",
 				secure: env.NODE_ENV === "production",

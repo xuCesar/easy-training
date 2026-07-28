@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Easy Training production application logs every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=easy-training-app-log.service
+
+[Install]
+WantedBy=timers.target
