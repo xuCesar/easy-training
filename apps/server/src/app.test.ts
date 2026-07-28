@@ -62,19 +62,18 @@ test("platform authorization requires a verified allowlisted session email", asy
 });
 
 test("platform onboarding RPC responses disable caching", async () => {
-	const { env } = await import("@easy-training/env/server");
 	const app = createApp({ log: () => undefined });
 	const response = await app.fetch(
 		new Request("http://localhost/rpc/platform/onboarding/create", {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				Origin: env.CORS_ORIGIN,
+				Origin: "http://untrusted.invalid",
 			},
 			body: "{}",
 		}),
 	);
-	assert.notEqual(response.status, 200);
+	assert.equal(response.status, 403);
 	assert.equal(response.headers.get("Cache-Control"), "no-store");
 });
 
