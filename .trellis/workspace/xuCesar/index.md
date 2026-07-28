@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 34
-- **Last Active**: 2026-07-25
+- **Total Sessions**: 35
+- **Last Active**: 2026-07-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1230 | Active |
+| `journal-1.md` | ~1265 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 35 | 2026-07-28 | 平台机构负责人初始化 Web 管理上线 | `8543d1e`, `e9b230c` | `develop` |
 | 34 | 2026-07-25 | 修复邀请领取与撤销筛选 | `466fcd3`, `52c0030` | `develop` |
 | 33 | 2026-07-25 | 补齐 Issue 30 教学仓储模块拆分 | `5dfdd84` | `develop` |
 | 32 | 2026-07-25 | 完成 Issue 30 教务交互可靠性与无障碍 | `eced1c2` | `develop` |

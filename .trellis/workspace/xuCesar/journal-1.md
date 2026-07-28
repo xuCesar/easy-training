@@ -1228,3 +1228,38 @@ Delivered auditable operations notifications and a secure, idempotent lead CSV i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 35: 平台机构负责人初始化 Web 管理上线
+
+**Date**: 2026-07-28
+**Task**: 平台机构负责人初始化 Web 管理上线
+**Package**: server
+**Branch**: `develop`
+
+### Summary
+
+完成平台管理员白名单与已验证邮箱授权、机构负责人邀请管理 Web/API、独立审计与数据库迁移；完成生产部署、禁止缓存热修复和线上健康/权限验收。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8543d1e` | (see git log) |
+| `e9b230c` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
