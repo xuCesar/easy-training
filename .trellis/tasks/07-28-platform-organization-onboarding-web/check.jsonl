@@ -1,0 +1,8 @@
+{"file":".trellis/spec/guides/project-conventions.md","reason":"最终工程质量门禁"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核完整写入和读取数据流"}
+{"file":".trellis/spec/db/backend/platform-onboarding.md","reason":"核对平台授权、状态机、token 与测试矩阵"}
+{"file":".trellis/spec/db/backend/database-guidelines.md","reason":"migration、索引、事务和并发检查"}
+{"file":".trellis/spec/db/backend/audit.md","reason":"平台与机构审计原子性和隐私检查"}
+{"file":".trellis/spec/api/backend/quality-guidelines.md","reason":"API 类型与错误处理质量检查"}
+{"file":".trellis/spec/web/frontend/quality-guidelines.md","reason":"页面状态、响应式和前端质量检查"}
+{"file":".trellis/spec/server/backend/observability.md","reason":"响应缓存和日志脱敏检查"}

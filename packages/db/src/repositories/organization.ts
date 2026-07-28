@@ -13,6 +13,7 @@ import {
 	lockActiveOnboardingInvitation,
 	markOnboardingInvitationClaimed,
 } from "./organization-onboarding";
+import { writePlatformAuditEvent } from "./platform-audit";
 
 export type OrganizationContextErrorCode =
 	| "SESSION_NOT_FOUND"
@@ -228,6 +229,7 @@ export async function getOrCreateCurrentOrganization(input: {
 	userName: string;
 	sessionId: string;
 	allowAutoCreateOrganization?: boolean;
+	onboardingToken?: string | null;
 }): Promise<CurrentOrganizationRecord> {
 	const current = await readCurrentOrganization(input);
 	if (current) return current;
@@ -239,6 +241,7 @@ async function getOrCreateCurrentOrganizationWithLock(input: {
 	userName: string;
 	sessionId: string;
 	allowAutoCreateOrganization?: boolean;
+	onboardingToken?: string | null;
 }): Promise<CurrentOrganizationRecord> {
 	return db.transaction(async (tx) => {
 		await tx.execute(
@@ -321,6 +324,7 @@ async function getOrCreateCurrentOrganizationWithLock(input: {
 		const onboardingInvitation = await lockActiveOnboardingInvitation(
 			tx,
 			userRecord.email,
+			input.onboardingToken,
 		);
 		const allowAutoCreate =
 			onboardingInvitation !== null ||
@@ -366,6 +370,14 @@ async function getOrCreateCurrentOrganizationWithLock(input: {
 				invitationId: onboardingInvitation.id,
 				userId: input.userId,
 				organizationId: createdOrganization.id,
+			});
+			await writePlatformAuditEvent(tx, {
+				action: "onboarding_invitation_claimed",
+				source: "web",
+				actorUserId: input.userId,
+				entityType: "organizationOnboardingInvitation",
+				entityId: onboardingInvitation.id,
+				metadata: { organizationId: createdOrganization.id },
 			});
 			await writeOrganizationAuditEvent(tx, {
 				organizationId: createdOrganization.id,

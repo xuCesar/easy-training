@@ -1,6 +1,7 @@
 import type { RouterClient } from "@orpc/server";
 
 import { protectedProcedure, publicProcedure } from "../index";
+import { platformRouter } from "./platform";
 import { analyticsRouter } from "./training/analytics";
 import { auditRouter } from "./training/audit";
 import { dashboardSnapshotProcedure } from "./training/dashboard";
@@ -29,6 +30,7 @@ export const appRouter = {
 			user: context.session?.user,
 		};
 	}),
+	platform: platformRouter,
 	training: {
 		search: searchRouter,
 		organization: organizationRouter,

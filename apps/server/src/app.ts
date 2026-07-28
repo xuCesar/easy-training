@@ -265,6 +265,10 @@ export function createApp(dependencies: CreateAppDependencies = {}) {
 	});
 	app.use("/rpc/*", rpcBodyLimit);
 	app.use("/rpc/*", requireTrustedOrigin);
+	app.use("/rpc/platform/onboarding/*", async (c, next) => {
+		await next();
+		c.header("Cache-Control", "no-store");
+	});
 	if (apiReferenceEnabled) {
 		app.use("/api-reference/*", rpcBodyLimit);
 		app.use("/api-reference/*", requireTrustedOrigin);

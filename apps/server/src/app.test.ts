@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import { EnvPlatformAuthorizationProvider } from "@easy-training/api/authorization/platform";
 import {
 	LEAD_IMPORT_REQUEST_TOO_LARGE_MESSAGE,
 	LEAD_IMPORT_RPC_BODY_LIMIT_BYTES,
@@ -21,6 +21,62 @@ type LoggedEvent = {
 	durationMs?: number;
 	error?: string;
 };
+
+test("platform authorization requires a verified allowlisted session email", async () => {
+	const provider = new EnvPlatformAuthorizationProvider([
+		" Platform-Operator@Example.invalid ",
+	]);
+	assert.equal(
+		await provider.can(
+			{
+				userId: "operator",
+				email: "platform-operator@example.invalid",
+				emailVerified: true,
+			},
+			"organization:onboard",
+		),
+		true,
+	);
+	assert.equal(
+		await provider.can(
+			{
+				userId: "unverified",
+				email: "platform-operator@example.invalid",
+				emailVerified: false,
+			},
+			"organization:onboard",
+		),
+		false,
+	);
+	assert.equal(
+		await new EnvPlatformAuthorizationProvider([]).can(
+			{
+				userId: "operator",
+				email: "platform-operator@example.invalid",
+				emailVerified: true,
+			},
+			"organization:onboard",
+		),
+		false,
+	);
+});
+
+test("platform onboarding RPC responses disable caching", async () => {
+	const { env } = await import("@easy-training/env/server");
+	const app = createApp({ log: () => undefined });
+	const response = await app.fetch(
+		new Request("http://localhost/rpc/platform/onboarding/create", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Origin: env.CORS_ORIGIN,
+			},
+			body: "{}",
+		}),
+	);
+	assert.notEqual(response.status, 200);
+	assert.equal(response.headers.get("Cache-Control"), "no-store");
+});
 
 test("RPC body limit uses the shared lead import contract", async () => {
 	const app = createApp({ log: () => undefined });
@@ -320,6 +376,10 @@ test("机构开通邀请:携带匹配 token 的注册经完整 HTTP 栈放行,�
 		const accepted = await signUp({ "x-onboarding-token": created.token });
 		assert.equal(accepted.status, 200);
 	} finally {
+		await db.$client.query(
+			"DELETE FROM platform_audit_event WHERE entity_id IN (SELECT id FROM organization_onboarding_invitation WHERE email_normalized = $1)",
+			[email],
+		);
 		await db.$client.query('DELETE FROM "user" WHERE email = $1', [email]);
 		await db.$client.query(
 			"DELETE FROM organization_onboarding_invitation WHERE email_normalized = $1",

@@ -8,13 +8,16 @@ import { getOrCreateCurrentOrganization } from "../src/repositories/organization
 import {
 	createOnboardingInvitationRecord,
 	hasActiveOnboardingInvitationForEmail,
+	PlatformOnboardingError,
 	revokeOnboardingInvitationsForEmail,
+	rotateOnboardingInvitationRecord,
 } from "../src/repositories/organization-onboarding";
 import {
 	organization,
 	organizationAuditEvent,
 	organizationMember,
 	organizationOnboardingInvitation,
+	platformAuditEvent,
 	session,
 	user,
 } from "../src/schema";
@@ -68,6 +71,18 @@ async function seedFixture(ids: FixtureIds) {
 }
 
 async function cleanupFixture(ids: FixtureIds) {
+	const invitations = await db
+		.select({ id: organizationOnboardingInvitation.id })
+		.from(organizationOnboardingInvitation)
+		.where(eq(organizationOnboardingInvitation.emailNormalized, ids.email));
+	if (invitations.length > 0) {
+		await db.delete(platformAuditEvent).where(
+			inArray(
+				platformAuditEvent.entityId,
+				invitations.map((invitation) => invitation.id),
+			),
+		);
+	}
 	await db
 		.delete(organizationOnboardingInvitation)
 		.where(eq(organizationOnboardingInvitation.emailNormalized, ids.email));
@@ -118,10 +133,26 @@ test("开通邀请:token 匹配才放行,过期/撤销/领取后失效", async (
 			false,
 		);
 
-		// 同邮箱重新创建会撤销旧邀请
-		const resent = await createOnboardingInvitationRecord({
-			email: ids.email,
-			organizationName: "开通测试机构",
+		// 普通创建不会静默废弃已经发出的链接
+		await assert.rejects(
+			createOnboardingInvitationRecord({
+				email: ids.email,
+				organizationName: "开通测试机构",
+			}),
+			(error: unknown) =>
+				error instanceof PlatformOnboardingError &&
+				error.code === "INVITATION_PENDING",
+		);
+		assert.equal(
+			await hasActiveOnboardingInvitationForEmail(ids.email, created.token),
+			true,
+		);
+
+		const resent = await rotateOnboardingInvitationRecord({
+			invitationId: created.id,
+			actorUserId: null,
+			requestId: randomUUID(),
+			source: "break_glass",
 		});
 		assert.equal(
 			await hasActiveOnboardingInvitationForEmail(ids.email, created.token),
@@ -147,7 +178,7 @@ test("持有效开通邀请的用户首次进入即创建指定名称机构,既�
 	const ids = createFixtureIds();
 	try {
 		await seedFixture(ids);
-		await createOnboardingInvitationRecord({
+		const created = await createOnboardingInvitationRecord({
 			email: ids.email,
 			organizationName: "小星星艺术学校",
 		});
@@ -157,6 +188,7 @@ test("持有效开通邀请的用户首次进入即创建指定名称机构,既�
 			userName: "开通受邀人",
 			sessionId: sessionId(ids.newUserId),
 			allowAutoCreateOrganization: false,
+			onboardingToken: created.token,
 		});
 		assert.equal(current.organization.name, "小星星艺术学校");
 		assert.equal(current.member.role, "owner");
@@ -206,6 +238,51 @@ test("持有效开通邀请的用户首次进入即创建指定名称机构,既�
 			.from(organizationOnboardingInvitation)
 			.where(eq(organizationOnboardingInvitation.emailNormalized, ids.email));
 		assert.ok(claimedInvitation);
+	} finally {
+		await cleanupFixture(ids);
+	}
+});
+
+test("开通邀请:最终领取必须继续匹配最初通过注册闸门的 token", async () => {
+	const ids = createFixtureIds();
+	try {
+		await seedFixture(ids);
+		const original = await createOnboardingInvitationRecord({
+			email: ids.email,
+			organizationName: "原机构名称",
+		});
+		assert.equal(
+			await hasActiveOnboardingInvitationForEmail(ids.email, original.token),
+			true,
+		);
+
+		const rotated = await rotateOnboardingInvitationRecord({
+			invitationId: original.id,
+			actorUserId: null,
+			requestId: randomUUID(),
+			source: "break_glass",
+		});
+		await assert.rejects(
+			getOrCreateCurrentOrganization({
+				userId: ids.newUserId,
+				userName: "开通受邀人",
+				sessionId: sessionId(ids.newUserId),
+				allowAutoCreateOrganization: false,
+				onboardingToken: original.token,
+			}),
+			(error: unknown) =>
+				error instanceof Error &&
+				error.message === "ORGANIZATION_MEMBERSHIP_REQUIRED",
+		);
+
+		const current = await getOrCreateCurrentOrganization({
+			userId: ids.newUserId,
+			userName: "开通受邀人",
+			sessionId: sessionId(ids.newUserId),
+			allowAutoCreateOrganization: false,
+			onboardingToken: rotated.token,
+		});
+		assert.equal(current.organization.name, "原机构名称");
 	} finally {
 		await cleanupFixture(ids);
 	}

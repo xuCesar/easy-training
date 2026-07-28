@@ -33,6 +33,7 @@ export async function getOrCreateCurrentOrganization(input: {
 	userId: string;
 	userName: string;
 	sessionId: string;
+	onboardingToken?: string | null;
 }): Promise<CurrentOrganization> {
 	try {
 		return await getOrCreateCurrentOrganizationRecord(input);

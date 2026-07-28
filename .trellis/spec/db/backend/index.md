@@ -9,6 +9,7 @@
 - schema 变更先生成并审查 migration；考虑旧数据回填、nullable/default、外键删除行为、锁表风险和回滚，不直接使用破坏性 `db:push` 处理生产数据。
 - 权限、机构隔离、幂等和财务写入优先在 `packages/db/tests` 增加 PostgreSQL 集成测试。
 - 涉及多校区、成员范围和邀请时，加载 [机构管理契约](organization-management.md)。
+- 涉及平台操作员创建、重新生成、撤销或领取机构开通邀请时，加载 [平台机构开通契约](platform-onboarding.md)。
 - 涉及课程、教师、班级和课次时，加载 [教务主数据与排课契约](teaching.md)。
 - 涉及续费、转课、退款或欠费跟进时，加载 [报名与财务变更契约](finance-adjustments.md)。
 - 涉及资金、课时、成员权限或审计 action 扩展时，加载 [关键业务审计契约](audit.md)。

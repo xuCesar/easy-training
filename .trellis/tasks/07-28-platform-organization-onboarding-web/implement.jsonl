@@ -1,0 +1,8 @@
+{"file":".trellis/spec/guides/project-conventions.md","reason":"全仓工程、安全和验证约束"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Web、API、DB、环境变量跨层数据流"}
+{"file":".trellis/spec/db/backend/platform-onboarding.md","reason":"平台邀请状态机、token 绑定、审计和测试契约"}
+{"file":".trellis/spec/db/backend/organization-management.md","reason":"机构 owner 初始化与既有邀请兼容约束"}
+{"file":".trellis/spec/db/backend/audit.md","reason":"事务内审计与敏感字段白名单"}
+{"file":".trellis/spec/web/frontend/index.md","reason":"独立平台页面与前端质量约束"}
+{"file":".trellis/spec/api/backend/index.md","reason":"平台 contracts/router/repository 分层与错误语义"}
+{"file":".trellis/spec/server/backend/observability.md","reason":"no-store 响应与敏感 header 日志边界"}

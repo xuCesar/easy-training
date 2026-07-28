@@ -8,6 +8,7 @@ import z from "zod";
 
 import { authClient } from "@/lib/auth-client";
 import { notifyAuthChange } from "@/utils/auth-session-sync";
+import { getOnboardingToken } from "@/utils/onboarding";
 import { queryClient } from "@/utils/orpc";
 
 import Loader from "./loader";
@@ -36,9 +37,7 @@ export default function SignUpForm({
 			name: "",
 		},
 		onSubmit: async ({ value }) => {
-			const onboardingToken = window.sessionStorage.getItem(
-				"easy-training:onboarding-token",
-			);
+			const onboardingToken = getOnboardingToken();
 			await authClient.signUp.email(
 				{
 					email: value.email,
@@ -51,7 +50,6 @@ export default function SignUpForm({
 						? { "x-onboarding-token": onboardingToken }
 						: undefined,
 					onSuccess: () => {
-						window.sessionStorage.removeItem("easy-training:onboarding-token");
 						queryClient.clear();
 						notifyAuthChange();
 						navigate({

@@ -48,6 +48,7 @@ import {
 	ReceiptTextIcon,
 	SearchIcon,
 	SettingsIcon,
+	ShieldCheckIcon,
 	UsersRoundIcon,
 	XIcon,
 } from "lucide-react";
@@ -61,6 +62,7 @@ import {
 	notifyOrganizationChange,
 	notifyOrganizationSwitchStarted,
 } from "@/utils/auth-session-sync";
+import { clearOnboardingToken } from "@/utils/onboarding";
 import { orpc, queryClient, setExpectedOrganizationId } from "@/utils/orpc";
 
 export const Route = createFileRoute("/_auth")({
@@ -145,6 +147,10 @@ function AuthLayout() {
 	);
 	const session = Route.useRouteContext().session.data;
 	const organizationOptions = orpc.training.organization.current.queryOptions();
+	const platformAccessQuery = useQuery({
+		...orpc.platform.access.get.queryOptions(),
+		retry: false,
+	});
 	const organizationQuery = useQuery({
 		...organizationOptions,
 		queryKey: [
@@ -181,6 +187,7 @@ function AuthLayout() {
 			return;
 		}
 
+		clearOnboardingToken();
 		setExpectedOrganizationId(organization.id);
 		setReadyOrganizationId(organization.id);
 	}, [isSwitchingOrganization, organization]);
@@ -470,6 +477,14 @@ function AuthLayout() {
 								</DropdownMenuGroup>
 								<DropdownMenuSeparator />
 								<DropdownMenuGroup>
+									{platformAccessQuery.data?.canManageOnboarding ? (
+										<DropdownMenuItem
+											render={<Link to="/platform/onboarding" />}
+										>
+											<ShieldCheckIcon />
+											平台管理
+										</DropdownMenuItem>
+									) : null}
 									<DropdownMenuItem
 										onClick={async () => {
 											const result = await authClient.signOut();

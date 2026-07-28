@@ -14,6 +14,7 @@ export async function createContext({ context }: CreateContextOptions) {
 	return {
 		auth: null,
 		session,
+		onboardingToken: context.req.header("X-Onboarding-Token") ?? null,
 		expectedOrganizationId:
 			context.req.header(EXPECTED_ORGANIZATION_HEADER) ?? null,
 	};

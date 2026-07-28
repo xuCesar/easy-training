@@ -14,22 +14,23 @@ import z from "zod";
 
 import SignInForm from "@/components/sign-in-form";
 import SignUpForm from "@/components/sign-up-form";
+import { getOnboardingToken } from "@/utils/onboarding";
 
 export const Route = createFileRoute("/login")({
 	validateSearch: z.object({
 		mode: z.enum(["sign-in", "sign-up"]).optional(),
+		redirect: z.literal("/platform/onboarding").optional(),
 	}),
 	component: RouteComponent,
 });
 
 function RouteComponent() {
-	const { mode } = Route.useSearch();
+	const { mode, redirect } = Route.useSearch();
 	const isInvitation =
 		typeof window !== "undefined" &&
 		Boolean(window.sessionStorage.getItem("easy-training:invitation-token"));
 	const isOnboarding =
-		typeof window !== "undefined" &&
-		Boolean(window.sessionStorage.getItem("easy-training:onboarding-token"));
+		typeof window !== "undefined" && Boolean(getOnboardingToken());
 	const [showSignIn, setShowSignIn] = useState(mode !== "sign-up");
 
 	if (
@@ -63,6 +64,7 @@ function RouteComponent() {
 			allowPublicSignup={
 				env.VITE_ALLOW_PUBLIC_SIGNUP || isInvitation || isOnboarding
 			}
+			redirectTo={redirect}
 			onSwitchToSignUp={() => setShowSignIn(false)}
 		/>
 	) : (

@@ -63,6 +63,20 @@ export const env = createEnv({
 			.max(3_600_000)
 			.default(15_000),
 		ALLOW_PUBLIC_SIGNUP: z.stringbool().default(false),
+		PLATFORM_OPERATOR_EMAILS: z
+			.string()
+			.default("")
+			.transform((value) =>
+				Array.from(
+					new Set(
+						value
+							.split(",")
+							.map((email) => email.trim().toLocaleLowerCase("en-US"))
+							.filter(Boolean),
+					),
+				),
+			)
+			.pipe(z.array(z.email())),
 		API_REFERENCE_ENABLED: z.stringbool().optional(),
 		SHUTDOWN_TIMEOUT_MS: z.coerce
 			.number()

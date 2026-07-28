@@ -10,7 +10,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { BuildingIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-export const ONBOARDING_TOKEN_KEY = "easy-training:onboarding-token";
+import { ONBOARDING_TOKEN_KEY } from "@/utils/onboarding";
 
 export const Route = createFileRoute("/onboard")({
 	component: OnboardingRoute,

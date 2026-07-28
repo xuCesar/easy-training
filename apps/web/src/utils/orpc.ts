@@ -7,6 +7,11 @@ import { createTanstackQueryUtils } from "@orpc/tanstack-query";
 import { QueryCache, QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import {
+	getOnboardingToken,
+	ONBOARDING_TOKEN_HEADER,
+} from "@/utils/onboarding";
+
 export function createQueryClient() {
 	return new QueryClient({
 		defaultOptions: {
@@ -70,10 +75,17 @@ function getServerUrl(url: string) {
 }
 export const link = new RPCLink({
 	url: `${getServerUrl(env.VITE_SERVER_URL)}/rpc`,
-	headers: () =>
-		expectedOrganizationId
-			? { [EXPECTED_ORGANIZATION_HEADER]: expectedOrganizationId }
-			: {},
+	headers: () => {
+		const headers: Record<string, string> = {};
+		const onboardingToken = getOnboardingToken();
+		if (expectedOrganizationId) {
+			headers[EXPECTED_ORGANIZATION_HEADER] = expectedOrganizationId;
+		}
+		if (onboardingToken) {
+			headers[ONBOARDING_TOKEN_HEADER] = onboardingToken;
+		}
+		return headers;
+	},
 	fetch(url, options) {
 		return fetch(url, {
 			...options,

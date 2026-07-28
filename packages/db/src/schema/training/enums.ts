@@ -97,6 +97,24 @@ export const organizationNotificationType = pgEnum(
 	],
 );
 
+export const onboardingInvitationClosedReason = pgEnum(
+	"onboarding_invitation_closed_reason",
+	["revoked", "rotated", "expired_superseded", "break_glass_rotated"],
+);
+
+export const platformAuditAction = pgEnum("platform_audit_action", [
+	"onboarding_invitation_created",
+	"onboarding_invitation_rotated",
+	"onboarding_invitation_revoked",
+	"onboarding_invitation_claimed",
+]);
+
+export const platformAuditSource = pgEnum("platform_audit_source", [
+	"web",
+	"break_glass",
+	"migration",
+]);
+
 export const leadImportBatchStatus = pgEnum("lead_import_batch_status", [
 	"processing",
 	"completed",

@@ -232,6 +232,9 @@ importers:
       '@easy-training/db':
         specifier: workspace:*
         version: link:../db
+      '@easy-training/env':
+        specifier: workspace:*
+        version: link:../env
       '@easy-training/mail':
         specifier: workspace:*
         version: link:../mail

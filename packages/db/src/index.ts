@@ -46,6 +46,7 @@ export * from "./repositories/organization";
 export * from "./repositories/organization-management";
 export * from "./repositories/organization-onboarding";
 export * from "./repositories/payment-reversals";
+export * from "./repositories/platform-audit";
 export * from "./repositories/receipt-documents";
 export * from "./repositories/refund-approval";
 export * from "./repositories/scheduling";

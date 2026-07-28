@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import {
+	type AnyPgColumn,
 	boolean,
 	index,
 	integer,
@@ -13,8 +15,11 @@ import { user } from "../auth";
 import {
 	campusAccessMode,
 	memberRole,
+	onboardingInvitationClosedReason,
 	organizationAuditAction,
 	organizationNotificationType,
+	platformAuditAction,
+	platformAuditSource,
 } from "./enums";
 
 export const organization = pgTable("organization", {
@@ -158,6 +163,18 @@ export const organizationOnboardingInvitation = pgTable(
 		tokenHash: text("token_hash").notNull(),
 		organizationName: text("organization_name").notNull(),
 		note: text("note"),
+		createdByUserId: text("created_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		revokedByUserId: text("revoked_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		requestId: uuid("request_id"),
+		replacesInvitationId: uuid("replaces_invitation_id").references(
+			(): AnyPgColumn => organizationOnboardingInvitation.id,
+			{ onDelete: "set null" },
+		),
+		closedReason: onboardingInvitationClosedReason("closed_reason"),
 		expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 		revokedAt: timestamp("revoked_at", { withTimezone: true }),
 		claimedAt: timestamp("claimed_at", { withTimezone: true }),
@@ -176,8 +193,48 @@ export const organizationOnboardingInvitation = pgTable(
 		uniqueIndex("organization_onboarding_invitation_token_hash_uidx").on(
 			table.tokenHash,
 		),
+		uniqueIndex("organization_onboarding_invitation_request_uidx")
+			.on(table.requestId)
+			.where(sql`${table.requestId} IS NOT NULL`),
+		uniqueIndex("organization_onboarding_invitation_open_email_uidx")
+			.on(table.emailNormalized)
+			.where(sql`${table.revokedAt} IS NULL AND ${table.claimedAt} IS NULL`),
 		index("organization_onboarding_invitation_email_idx").on(
 			table.emailNormalized,
+		),
+		index("organization_onboarding_invitation_created_idx").on(
+			table.createdAt,
+			table.id,
+		),
+	],
+);
+
+export const platformAuditEvent = pgTable(
+	"platform_audit_event",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		action: platformAuditAction("action").notNull(),
+		source: platformAuditSource("source").notNull(),
+		actorUserId: text("actor_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		entityType: text("entity_type").notNull(),
+		entityId: uuid("entity_id").notNull(),
+		requestId: uuid("request_id"),
+		metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		index("platform_audit_event_created_idx").on(table.createdAt, table.id),
+		index("platform_audit_event_entity_idx").on(
+			table.entityType,
+			table.entityId,
+		),
+		index("platform_audit_event_actor_created_idx").on(
+			table.actorUserId,
+			table.createdAt,
 		),
 	],
 );

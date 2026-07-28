@@ -1,6 +1,10 @@
 import { ORPCError, os } from "@orpc/server";
 
 import {
+	platformAuthorizationProvider,
+	toPlatformAuthorizationSubject,
+} from "./authorization/platform";
+import {
 	academicManagementRoles,
 	financeManagementRoles,
 	leadManagementRoles,
@@ -27,11 +31,35 @@ const requireAuth = o.middleware(async ({ context, next }) => {
 	return next({
 		context: {
 			session: context.session,
+			onboardingToken: context.onboardingToken,
 		},
 	});
 });
 
 export const protectedProcedure = publicProcedure.use(requireAuth);
+
+const requirePlatformOnboardingCapability = requireAuth.concat(
+	async ({ context, next }) => {
+		const allowed = await platformAuthorizationProvider.can(
+			toPlatformAuthorizationSubject(context.session.user),
+			"organization:onboard",
+		);
+		if (!allowed) {
+			throw new ORPCError("FORBIDDEN", {
+				message: "当前账号无权访问平台管理。",
+			});
+		}
+		return next({
+			context: {
+				platformCapability: "organization:onboard" as const,
+			},
+		});
+	},
+);
+
+export const platformProcedure = publicProcedure.use(
+	requirePlatformOnboardingCapability,
+);
 
 function createOrganizationMiddleware(
 	allowedRoles?: ReadonlySet<OrganizationRole>,
@@ -45,6 +73,7 @@ function createOrganizationMiddleware(
 				userId: sessionUser.id,
 				userName: sessionUser.name,
 				sessionId: context.session.session.id,
+				onboardingToken: context.onboardingToken,
 			});
 
 		if (
